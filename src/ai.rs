@@ -5,7 +5,7 @@
 //! оценка получившейся позиции с точки зрения ходящего, берётся максимум. Этого
 //! достаточно, чтобы агент шёл к Дому, ел чужие фишки и не подставлялся зря.
 
-use crate::board::{LOCAL_MOON_EXIT, PERIMETER, Side};
+use crate::board::{CellKind, LOCAL_MOON_EXIT, PERIMETER, Side, cell_kind};
 use crate::moves::{Move, apply};
 use crate::state::{GameState, MoonField, Position};
 use crate::turn::Agent;
@@ -47,8 +47,71 @@ fn side_score(state: &GameState, side: Side) -> i32 {
         .sum()
 }
 
+/// Число бросков из 36, которыми одна фишка соперника бьёт открытую фишку на
+/// дистанции `d` клеток (классическая таблица «выстрелов»: прямые + комбинации).
+fn shots_for_distance(d: i32) -> i32 {
+    match d {
+        1 => 11,
+        2 => 12,
+        3 => 14,
+        4 => 15,
+        5 => 15,
+        6 => 17,
+        7 => 6,
+        8 => 6,
+        9 => 5,
+        10 => 3,
+        11 => 2,
+        12 => 3,
+        _ => 0,
+    }
+}
+
+/// Риск быть съеденным: сумма по открытым фишкам стороны `side` от
+/// (вероятность попадания) × (ставка = ценность фишки + 25 за уход в плен).
+///
+/// Открыта только фишка на обычной клетке периметра; углы, Тюрьма и Луна
+/// безопасны. Угрозу создают фишки соперников на дорожке (в пределах 1..12
+/// клеток позади) и в резерве (вход по «6» на свою точку входа).
+fn capture_risk(state: &GameState, side: Side) -> i32 {
+    let opponents: Vec<Side> = state
+        .active
+        .iter()
+        .copied()
+        .filter(|&s| s != side)
+        .collect();
+    let mut total = 0;
+    for checker in state.checkers.iter().filter(|c| c.owner == side) {
+        let Some(cell) = checker.pos.perimeter_cell(side) else {
+            continue;
+        };
+        if !matches!(cell_kind(cell), CellKind::Plain | CellKind::HomeEntrance) {
+            continue;
+        }
+        let mut shots = 0;
+        for &opp in &opponents {
+            let cell_in_opp = opp.progress_of(cell) as i32;
+            for oc in state.checkers.iter().filter(|c| c.owner == opp) {
+                match oc.pos {
+                    Position::OnTrack { progress } => {
+                        shots += shots_for_distance(cell_in_opp - progress as i32);
+                    }
+                    // Резервная фишка входит по «6» на точку входа соперника.
+                    Position::Reserve if cell_in_opp == 0 => shots += 11,
+                    _ => {}
+                }
+            }
+        }
+        let shots = shots.min(36);
+        let stake = checker_value(side, checker.pos) + 25;
+        total += shots * stake / 36;
+    }
+    total
+}
+
 /// Оценка позиции с точки зрения стороны `me`: своё преимущество над сильнейшим
-/// соперником. Съедание чужой фишки роняет её ценность — и поднимает оценку.
+/// соперником за вычетом риска быть съеденным. Съедание чужой фишки роняет её
+/// ценность (и поднимает оценку), а собственные открытые фишки — штрафуются.
 fn evaluate(state: &GameState, me: Side) -> i32 {
     let mine = side_score(state, me);
     let best_opponent = state
@@ -58,7 +121,7 @@ fn evaluate(state: &GameState, me: Side) -> i32 {
         .map(|&s| side_score(state, s))
         .max()
         .unwrap_or(0);
-    mine - best_opponent
+    mine - best_opponent - capture_risk(state, me)
 }
 
 /// Применяет последовательность ходов к копии состояния (без вынужденных ответных
@@ -153,6 +216,57 @@ mod tests {
             game.state.checkers[2].pos,
             Position::Captured { .. }
         ));
+    }
+
+    #[test]
+    fn capture_risk_sees_exposed_blot() {
+        // A-фишка на abs 12 (обычная клетка). C-фишка в 3 клетках позади — угроза.
+        let exposed = {
+            let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+            s.checkers.clear();
+            s.checkers.push(Checker {
+                owner: Side::A,
+                pos: Position::OnTrack { progress: 3 }, // abs 12
+            });
+            let cell = PerimeterIdx::new(12);
+            let behind = Side::C.progress_of(cell) - 3; // в 3 клетках позади
+            s.checkers.push(Checker {
+                owner: Side::C,
+                pos: Position::OnTrack { progress: behind },
+            });
+            s
+        };
+        assert!(capture_risk(&exposed, Side::A) > 0);
+
+        // Та же фишка, но соперник далеко позади (вне досягаемости) — риска нет.
+        let safe = {
+            let mut s = exposed.clone();
+            let cell = PerimeterIdx::new(12);
+            s.checkers[1].pos = Position::OnTrack {
+                progress: Side::C.progress_of(cell) - 20,
+            };
+            s
+        };
+        assert_eq!(capture_risk(&safe, Side::A), 0);
+    }
+
+    #[test]
+    fn safe_cells_carry_no_risk() {
+        // Фишка в Тюрьме не может быть съедена — риск 0, даже если соперник рядом.
+        let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+        s.checkers.clear();
+        let prison = Side::A.local_to_perimeter(crate::board::LOCAL_PRISON_NEAR);
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::Prison { cell: prison },
+        });
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::OnTrack {
+                progress: Side::C.progress_of(prison) - 1,
+            },
+        });
+        assert_eq!(capture_risk(&s, Side::A), 0);
     }
 
     #[test]
