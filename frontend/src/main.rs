@@ -3,7 +3,7 @@
 //! (фишка → клетка назначения) по одной кости, плюс лотки резерва и плена.
 
 use leptos::prelude::*;
-use sheshbesh::board::{LOCAL_MOON, LOCAL_MOON_EXIT};
+use sheshbesh::board::{LOCAL_MOON, LOCAL_MOON_EXIT, LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR};
 use sheshbesh::{
     BOARD_DIM, DiceRoll, DiceSource, Game, GameState, Glyph, Heuristic, MoonField, Move, Position,
     RandomDice, Side, apply, board_glyphs, checker_cell, legal_turns, margin_coord,
@@ -169,8 +169,8 @@ fn moon_arc(side: Side) -> ArcGeom {
     let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
     let dir = (c - mid.0, c - mid.1);
     let len = (dir.0 * dir.0 + dir.1 * dir.1).sqrt().max(1e-3);
-    // Большой выгиб: вершина дуги уходит за Дом (≈ bulge/2 клеток внутрь от середины).
-    let ctrl = (mid.0 + dir.0 / len * 11.0, mid.1 + dir.1 / len * 11.0);
+    // Выгиб: вершина дуги уходит за Дом (≈ bulge/2 клеток внутрь от середины).
+    let ctrl = (mid.0 + dir.0 / len * 9.0, mid.1 + dir.1 / len * 9.0);
     let path = format!(
         "M {:.2} {:.2} Q {:.2} {:.2} {:.2} {:.2}",
         p0.0, p0.1, ctrl.0, ctrl.1, p2.0, p2.1
@@ -209,6 +209,32 @@ fn moon_arc(side: Side) -> ArcGeom {
         arrow,
         fields,
     }
+}
+
+// --- Геометрия Тюрьмы: клетка-маркер на периметре + «каземат» снаружи доски ---
+
+/// Тюрьма: клетка периметра и точка-каземат снаружи, где сидят фишки.
+struct PrisonGeom {
+    coord: (usize, usize),
+    cage: (f64, f64),
+}
+
+fn prison_geoms() -> Vec<PrisonGeom> {
+    let c = BOARD_DIM as f64 / 2.0;
+    let mut out = Vec::new();
+    for side in Side::ALL {
+        for local in [LOCAL_PRISON_NEAR, LOCAL_PRISON_FAR] {
+            let coord = margin_coord(side.local_to_perimeter(local));
+            let p = center_pt(coord);
+            let d = (p.0 - c, p.1 - c); // наружу от центра
+            let l = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-3);
+            out.push(PrisonGeom {
+                coord,
+                cage: (p.0 + d.0 / l * 1.7, p.1 + d.1 / l * 1.7),
+            });
+        }
+    }
+    out
 }
 
 /// Клетка-подложка (квадрат со скруглением) заданного CSS-класса.
@@ -373,6 +399,7 @@ fn App() -> impl IntoView {
                 }}
             </div>
 
+            <div class="board-area">
             <svg class="board" viewBox=format!("0 0 {d} {d}", d = BOARD_DIM)>
                 {move || {
                     let g = game.get();
@@ -408,12 +435,18 @@ fn App() -> impl IntoView {
                     let arc_pt = |grid: (usize, usize)| {
                         arcs.iter().flat_map(|a| &a.fields).find(|f| f.grid == grid).map(|f| f.pt)
                     };
+                    // Тюрьмы и единое сопоставление «клетка → точка вне сетки» (Луна/Тюрьма).
+                    let prisons = prison_geoms();
+                    let off_pt = |grid: (usize, usize)| {
+                        arc_pt(grid)
+                            .or_else(|| prisons.iter().find(|p| p.coord == grid).map(|p| p.cage))
+                    };
 
                     let mut nodes: Vec<AnyView> = Vec::new();
                     for (r, row) in board_glyphs(&ps).into_iter().enumerate() {
                         for (c, g) in row.into_iter().enumerate() {
-                            if arc_pt((r, c)).is_some() {
-                                continue; // поле Луны — на дуге
+                            if off_pt((r, c)).is_some() {
+                                continue; // рисуется отдельно (поле Луны / каземат Тюрьмы)
                             }
                             let hl = if sel_cell == Some((r, c)) {
                                 Hl::Selected
@@ -450,31 +483,59 @@ fn App() -> impl IntoView {
                         }
                     }
 
-                    // Подсветка для полей Луны — кольцом на дуге.
+                    // Тюрьма: клетка-маркер на периметре, «каземат» снаружи и фишки в нём.
+                    for pg in &prisons {
+                        nodes.push(
+                            cell_bg(pg.coord.1 as f64, pg.coord.0 as f64, "prison").into_any(),
+                        );
+                        let (cx, cy) = pg.cage;
+                        nodes.push(view! {
+                            <rect x=cx - 0.7 y=cy - 0.5 width=1.4 height=1.0 rx=0.1 class="cage" />
+                        }.into_any());
+                        for k in 0..3 {
+                            let bx = cx - 0.45 + k as f64 * 0.45;
+                            nodes.push(view! {
+                                <line x1=bx y1=cy - 0.45 x2=bx y2=cy + 0.45 class="cage-bar" />
+                            }.into_any());
+                        }
+                        let occ: Vec<Side> = ps.checkers.iter()
+                            .filter(|ch| checker_cell(ch.owner, ch.pos) == Some(pg.coord))
+                            .map(|ch| ch.owner)
+                            .collect();
+                        let n = occ.len();
+                        for (i, &owner) in occ.iter().enumerate() {
+                            let ox = cx + (i as f64 - (n.saturating_sub(1) as f64) / 2.0) * 0.42;
+                            nodes.push(view! {
+                                <circle cx=ox cy=cy r=0.26 class="checker" fill=side_color(owner) />
+                            }.into_any());
+                        }
+                    }
+
+                    // Подсветка полей Луны / казематов Тюрьмы — кольцом в их точке.
                     let ring = |pt: (f64, f64), cls: &'static str| {
                         view! { <circle cx=pt.0 cy=pt.1 r=0.46 fill="none" class=cls /> }.into_any()
                     };
                     if let Some(rc) = sel_cell
-                        && let Some(pt) = arc_pt(rc)
+                        && let Some(pt) = off_pt(rc)
                     {
                         nodes.push(ring(pt, "hl-sel"));
                     }
                     for &rc in &dsts {
-                        if let Some(pt) = arc_pt(rc) { nodes.push(ring(pt, "hl-dst")); }
+                        if let Some(pt) = off_pt(rc) { nodes.push(ring(pt, "hl-dst")); }
                     }
                     if cur.is_none() {
                         for &rc in &srcs {
-                            if let Some(pt) = arc_pt(rc) { nodes.push(ring(pt, "hl-src")); }
+                            if let Some(pt) = off_pt(rc) { nodes.push(ring(pt, "hl-src")); }
                         }
                     }
 
-                    // Кликабельные зоны: прямоугольник на клетке либо круг на дуге (Луна).
+                    // Кликабельные зоны: прямоугольник на клетке либо круг в точке (Луна/Тюрьма).
                     let mut hits: Vec<(usize, usize)> = Vec::new();
                     hits.extend(srcs.iter().copied());
                     hits.extend(dsts.iter().copied());
                     if let Some(rc) = sel_cell { hits.push(rc); }
                     for (r, c) in hits {
-                        let node = if let Some(pt) = arc_pt((r, c)) {
+                        let node = if let Some(pt) = off_pt((r, c)) {
                             view! {
                                 <circle cx=pt.0 cy=pt.1 r=0.46 class="hit"
                                     on:click=move |_| click(Sel::Cell(r, c)) />
@@ -490,6 +551,7 @@ fn App() -> impl IntoView {
                     nodes
                 }}
             </svg>
+            </div>
 
             <div class="trays">
                 {move || {
