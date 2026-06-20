@@ -923,16 +923,18 @@ fn App() -> impl IntoView {
             }).collect_view();
             let cap_n = count_pos(&ps, side, false);
             let (cap_cls, cap_click) = state_of(Sel::Captured);
-            // Результат броска — на строке ходящей стороны (но НЕ во время кручения:
-            // сам бросок анимируется в статусе над доской).
-            let dice = (side == to_move && !spinning)
-                .then_some(cur_roll)
-                .flatten()
-                .map(|r| {
-                    let [a, b] = r.values();
+            // Кости — на строке ходящей стороны: во время броска кубики кувыркаются
+            // в 3D (die3d), затем показывается остановившийся результат (die_face).
+            let dice = (side == to_move).then_some(cur_roll).flatten().map(|r| {
+                let [a, b] = r.values();
+                if spinning {
+                    let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
+                    view! { <span class=cls>{die3d(a)} {die3d(b)}</span> }.into_any()
+                } else {
                     let cls = if r.is_double() { "dice double" } else { "dice" };
-                    view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }
-                });
+                    view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }.into_any()
+                }
+            });
             view! {
                 <div class="tray-row" class:active=side == to_move>
                     <b style=format!("color:{}", side_color(side))>{side.letter().to_string()}</b>
@@ -954,18 +956,6 @@ fn App() -> impl IntoView {
             <h1>"Шеш-Беш"</h1>
             <div class="status">
                 <span class="herald">{move || herald.get()}</span>
-                // Анимация броска — здесь, в статусе; результат потом ляжет в лоток.
-                {move || {
-                    let r = roll.get();
-                    (rolling.get())
-                        .then_some(r)
-                        .flatten()
-                        .map(|r| {
-                            let [a, b] = r.values();
-                            let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
-                            view! { <span class=cls>{die3d(a)} {die3d(b)}</span> }
-                        })
-                }}
             </div>
             <div class="controls">
                 <button on:click=on_new>"Новая игра"</button>
