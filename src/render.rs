@@ -47,6 +47,76 @@ pub(crate) fn owners_on(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
         .collect()
 }
 
+/// Ширина полей вокруг квадрата для «дописывания» лишних фишек наружу.
+pub(crate) const BOARD_MARGIN: usize = 3;
+
+/// Сторона квадрата сетки глифов (квадрат периметра плюс поля).
+pub(crate) const BOARD_DIM: usize = SIDE_LEN + 2 * BOARD_MARGIN;
+
+/// Глиф одной ячейки сетки доски (рендер-независимый).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Glyph {
+    /// Пусто (поле/внутренность квадрата).
+    Empty,
+    /// Пустая клетка периметра — её landmark-символ.
+    Landmark(char),
+    /// Маркер фишки стороны.
+    Checker(Side),
+    /// Переполнение: фишек на клетке больше, чем влезает наружу.
+    Overflow,
+}
+
+/// Координата базовой ячейки сетки глифов для клетки периметра `abs`.
+pub(crate) fn margin_coord(abs: PerimeterIdx) -> (usize, usize) {
+    let (r, c) = cell_coord(abs.get());
+    (r + BOARD_MARGIN, c + BOARD_MARGIN)
+}
+
+/// Направление «наружу» от клетки на краю квадрата (углы — по вертикали).
+fn outward(r: usize, c: usize) -> (isize, isize) {
+    if r == 0 {
+        (-1, 0) // верх — вверх
+    } else if r == SIDE_LEN - 1 {
+        (1, 0) // низ — вниз
+    } else if c == 0 {
+        (0, -1) // левый край — влево
+    } else {
+        (0, 1) // правый край — вправо
+    }
+}
+
+/// Строит `BOARD_DIM`² сетку глифов: первая фишка клетки — на самой клетке,
+/// лишние «дописываются» наружу за край (сверх вместимости — `Overflow`).
+pub(crate) fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
+    let mut grid = vec![vec![Glyph::Empty; BOARD_DIM]; BOARD_DIM];
+    let shift = |base: usize, d: isize, k: isize| (base as isize + d * k) as usize;
+
+    for abs in 0..PERIMETER {
+        let p = PerimeterIdx::new(abs);
+        let (r, c) = cell_coord(abs);
+        let (pr, pc) = (r + BOARD_MARGIN, c + BOARD_MARGIN);
+        let owners = owners_on(state, p);
+
+        grid[pr][pc] = match owners.first() {
+            Some(&s) => Glyph::Checker(s),
+            None => Glyph::Landmark(landmark(p)),
+        };
+
+        let (dr, dc) = outward(r, c);
+        for (k, &owner) in owners.iter().skip(1).enumerate() {
+            let slot = k + 1;
+            if slot > BOARD_MARGIN {
+                grid[shift(pr, dr, BOARD_MARGIN as isize)][shift(pc, dc, BOARD_MARGIN as isize)] =
+                    Glyph::Overflow;
+                break;
+            }
+            grid[shift(pr, dr, slot as isize)][shift(pc, dc, slot as isize)] =
+                Glyph::Checker(owner);
+        }
+    }
+    grid
+}
+
 /// Двухсимвольный токен клетки.
 fn token(state: &GameState, abs: PerimeterIdx) -> String {
     let owners = owners_on(state, abs);

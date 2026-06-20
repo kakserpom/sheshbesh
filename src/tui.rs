@@ -10,8 +10,8 @@ use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 
-use crate::board::{HOME_DEPTH, PERIMETER, PerimeterIdx, SIDE_LEN, Side};
-use crate::render::{cell_coord, landmark, owners_on};
+use crate::board::{HOME_DEPTH, Side};
+use crate::render::{Glyph, board_glyphs};
 use crate::state::{GameState, Position};
 use crate::turn::{Agent, DiceSource, Game};
 
@@ -34,48 +34,26 @@ fn colored_side(side: Side) -> String {
     format!("{}{}{}", side_color(side), side.letter(), RESET)
 }
 
-/// Цветной токен клетки (ровно 2 видимых символа).
-fn colored_token(state: &GameState, abs: PerimeterIdx) -> String {
-    let owners = owners_on(state, abs);
-    if owners.is_empty() {
-        return format!("{DIM}{} {RESET}", landmark(abs));
-    }
-    let mut distinct: Vec<Side> = Vec::new();
-    for &s in &owners {
-        if !distinct.contains(&s) {
-            distinct.push(s);
-        }
-    }
-    if distinct.len() == 1 {
-        // Одна сторона: буква + число фишек.
-        format!(
-            "{}{}{}{}",
-            side_color(distinct[0]),
-            distinct[0].letter(),
-            owners.len().min(9),
-            RESET,
-        )
-    } else {
-        // Совместное стояние: до двух букв, каждая своим цветом.
-        let mut out = String::new();
-        for &s in distinct.iter().take(2) {
-            out.push_str(side_color(s));
-            out.push(s.letter());
-        }
-        out.push_str(RESET);
-        out
+/// Цветной 1-символьный токен глифа сетки доски.
+fn glyph_token(glyph: Glyph) -> String {
+    match glyph {
+        Glyph::Empty => " ".to_string(),
+        Glyph::Landmark(ch) => format!("{DIM}{ch}{RESET}"),
+        Glyph::Checker(side) => format!("{}{}{RESET}", side_color(side), side.letter()),
+        Glyph::Overflow => "+".to_string(),
     }
 }
 
-/// Цветной квадрат периметра.
+/// Цветной квадрат периметра с внешними полями (см. [`crate::render::board_glyphs`]).
 fn colored_board(state: &GameState) -> String {
-    let mut grid = vec![vec![String::from("  "); SIDE_LEN]; SIDE_LEN];
-    for abs in 0..PERIMETER {
-        let (r, c) = cell_coord(abs);
-        grid[r][c] = colored_token(state, PerimeterIdx::new(abs));
-    }
-    grid.iter()
-        .map(|row| row.join(" "))
+    board_glyphs(state)
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(glyph_token)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -198,28 +176,26 @@ mod tests {
     }
 
     #[test]
-    fn token_visible_width_is_two() {
-        // Видимая ширина (без ANSI-кодов) должна быть ровно 2 — для выравнивания.
-        let state = GameState::new(vec![Side::A, Side::C], Side::A);
-        let strip = |s: String| {
-            // грубое удаление ANSI-последовательностей вида \x1b[..m
-            let mut out = String::new();
-            let mut chars = s.chars().peekable();
-            while let Some(ch) = chars.next() {
-                if ch == '\x1b' {
-                    for c in chars.by_ref() {
-                        if c == 'm' {
-                            break;
-                        }
+    fn board_renders_landmarks_and_checkers() {
+        let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
+        state.checkers[0].pos = Position::OnTrack { progress: 0 };
+        let board = colored_board(&state);
+        // Видимый текст без ANSI-кодов содержит landmark-символы и маркер фишки A.
+        let mut visible = String::new();
+        let mut chars = board.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' {
+                for c in chars.by_ref() {
+                    if c == 'm' {
+                        break;
                     }
-                } else {
-                    out.push(ch);
                 }
+            } else {
+                visible.push(ch);
             }
-            out
-        };
-        // Пустая клетка-угол.
-        let corner = strip(colored_token(&state, Side::A.start_corner()));
-        assert_eq!(corner.chars().count(), 2);
+        }
+        for mark in ['+', 'M', 'J', 'h', 'A'] {
+            assert!(visible.contains(mark), "нет символа {mark}");
+        }
     }
 }

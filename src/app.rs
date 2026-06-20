@@ -16,10 +16,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::{DefaultTerminal, Frame, init, restore};
 
-use crate::board::{HOME_DEPTH, PERIMETER, PerimeterIdx, SIDE_LEN, Side};
+use crate::board::{HOME_DEPTH, PERIMETER, PerimeterIdx, Side};
 use crate::dice::DiceRoll;
 use crate::moves::{Move, MoveKind, apply, legal_turns};
-use crate::render::{cell_coord, landmark, owners_on};
+use crate::render::{Glyph, board_glyphs, margin_coord};
 use crate::state::{GameState, Position};
 use crate::turn::{Agent, DiceSource, Game, RandomDice, TurnOutcome};
 
@@ -41,10 +41,6 @@ fn side_span(side: Side) -> Span<'static> {
     )
 }
 
-/// Ширина полей вокруг квадрата: лишние фишки на клетке «дописываются» наружу,
-/// до `MARGIN` штук за край (дальше — `+`).
-const MARGIN: usize = 3;
-
 /// Цветной 1-символьный маркер фишки стороны.
 fn checker_marker(side: Side) -> Span<'static> {
     Span::styled(
@@ -53,74 +49,41 @@ fn checker_marker(side: Side) -> Span<'static> {
     )
 }
 
-/// Направление «наружу» от клетки на краю квадрата (углы — по вертикали).
-fn outward(r: usize, c: usize) -> (isize, isize) {
-    if r == 0 {
-        (-1, 0) // верхний край — вверх
-    } else if r == SIDE_LEN - 1 {
-        (1, 0) // нижний край — вниз
-    } else if c == 0 {
-        (0, -1) // левый край — влево
-    } else {
-        (0, 1) // правый край — вправо
+/// Спан для глифа сетки доски.
+fn glyph_span(g: Glyph) -> Span<'static> {
+    match g {
+        Glyph::Empty => Span::raw(" "),
+        Glyph::Landmark(ch) => Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray)),
+        Glyph::Checker(side) => checker_marker(side),
+        Glyph::Overflow => Span::raw("+"),
     }
 }
 
-/// Доска со внешними полями: каждая клетка — 1 символ (фишка или landmark),
-/// лишние фишки клетки «дописываются» наружу. Клетки `from`/`to` подсвечиваются
-/// (откуда — синим, куда — зелёным).
+/// Доска со внешними полями (см. [`crate::render::board_glyphs`]); клетки
+/// `from`/`to` подсвечиваются (откуда — синим, куда — зелёным).
 fn board_lines_hl(
     state: &GameState,
     from: Option<PerimeterIdx>,
     to: Option<PerimeterIdx>,
 ) -> Vec<Line<'static>> {
-    let n = SIDE_LEN + 2 * MARGIN;
-    let mut grid: Vec<Vec<Span>> = vec![vec![Span::raw(" "); n]; n];
-    let shift = |base: usize, d: isize, k: isize| (base as isize + d * k) as usize;
-
-    for abs in 0..PERIMETER {
-        let (r, c) = cell_coord(abs);
-        let p = PerimeterIdx::new(abs);
-        let owners = owners_on(state, p);
-        let (pr, pc) = (r + MARGIN, c + MARGIN);
-
-        // Базовая клетка: первая фишка либо landmark; с подсветкой хода.
-        let mut base = match owners.first() {
-            Some(&s) => checker_marker(s),
-            None => Span::styled(
-                landmark(p).to_string(),
-                Style::default().fg(Color::DarkGray),
-            ),
-        };
-        if Some(p) == to {
-            base.style = base.style.bg(Color::Green);
-        } else if Some(p) == from {
-            base.style = base.style.bg(Color::Blue);
-        }
-        grid[pr][pc] = base;
-
-        // Лишние фишки — наружу от клетки.
-        let (dr, dc) = outward(r, c);
-        for (k, &owner) in owners.iter().skip(1).enumerate() {
-            let slot = k + 1;
-            if slot > MARGIN {
-                grid[shift(pr, dr, MARGIN as isize)][shift(pc, dc, MARGIN as isize)] =
-                    Span::raw("+");
-                break;
-            }
-            grid[shift(pr, dr, slot as isize)][shift(pc, dc, slot as isize)] =
-                checker_marker(owner);
-        }
-    }
-
-    grid.into_iter()
-        .map(|row| {
+    let from_cell = from.map(margin_coord);
+    let to_cell = to.map(margin_coord);
+    board_glyphs(state)
+        .into_iter()
+        .enumerate()
+        .map(|(r, row)| {
             let mut spans = Vec::with_capacity(row.len() * 2);
-            for (i, cell) in row.into_iter().enumerate() {
-                if i > 0 {
+            for (c, g) in row.into_iter().enumerate() {
+                if c > 0 {
                     spans.push(Span::raw(" "));
                 }
-                spans.push(cell);
+                let mut sp = glyph_span(g);
+                if Some((r, c)) == to_cell {
+                    sp.style = sp.style.bg(Color::Green);
+                } else if Some((r, c)) == from_cell {
+                    sp.style = sp.style.bg(Color::Blue);
+                }
+                spans.push(sp);
             }
             Line::from(spans)
         })
@@ -206,16 +169,16 @@ fn status_lines(game: &Game, last: Option<&TurnOutcome>, paused: bool) -> Vec<Li
     lines
 }
 
-/// Рисует один кадр.
+/// Рисует один кадр: слева статус, справа доска.
 fn draw(frame: &mut Frame, game: &Game, last: Option<&TurnOutcome>, paused: bool) {
     let [left, right] =
-        Layout::horizontal([Constraint::Length(58), Constraint::Min(20)]).areas(frame.area());
+        Layout::horizontal([Constraint::Length(34), Constraint::Min(0)]).areas(frame.area());
     frame.render_widget(
-        Paragraph::new(board_lines(&game.state)).block(Block::bordered().title("Шеш-Беш")),
+        Paragraph::new(status_lines(game, last, paused)).block(Block::bordered().title("Статус")),
         left,
     );
     frame.render_widget(
-        Paragraph::new(status_lines(game, last, paused)).block(Block::bordered().title("Статус")),
+        Paragraph::new(board_lines(&game.state)).block(Block::bordered().title("Шеш-Беш")),
         right,
     );
 }
@@ -646,7 +609,7 @@ mod tests {
     fn board_has_outer_margins() {
         let state = GameState::new(vec![Side::A, Side::C], Side::A);
         // Сетка увеличена на поля с каждой стороны.
-        assert_eq!(board_lines(&state).len(), SIDE_LEN + 2 * MARGIN);
+        assert_eq!(board_lines(&state).len(), crate::render::BOARD_DIM);
     }
 
     #[test]
