@@ -18,6 +18,8 @@ use crate::turn::{Agent, DiceSource, Game};
 const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[2m";
 const MOON: &str = "\x1b[94m"; // ярко-синий — элементы Луны
+const PRISON: &str = "\x1b[91m"; // ярко-красный — клетки Тюрьмы
+const CAPTIVE_BG: &str = "\x1b[41m"; // красный фон — пленённая фишка
 const CLEAR: &str = "\x1b[2J\x1b[H";
 
 /// ANSI-цвет стороны.
@@ -41,7 +43,9 @@ fn glyph_token(glyph: Glyph) -> String {
         Glyph::Empty => " ".to_string(),
         Glyph::Landmark(ch) => format!("{DIM}{ch}{RESET}"),
         Glyph::Moon(ch) => format!("{MOON}{ch}{RESET}"),
+        Glyph::Prison(ch) => format!("{PRISON}{ch}{RESET}"),
         Glyph::Checker(side) => format!("{}{}{RESET}", side_color(side), side.letter()),
+        Glyph::Captive(side) => format!("{CAPTIVE_BG}{}{}{RESET}", side_color(side), side.letter()),
         Glyph::Overflow => "+".to_string(),
     }
 }

@@ -65,8 +65,12 @@ pub(crate) enum Glyph {
     Landmark(char),
     /// Элемент Луны: вход `M`, выход `m` или поле дорожки `1`/`3`/`6`.
     Moon(char),
+    /// Пустая клетка Тюрьмы (`J`).
+    Prison(char),
     /// Маркер фишки стороны.
     Checker(Side),
+    /// Пленённая фишка стороны (сидит в Тюрьме).
+    Captive(Side),
     /// Переполнение: фишек на клетке больше, чем влезает наружу.
     Overflow,
 }
@@ -120,25 +124,37 @@ pub(crate) fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
         let p = PerimeterIdx::new(abs);
         let (r, c) = cell_coord(abs);
         let (pr, pc) = (r + BOARD_MARGIN, c + BOARD_MARGIN);
-        let owners = owners_on(state, p);
+        // Глифы фишек на клетке (пленённые — отдельным глифом).
+        let occupants: Vec<Glyph> = state
+            .checkers
+            .iter()
+            .filter(|ch| ch.pos.perimeter_cell(ch.owner) == Some(p))
+            .map(|ch| {
+                if matches!(ch.pos, Position::Prison { .. }) {
+                    Glyph::Captive(ch.owner)
+                } else {
+                    Glyph::Checker(ch.owner)
+                }
+            })
+            .collect();
 
-        grid[pr][pc] = match owners.first() {
-            Some(&s) => Glyph::Checker(s),
+        grid[pr][pc] = match occupants.first() {
+            Some(&g) => g,
             None if cell_kind(p) == CellKind::Moon => Glyph::Moon('M'),
+            None if cell_kind(p) == CellKind::Prison => Glyph::Prison('J'),
             None if p.local() == LOCAL_MOON_EXIT => Glyph::Moon('m'),
             None => Glyph::Landmark(landmark(p)),
         };
 
         let (dr, dc) = outward(r, c);
-        for (k, &owner) in owners.iter().skip(1).enumerate() {
+        for (k, &g) in occupants.iter().skip(1).enumerate() {
             let slot = k + 1;
             if slot > BOARD_MARGIN {
                 grid[shift(pr, dr, BOARD_MARGIN as isize)][shift(pc, dc, BOARD_MARGIN as isize)] =
                     Glyph::Overflow;
                 break;
             }
-            grid[shift(pr, dr, slot as isize)][shift(pc, dc, slot as isize)] =
-                Glyph::Checker(owner);
+            grid[shift(pr, dr, slot as isize)][shift(pc, dc, slot as isize)] = g;
         }
     }
 
@@ -259,6 +275,22 @@ pub fn render(state: &GameState) -> String {
 mod tests {
     use super::*;
     use crate::board::LOCAL_HOME_ENTRANCE;
+
+    #[test]
+    fn prison_cells_and_captive_render_distinctly() {
+        use crate::board::LOCAL_PRISON_NEAR;
+        let prison = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
+        let (pr, pc) = margin_coord(prison);
+
+        // Пустая Тюрьма — глиф Prison.
+        let empty = GameState::new(vec![Side::A, Side::C], Side::A);
+        assert_eq!(board_glyphs(&empty)[pr][pc], Glyph::Prison('J'));
+
+        // Пленённая фишка — глиф Captive со своей стороной.
+        let mut jailed = empty.clone();
+        jailed.checkers[0].pos = Position::Prison { cell: prison };
+        assert_eq!(board_glyphs(&jailed)[pr][pc], Glyph::Captive(Side::A));
+    }
 
     #[test]
     fn home_and_moon_checkers_appear_inside_the_square() {
