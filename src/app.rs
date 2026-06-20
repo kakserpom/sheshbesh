@@ -10,7 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
@@ -75,7 +75,7 @@ fn board_lines_hl(
 ) -> Vec<Line<'static>> {
     let from_cell = from.map(margin_coord);
     let to_cell = to.map(margin_coord);
-    let pad = Span::raw(" ".repeat(scale)); // хвост клетки (горизонтальный масштаб)
+    let pad = Span::raw(" ".repeat(2 * scale - 1)); // клетка шириной 2*scale колонок
 
     let mut lines = Vec::new();
     for (r, row) in board_glyphs(state).into_iter().enumerate() {
@@ -91,6 +91,10 @@ fn board_lines_hl(
             spans.push(pad.clone());
         }
         lines.push(Line::from(spans));
+        // Пустые строки для вертикального масштаба (клетка высотой `scale` строк).
+        for _ in 1..scale {
+            lines.push(Line::raw(""));
+        }
     }
     lines
 }
@@ -100,9 +104,9 @@ fn board_lines(state: &GameState, scale: usize) -> Vec<Line<'static>> {
     board_lines_hl(state, None, None, scale)
 }
 
-/// Масштаб доски под ширину области (минус рамка в 2 колонки).
-fn area_scale(width: u16) -> usize {
-    fit_scale(width.saturating_sub(2))
+/// Масштаб доски под область (минус рамка в 2 колонки/строки по обеим осям).
+fn area_scale(area: Rect) -> usize {
+    fit_scale(area.width.saturating_sub(2), area.height.saturating_sub(2))
 }
 
 /// Добавляет `n` маркеров фишки стороны через пробел (или `—`, если ноль).
@@ -197,7 +201,7 @@ fn draw(frame: &mut Frame, game: &Game, last: Option<&TurnOutcome>, paused: bool
         left,
     );
     frame.render_widget(
-        Paragraph::new(board_lines(&game.state, area_scale(right.width)))
+        Paragraph::new(board_lines(&game.state, area_scale(right)))
             .block(Block::bordered().title("Шеш-Беш")),
         right,
     );
@@ -348,7 +352,7 @@ fn draw_pick(
         left,
     );
     frame.render_widget(
-        Paragraph::new(board_lines_hl(board, from, to, area_scale(right.width)))
+        Paragraph::new(board_lines_hl(board, from, to, area_scale(right)))
             .block(Block::bordered().title(board_title.to_string())),
         right,
     );

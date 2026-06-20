@@ -57,7 +57,8 @@ pub(crate) const BOARD_MARGIN: usize = 3;
 pub(crate) const BOARD_DIM: usize = SIDE_LEN + 2 * BOARD_MARGIN;
 
 /// Ручной масштаб из `SHESHBESH_SCALE` (1..4), если задан, — переопределяет
-/// автоподбор. Клетка занимает `1 + scale` колонок (глиф + `scale` пробелов).
+/// автоподбор. Клетка занимает `2*scale` колонок × `scale` строк (так доска
+/// остаётся квадратной: символ терминала примерно вдвое выше своей ширины).
 pub(crate) fn manual_scale() -> Option<usize> {
     std::env::var("SHESHBESH_SCALE")
         .ok()
@@ -65,12 +66,15 @@ pub(crate) fn manual_scale() -> Option<usize> {
         .map(|s| s.clamp(1, 4))
 }
 
-/// Масштаб доски, подобранный под доступную ширину `inner_width` (без рамки):
-/// наибольший `scale`, при котором строка `BOARD_DIM*(1+scale)` влезает.
-/// `SHESHBESH_SCALE` переопределяет результат.
-pub(crate) fn fit_scale(inner_width: u16) -> usize {
-    manual_scale()
-        .unwrap_or_else(|| ((inner_width as usize / BOARD_DIM).saturating_sub(1)).clamp(1, 4))
+/// Масштаб доски под доступную область (без рамки): наибольший `scale`, при
+/// котором квадрат `BOARD_DIM` клеток влезает и по ширине (`2*scale` колонок на
+/// клетку), и по высоте (`scale` строк). `SHESHBESH_SCALE` переопределяет.
+pub(crate) fn fit_scale(inner_width: u16, inner_height: u16) -> usize {
+    manual_scale().unwrap_or_else(|| {
+        let by_width = inner_width as usize / (2 * BOARD_DIM);
+        let by_height = inner_height as usize / BOARD_DIM;
+        by_width.min(by_height).clamp(1, 4)
+    })
 }
 
 /// Глиф одной ячейки сетки доски (рендер-независимый).

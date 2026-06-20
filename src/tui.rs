@@ -53,19 +53,21 @@ fn glyph_token(glyph: Glyph) -> String {
 /// Цветной квадрат периметра с внешними полями (см. [`crate::render::board_glyphs`]).
 fn colored_board(state: &GameState) -> String {
     // Поток без TTY — компактный масштаб 1 (или ручной `SHESHBESH_SCALE`).
-    let pad = " ".repeat(manual_scale().unwrap_or(1));
-    board_glyphs(state)
-        .into_iter()
-        .map(|row| {
-            let mut line = String::new();
-            for g in row {
-                line.push_str(&glyph_token(g));
-                line.push_str(&pad);
-            }
-            line
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let scale = manual_scale().unwrap_or(1);
+    let pad = " ".repeat(2 * scale - 1); // клетка шириной 2*scale колонок
+    let mut lines = Vec::new();
+    for row in board_glyphs(state) {
+        let mut line = String::new();
+        for g in row {
+            line.push_str(&glyph_token(g));
+            line.push_str(&pad);
+        }
+        lines.push(line);
+        for _ in 1..scale {
+            lines.push(String::new()); // вертикальный масштаб
+        }
+    }
+    lines.join("\n")
 }
 
 /// `n` маркеров фишки стороны через пробел (или `—`, если ноль).
