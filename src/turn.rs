@@ -44,7 +44,7 @@ impl DiceSource for ScriptedDice {
     }
 }
 
-/// Встроенный генератор бросков на основе SplitMix64 — без внешних зависимостей.
+/// Встроенный генератор бросков на основе `SplitMix64` — без внешних зависимостей.
 /// Смещение от `% 6` пренебрежимо мало для игральной кости.
 pub struct RandomDice {
     state: u64,
@@ -60,8 +60,7 @@ impl RandomDice {
     pub fn from_entropy() -> RandomDice {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x9E37_79B9_7F4A_7C15);
+            .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64);
         RandomDice::from_seed(seed)
     }
 
@@ -278,6 +277,17 @@ mod tests {
         DiceRoll::new(Die::new(a).unwrap(), Die::new(b).unwrap())
     }
 
+    /// Тестовый агент: выбирает последовательность с выкупом, иначе первую.
+    struct RansomFirst;
+    impl Agent for RansomFirst {
+        fn choose_turn(&mut self, _: &GameState, turns: &[Vec<Move>]) -> usize {
+            turns
+                .iter()
+                .position(|t| t.iter().any(|m| m.kind == MoveKind::Ransom))
+                .unwrap_or(0)
+        }
+    }
+
     #[test]
     fn turn_order_skips_inactive_sides() {
         assert_eq!(next_active_side(&[Side::A, Side::C], Side::A), Side::C);
@@ -356,17 +366,6 @@ mod tests {
         state.checkers[7].pos = Position::Home { depth: 2 };
         let mut game = Game::new(state);
 
-        // Агент, выбирающий последовательность с выкупом.
-        struct RansomFirst;
-        impl Agent for RansomFirst {
-            fn choose_turn(&mut self, _: &GameState, turns: &[Vec<Move>]) -> usize {
-                turns
-                    .iter()
-                    .position(|t| t.iter().any(|m| m.kind == MoveKind::Ransom))
-                    .unwrap_or(0)
-            }
-        }
-
         let mut dice = ScriptedDice::new(vec![roll(6, 6)]);
         let outcome = game.play_turn(&mut dice, &mut RansomFirst);
 
@@ -397,16 +396,6 @@ mod tests {
             c.pos = Position::Home { depth: depth as u8 };
         }
         let mut game = Game::new(state);
-
-        struct RansomFirst;
-        impl Agent for RansomFirst {
-            fn choose_turn(&mut self, _: &GameState, turns: &[Vec<Move>]) -> usize {
-                turns
-                    .iter()
-                    .position(|t| t.iter().any(|m| m.kind == MoveKind::Ransom))
-                    .unwrap_or(0)
-            }
-        }
 
         // Дубль 6-6, чтобы выкуп вошёл в максимальный по очкам ход.
         let mut dice = ScriptedDice::new(vec![roll(6, 6)]);

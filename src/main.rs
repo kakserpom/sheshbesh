@@ -14,7 +14,7 @@ fn main() {
 
     if stdout().is_terminal() {
         // Настоящий терминал — интерактивная игра в ratatui-TUI.
-        if let Err(e) = app::run_interactive(sides, humans, &mut agent, delay) {
+        if let Err(e) = app::run_interactive(sides, &humans, &mut agent, delay) {
             eprintln!("Ошибка TUI: {e}");
         }
     } else {

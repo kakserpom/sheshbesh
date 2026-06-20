@@ -22,7 +22,9 @@
   ширину окна).
 - Все тесты: `cargo test`
 - Один тест: `cargo test <имя_теста>` (`-- --exact` для точного совпадения)
-- Линтер: `cargo clippy --all --workspace --all-targets`
+- Линтер: `cargo clippy --all --workspace --all-targets` — включён `clippy::pedantic`
+  (через `[lints.clippy]` в `Cargo.toml`); шумные для этого кода правила (числовые
+  приведения `as`, `must_use` на геттерах, `similar_names`) явно разрешены там же.
 - Форматирование: `cargo fmt`
 
 Edition 2024 требует Rust 1.85+. Зависимости: `ratatui` + `crossterm` (только для

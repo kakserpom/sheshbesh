@@ -54,7 +54,7 @@ pub enum Position {
     Moon { side: Side, field: MoonField },
     /// В Тюрьме на клетке периметра (выход — выброс «4»).
     Prison { cell: PerimeterIdx },
-    /// Внутри своего Дома, глубина 0..HOME_DEPTH.
+    /// Внутри своего Дома, глубина 0..`HOME_DEPTH`.
     Home { depth: u8 },
     /// Съедена и удерживается соперником `captor` до выкупа.
     Captured { captor: Side },

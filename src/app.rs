@@ -205,6 +205,9 @@ fn draw(frame: &mut Frame, game: &Game, last: Option<&TurnOutcome>, paused: bool
 
 /// Запускает интерактивный TUI: эвристика (или иной `agent`) играет с темпом
 /// `step`. Возвращает победителя, если партия завершилась до выхода.
+///
+/// # Errors
+/// Ошибки ввода-вывода терминала (отрисовка/чтение событий).
 pub fn run<A: Agent>(active: Vec<Side>, agent: &mut A, step: Duration) -> io::Result<Option<Side>> {
     let mut dice = RandomDice::from_entropy();
     let mut game = Game::start(active, &mut dice);
@@ -554,11 +557,14 @@ fn show_final(
     }
 }
 
-/// Интерактивная партия: стороны из `humans` ходит человек, остальные — `ai`.
+/// Интерактивная партия: сторонами из `humans` ходит человек, остальными — `ai`.
 /// Возвращает победителя, если партия завершилась (а не прервана выходом).
+///
+/// # Errors
+/// Ошибки ввода-вывода терминала (отрисовка/чтение событий).
 pub fn run_interactive<A: Agent>(
     active: Vec<Side>,
-    humans: Vec<Side>,
+    humans: &[Side],
     ai: &mut A,
     step: Duration,
 ) -> io::Result<Option<Side>> {

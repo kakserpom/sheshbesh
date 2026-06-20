@@ -105,6 +105,7 @@ fn home_depth_taken(state: &GameState, owner: Side, depth: u8) -> bool {
 }
 
 /// Разбирает применение значения `die` к фишке `ci`. `None` — ход нелегален.
+#[allow(clippy::too_many_lines)]
 fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
     let ch = state.checkers[ci];
     let owner = ch.owner;
@@ -179,22 +180,21 @@ fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
             if die != field.required_roll() {
                 return None;
             }
-            match field.next() {
-                Some(next) => Some(Resolved {
+            if let Some(next) = field.next() {
+                Some(Resolved {
                     new_pos: Position::Moon { side, field: next },
                     captures: vec![],
                     kind: MoveKind::MoonAdvance,
-                }),
-                None => {
-                    let abs = side.local_to_perimeter(LOCAL_MOON_EXIT);
-                    Some(Resolved {
-                        new_pos: Position::OnTrack {
-                            progress: owner.progress_of(abs),
-                        },
-                        captures: enemies_on(state, owner, abs),
-                        kind: MoveKind::MoonExit,
-                    })
-                }
+                })
+            } else {
+                let abs = side.local_to_perimeter(LOCAL_MOON_EXIT);
+                Some(Resolved {
+                    new_pos: Position::OnTrack {
+                        progress: owner.progress_of(abs),
+                    },
+                    captures: enemies_on(state, owner, abs),
+                    kind: MoveKind::MoonExit,
+                })
             }
         }
         Position::Prison { cell } => {
@@ -345,10 +345,7 @@ pub fn legal_turns(state: &GameState, roll: DiceRoll) -> Vec<Vec<Move>> {
 
 /// Наибольшее число очков, которое можно использовать за данный бросок.
 pub fn max_pips(state: &GameState, roll: DiceRoll) -> u8 {
-    legal_turns(state, roll)
-        .first()
-        .map(|s| pips(s))
-        .unwrap_or(0)
+    legal_turns(state, roll).first().map_or(0, |s| pips(s))
 }
 
 #[cfg(test)]
