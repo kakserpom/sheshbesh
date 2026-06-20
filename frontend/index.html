@@ -66,6 +66,14 @@
       0%   { transform: rotateX(120deg)  rotateY(-150deg); }
       100% { transform: rotateX(calc(var(--rx) + 720deg)) rotateY(calc(var(--ry) + 360deg)); }
     }
+    /* Небольшой отскок при приземлении (в самом конце кувырка). */
+    @keyframes die-bounce {
+      0%, 80% { transform: translateY(0); }
+      88%     { transform: translateY(-16%); }
+      94%     { transform: translateY(0); }
+      98%     { transform: translateY(-6%); }
+      100%    { transform: translateY(0); }
+    }
     /* Дубль: золотая рамка + свечение. */
     .dice.double .die-body { stroke: #facc15; stroke-width: 5; }
     .dice.double { filter: drop-shadow(0 0 5px #facc15bb); }
