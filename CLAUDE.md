@@ -5,8 +5,17 @@
 ## Состояние проекта
 
 Рабочая реализация самобытного варианта нард **Шеш-Беш (Shesh-Besh)** на Rust
-(edition 2024). Все правила из спецификации ниже реализованы; есть эвристический
-ИИ и две визуализации (интерактивный ratatui-TUI и потоковая ANSI-анимация).
+(edition 2024). Все правила из спецификации ниже реализованы; есть эвристический ИИ,
+TUI (интерактивный ratatui + потоковая ANSI-анимация) и **GUI на Leptos+Tauri**.
+
+**Структура — cargo-workspace:**
+- Корневой пакет `sheshbesh` — движок + TUI. TUI-зависимости (`crossterm`/`ratatui`)
+  спрятаны за фичу `tui` (включена по умолчанию). Без неё крейт — **чистый движок**,
+  компилируется в `wasm32-unknown-unknown` (база для GUI). Бинарник требует `tui`.
+- `frontend/` (`sheshbesh-gui`) — Leptos CSR-фронтенд (WASM). Зависит от движка с
+  `default-features = false`; вся игровая логика (движок + ИИ) работает в браузере,
+  доска строится из `sheshbesh::board_glyphs`. Сборка — Trunk.
+- `src-tauri/` (планируется) — Tauri-оболочка вокруг фронтенда.
 
 ## Команды
 
@@ -21,8 +30,11 @@
   `SHESHBESH_SCALE` — ручной масштаб доски 1..4 (по умолчанию TUI подбирает сам под
   размер окна); `SHESHBESH_ASPECT` — соотношение высота/ширина символа терминала
   (по умолчанию определяется из размеров окна в пикселях, иначе 2).
-- Все тесты: `cargo test`
+- Все тесты: `cargo test` (движок + TUI)
 - Один тест: `cargo test <имя_теста>` (`-- --exact` для точного совпадения)
+- Движок без TUI / WASM: `cargo build --no-default-features [--target wasm32-unknown-unknown]`
+- GUI (Leptos): из `frontend/` — `trunk serve` (dev-сервер) или `trunk build`;
+  линт фронтенда — `cargo clippy -p sheshbesh-gui --target wasm32-unknown-unknown`
 - Линтер: `cargo clippy --all --workspace --all-targets` — включён `clippy::pedantic`
   (через `[lints.clippy]` в `Cargo.toml`); шумные для этого кода правила (числовые
   приведения `as`, `must_use` на геттерах, `similar_names`) явно разрешены там же.

@@ -1,3 +1,6 @@
+[workspace]
+members = ["frontend"]
+
 [package]
 name = "sheshbesh"
 version = "0.1.0"
