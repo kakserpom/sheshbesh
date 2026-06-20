@@ -16,9 +16,9 @@ use sheshbesh::{
 use wasm_bindgen_futures::spawn_local;
 
 /// Пауза на кадр «кости брошены» — крутятся кости (мс).
-const HOLD_ROLL_MS: u32 = 1700;
+const HOLD_ROLL_MS: u32 = 1600;
 /// Пауза на один шаг фишки по клетке, мс.
-const HOLD_STEP_MS: u32 = 420;
+const HOLD_STEP_MS: u32 = 520;
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 fn seed() -> u64 {
@@ -594,10 +594,11 @@ fn App() -> impl IntoView {
         animating.set(true);
         spawn_local(async move {
             for frame in frames {
-                TimeoutFuture::new(frame.hold).await;
+                // Показываем кадр, затем держим его свою паузу (бросок — дольше шага).
                 game.update(|g| g.state = frame.state);
                 roll.set(frame.roll);
                 rolling.set(frame.rolling);
+                TimeoutFuture::new(frame.hold).await;
             }
             rolling.set(false);
             animating.set(false);
