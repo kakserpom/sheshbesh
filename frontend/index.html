@@ -39,8 +39,13 @@
     }
     button:hover { background: #334155; }
     /* Лотки резерва/плена */
-    .trays { display: flex; flex-direction: row; flex-wrap: wrap; gap: .3rem .9rem; margin-left: auto; }
-    .tray-row { display: flex; align-items: center; gap: .5rem; }
+    /* Основная область: лотки слева, доска справа */
+    .main { display: flex; flex: 1 1 auto; min-height: 0; gap: 1rem; align-items: stretch; }
+    .trays { display: flex; flex-direction: column; gap: .5rem; flex: 0 0 auto; }
+    .tray-row {
+      display: flex; align-items: center; gap: .5rem;
+      padding: .4rem .5rem; border: 1px solid #1e293b; border-radius: .5rem;
+    }
     .chip {
       display: inline-flex; align-items: center; gap: .3rem;
       padding: .15rem .5rem; border-radius: .5rem; border: 1px solid #334155;
@@ -50,6 +55,10 @@
     .chip.dst { border-color: #22c55e; cursor: pointer; box-shadow: 0 0 0 1px #22c55e inset; }
     .chip.sel { border-color: #e2e8f0; cursor: pointer; box-shadow: 0 0 0 2px #e2e8f0 inset; }
     .dot { width: .7rem; height: .7rem; border-radius: 50%; display: inline-block; }
+    /* Каземат плена в лотке (нейтральный цвет) */
+    .cage-chip { height: 1.15rem; width: auto; vertical-align: middle; }
+    .cc-body { fill: #0b1220; stroke: #94a3b8; stroke-width: 2; }
+    .cc-bar { stroke: #94a3b8; stroke-width: 1.5; opacity: .55; }
 
     /* Векторная доска (SVG): занимает оставшееся место, масштабируется квадратом */
     .board-area {

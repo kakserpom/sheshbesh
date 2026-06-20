@@ -448,6 +448,28 @@ fn die_pips(v: u8) -> Vec<(i32, i32)> {
     }
 }
 
+/// Лоток плена «казематом»: тёмная решётчатая коробка с пленёнными фишками
+/// (нейтральный цвет — в отличие от красной Тюрьмы на доске).
+fn captured_cage(side: Side, n: usize) -> impl IntoView {
+    let col = side_color(side);
+    let slots = i32::try_from(n.max(1)).unwrap_or(1);
+    let h = 22;
+    let w = 8 + 16 * slots;
+    let dots = (0..i32::try_from(n).unwrap_or(0))
+        .map(|k| view! { <circle cx=12 + 16 * k cy=11 r=6 fill=col /> })
+        .collect_view();
+    let bars = (0..=slots)
+        .map(|k| view! { <line x1=4 + 16 * k y1=4 x2=4 + 16 * k y2=h - 4 class="cc-bar" /> })
+        .collect_view();
+    view! {
+        <svg class="cage-chip" viewBox=format!("0 0 {w} {h}")>
+            <rect x=2 y=2 width=w - 4 height=h - 4 rx=4 class="cc-body" />
+            {dots}
+            {bars}
+        </svg>
+    }
+}
+
 /// Грань игральной кости со значением `v` как маленький SVG.
 fn die_face(v: u8) -> impl IntoView {
     view! {
@@ -543,6 +565,54 @@ fn App() -> impl IntoView {
         game.set(fresh(dice, human));
     };
 
+    // Лотки сторон (резерв + плен-каземат) — построчно, слева от доски.
+    let render_trays = move || {
+        let g = game.get();
+        let pre = prefix.get();
+        let ps = after_prefix(&g, &pre);
+        let active = roll.get().is_some() && g.winner().is_none() && g.state.to_move == human;
+        let cands = if active {
+            step_opts(&turns.get(), &pre)
+        } else {
+            Vec::new()
+        };
+        let cur = sel.get();
+        g.state.active.clone().into_iter().map(|side| {
+            // Класс лотка и кликабельность для выбранного типа (резерв/плен).
+            let state_of = |kind: Sel| {
+                let is_human = side == human;
+                let is_src = is_human && cands.iter().any(|&m| move_source(&ps, m) == kind);
+                let is_dst = is_human && matches!(cur, Some(s) if cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind));
+                let is_sel = cur == Some(kind);
+                let cls = if is_sel { "chip sel" }
+                    else if is_dst { "chip dst" }
+                    else if is_src { "chip src" }
+                    else { "chip" };
+                (cls, is_src || is_dst || is_sel)
+            };
+            let res_n = count_pos(&ps, side, true);
+            let (res_cls, res_click) = state_of(Sel::Reserve);
+            // Резерв — только точки (число фишек видно по ним).
+            let dots = (0..res_n).map(|_| view! {
+                <span class="dot" style=format!("background:{}", side_color(side)) />
+            }).collect_view();
+            let cap_n = count_pos(&ps, side, false);
+            let (cap_cls, cap_click) = state_of(Sel::Captured);
+            view! {
+                <div class="tray-row">
+                    <b style=format!("color:{}", side_color(side))>{side.letter().to_string()}</b>
+                    <span class=res_cls on:click=move |_| if res_click { click(Sel::Reserve) }>
+                        "резерв " {dots}
+                    </span>
+                    // Плен — каземат (нейтрального цвета) с пленёнными фишками.
+                    <span class=cap_cls on:click=move |_| if cap_click { click(Sel::Captured) }>
+                        {captured_cage(side, cap_n)}
+                    </span>
+                </div>
+            }
+        }).collect_view()
+    };
+
     view! {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
@@ -562,46 +632,6 @@ fn App() -> impl IntoView {
                         view! { <span class="dice">{die_face(a)} {die_face(b)}</span> }
                     })}
                 </div>
-                <div class="trays">
-                    {move || {
-                        let g = game.get();
-                        let pre = prefix.get();
-                        let ps = after_prefix(&g, &pre);
-                        let active = roll.get().is_some()
-                            && g.winner().is_none()
-                            && g.state.to_move == human;
-                        let cands = if active { step_opts(&turns.get(), &pre) } else { Vec::new() };
-                        let cur = sel.get();
-                        g.state.active.clone().into_iter().map(|side| {
-                            let chip = |kind: Sel, label: &'static str, n: usize| {
-                                let is_human = side == human;
-                                let is_src = is_human && cands.iter().any(|&m| move_source(&ps, m) == kind);
-                                let is_dst = is_human && matches!(cur, Some(s) if cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind));
-                                let is_sel = cur == Some(kind);
-                                let cls = if is_sel { "chip sel" }
-                                    else if is_dst { "chip dst" }
-                                    else if is_src { "chip src" }
-                                    else { "chip" };
-                                let dots = (0..n).map(|_| view! {
-                                    <span class="dot" style=format!("background:{}", side_color(side)) />
-                                }).collect_view();
-                                let clickable = is_src || is_dst || is_sel;
-                                view! {
-                                    <span class=cls on:click=move |_| if clickable { click(kind) }>
-                                        {label} " " {dots} " " {n.to_string()}
-                                    </span>
-                                }
-                            };
-                            view! {
-                                <div class="tray-row">
-                                    <b style=format!("color:{}", side_color(side))>{side.letter().to_string()}</b>
-                                    {chip(Sel::Reserve, "резерв", count_pos(&ps, side, true))}
-                                    {chip(Sel::Captured, "плен", count_pos(&ps, side, false))}
-                                </div>
-                            }
-                        }).collect_view()
-                    }}
-                </div>
             </div>
             <div class="controls">
                 <button on:click=on_new>"Новая игра"</button>
@@ -617,6 +647,8 @@ fn App() -> impl IntoView {
                 }}
             </div>
 
+            <div class="main">
+            <div class="trays">{render_trays}</div>
             <div class="board-area">
             <svg class="board" viewBox=format!("0 0 {d} {d}", d = BOARD_DIM)>
                 {move || static_board(&game.get().state)}
@@ -720,6 +752,7 @@ fn App() -> impl IntoView {
                     nodes
                 }}
             </svg>
+            </div>
             </div>
         </div>
     }
