@@ -71,6 +71,31 @@ fn enemies_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> Vec<usize> 
         .collect()
 }
 
+/// Стоит ли на клетке периметра `cell` хоть одна фишка (любого игрока).
+/// Используется для правила «нельзя проходить через фишки».
+fn occupied(state: &GameState, cell: PerimeterIdx) -> bool {
+    state
+        .checkers
+        .iter()
+        .any(|c| c.pos.perimeter_cell(c.owner) == Some(cell))
+}
+
+/// Свободен ли путь для хода фишки `owner` из `progress` на `die` клеток:
+/// все промежуточные клетки периметра (не считая конечной) должны быть пусты,
+/// кроме углов, через которые проходить можно.
+fn path_clear(state: &GameState, owner: Side, progress: u16, die: u8) -> bool {
+    let target = progress + die as u16;
+    // Промежуточные клетки периметра — до конечной (или до входа в Дом).
+    let perim_end = target.min(PERIMETER as u16);
+    for i in (progress + 1)..perim_end {
+        let abs = owner.entry().advance(i as usize);
+        if cell_kind(abs) != CellKind::Corner && occupied(state, abs) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Занята ли клетка Дома глубины `depth` своей фишкой (в Дом — по 1 в клетку).
 fn home_depth_taken(state: &GameState, owner: Side, depth: u8) -> bool {
     state
@@ -97,6 +122,10 @@ fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
         }
         Position::OnTrack { progress } => {
             let target = progress + die as u16;
+            // Нельзя проходить через чужие/свои фишки (кроме стоящих на углу).
+            if !path_clear(state, owner, progress, die) {
+                return None;
+            }
             if (target as usize) < PERIMETER {
                 let abs = owner.entry().advance(target as usize);
                 let (new_pos, captures, kind) = match cell_kind(abs) {
@@ -131,7 +160,9 @@ fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
                     kind,
                 })
             } else {
-                // Заход в Дом: ровно, по 1 фишке в клетку, без перебора.
+                // Заход в Дом: ровно, по 1 фишке в клетку, без перебора. Клетки Дома —
+                // отдельные ячейки (не «коридор»), поэтому правило прохода к ним не
+                // применяется; важен лишь свободный путь по периметру (проверен выше).
                 let depth = (target as usize) - PERIMETER;
                 if depth < HOME_DEPTH && !home_depth_taken(state, owner, depth as u8) {
                     Some(Resolved {
@@ -342,6 +373,41 @@ mod tests {
             });
         }
         s
+    }
+
+    #[test]
+    fn cannot_pass_through_a_checker() {
+        // A на progress 0; своя фишка на progress 2 (промежуточная для хода на 3).
+        let s = state_a(&[
+            Position::OnTrack { progress: 0 },
+            Position::OnTrack { progress: 2 },
+        ]);
+        // Ход на 3 фишкой 0 проходит через фишку 2 → запрещён.
+        assert!(!moves_for_die(&s, 3).iter().any(|m| m.checker == 0));
+        // Ход на 1 (без промежуточных) и на 2 (встать рядом/на свою) — допустимы.
+        assert!(moves_for_die(&s, 1).iter().any(|m| m.checker == 0));
+        // Фишка 2 свободна и может ходить.
+        assert!(moves_for_die(&s, 3).iter().any(|m| m.checker == 1));
+    }
+
+    #[test]
+    fn corner_is_transparent_to_passing() {
+        let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+        s.checkers.clear();
+        // A перед углом B (progress 8 = abs 17); ход на 2 проходит через угол abs 18.
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress: 8 },
+        });
+        // Чужая фишка стоит на углу — проходить через неё можно.
+        let corner = Side::B.start_corner();
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::OnTrack {
+                progress: Side::C.progress_of(corner),
+            },
+        });
+        assert!(moves_for_die(&s, 2).iter().any(|m| m.checker == 0));
     }
 
     #[test]
