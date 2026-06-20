@@ -371,6 +371,23 @@ fn step_options(turns: &[Vec<Move>], prefix: &[Move], step: usize) -> Vec<Move> 
     options
 }
 
+/// Схлопывает равнозначные ходы: фишки одного игрока в одинаковой позиции,
+/// идущие на одно значение кости, дают один и тот же результат (фишки
+/// неразличимы) — оставляем по одному представителю.
+fn dedup_moves(state: &GameState, moves: Vec<Move>) -> Vec<Move> {
+    let mut seen: Vec<(Side, Position, u8)> = Vec::new();
+    let mut out = Vec::new();
+    for mv in moves {
+        let c = &state.checkers[mv.checker];
+        let sig = (c.owner, c.pos, mv.die);
+        if !seen.contains(&sig) {
+            seen.push(sig);
+            out.push(mv);
+        }
+    }
+    out
+}
+
 /// Человек собирает ход по одной кости за шаг, оставаясь на пути к ходу с
 /// максимумом очков. Возвращает выбранную полную последовательность или `None`
 /// (игрок вышел). Все варианты в `turns` имеют одну длину (см. `legal_turns`):
@@ -413,8 +430,8 @@ fn human_pick_sequence(
     let mut base = state.clone();
 
     for step in 0..total {
-        // Варианты-ходы на этом шаге среди последовательностей с уже выбранным префиксом.
-        let options = step_options(turns, &prefix, step);
+        // Варианты-ходы на этом шаге; равнозначные (неразличимые фишки) схлопываем.
+        let options = dedup_moves(&base, step_options(turns, &prefix, step));
 
         let labels: Vec<String> = options
             .iter()
@@ -470,7 +487,9 @@ fn human_pick_forced(
     captor: Side,
     options: &[Move],
 ) -> io::Result<usize> {
-    let descs: Vec<String> = options
+    // Равнозначные ходы схлопываем, но выбор возвращаем как индекс в исходном списке.
+    let shown = dedup_moves(state, options.to_vec());
+    let descs: Vec<String> = shown
         .iter()
         .map(|m| format!("{}·{}", m.die, kind_label(m.kind)))
         .collect();
@@ -482,8 +501,8 @@ fn human_pick_forced(
         legend_line(),
         Line::raw("↑/↓ — выбор, Enter — применить"),
     ];
-    let idx = select_loop(terminal, options.len(), false, |f, sel| {
-        let (from, to) = move_endpoints(state, options[sel]);
+    let idx = select_loop(terminal, shown.len(), false, |f, sel| {
+        let (from, to) = move_endpoints(state, shown[sel]);
         draw_pick(
             f,
             state,
@@ -494,7 +513,8 @@ fn human_pick_forced(
             option_lines(&descs, sel),
         );
     })?;
-    Ok(idx.unwrap_or(0))
+    let chosen = shown[idx.unwrap_or(0)];
+    Ok(options.iter().position(|m| *m == chosen).unwrap_or(0))
 }
 
 /// Показывает финальный экран и ждёт `q`/`Esc`/`Enter`.
@@ -645,6 +665,19 @@ mod tests {
         assert!(text.contains("ввод"));
         // Пустой ход описывается как пропуск.
         assert!(describe_turn(&[]).contains("пропуск"));
+    }
+
+    #[test]
+    fn identical_entry_moves_collapse_to_one() {
+        use crate::dice::{DiceRoll, Die};
+        let state = GameState::new(vec![Side::A, Side::C], Side::A);
+        // (6,6): первый шаг — ввод любой из 4 одинаковых резервных фишек.
+        let roll = DiceRoll::new(Die::new(6).unwrap(), Die::new(6).unwrap());
+        let turns = legal_turns(&state, roll);
+        let raw = step_options(&turns, &[], 0);
+        assert!(raw.len() > 1); // 4 разных индекса фишек
+        // После схлопывания — один вариант «ввод».
+        assert_eq!(dedup_moves(&state, raw).len(), 1);
     }
 
     #[test]
