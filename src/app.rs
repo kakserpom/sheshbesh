@@ -19,7 +19,7 @@ use ratatui::{DefaultTerminal, Frame, init, restore};
 use crate::board::{HOME_DEPTH, PERIMETER, PerimeterIdx, Side};
 use crate::dice::DiceRoll;
 use crate::moves::{Move, MoveKind, apply, legal_turns};
-use crate::render::{Glyph, board_glyphs, margin_coord};
+use crate::render::{Glyph, board_glyphs, board_scale, margin_coord};
 use crate::state::{GameState, Position};
 use crate::turn::{Agent, DiceSource, Game, RandomDice, TurnOutcome};
 
@@ -74,26 +74,29 @@ fn board_lines_hl(
 ) -> Vec<Line<'static>> {
     let from_cell = from.map(margin_coord);
     let to_cell = to.map(margin_coord);
-    board_glyphs(state)
-        .into_iter()
-        .enumerate()
-        .map(|(r, row)| {
-            let mut spans = Vec::with_capacity(row.len() * 2);
-            for (c, g) in row.into_iter().enumerate() {
-                if c > 0 {
-                    spans.push(Span::raw(" "));
-                }
-                let mut sp = glyph_span(g);
-                if Some((r, c)) == to_cell {
-                    sp.style = sp.style.bg(Color::Green);
-                } else if Some((r, c)) == from_cell {
-                    sp.style = sp.style.bg(Color::Blue);
-                }
-                spans.push(sp);
+    let scale = board_scale();
+    let pad = Span::raw(" ".repeat(2 * scale - 1)); // хвост клетки до ширины 2*scale
+
+    let mut lines = Vec::new();
+    for (r, row) in board_glyphs(state).into_iter().enumerate() {
+        let mut spans = Vec::with_capacity(row.len() * 2);
+        for (c, g) in row.into_iter().enumerate() {
+            let mut sp = glyph_span(g);
+            if Some((r, c)) == to_cell {
+                sp.style = sp.style.bg(Color::Green);
+            } else if Some((r, c)) == from_cell {
+                sp.style = sp.style.bg(Color::Blue);
             }
-            Line::from(spans)
-        })
-        .collect()
+            spans.push(sp);
+            spans.push(pad.clone());
+        }
+        lines.push(Line::from(spans));
+        // Пустые строки для вертикального масштаба.
+        for _ in 1..scale {
+            lines.push(Line::raw(""));
+        }
+    }
+    lines
 }
 
 /// Доска без подсветки.
@@ -643,8 +646,11 @@ mod tests {
     #[test]
     fn board_has_outer_margins() {
         let state = GameState::new(vec![Side::A, Side::C], Side::A);
-        // Сетка увеличена на поля с каждой стороны.
-        assert_eq!(board_lines(&state).len(), crate::render::BOARD_DIM);
+        // Сетка увеличена на поля с каждой стороны; масштаб умножает число строк.
+        assert_eq!(
+            board_lines(&state).len(),
+            crate::render::BOARD_DIM * board_scale()
+        );
     }
 
     #[test]

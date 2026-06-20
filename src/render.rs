@@ -56,6 +56,17 @@ pub(crate) const BOARD_MARGIN: usize = 3;
 /// Сторона квадрата сетки глифов (квадрат периметра плюс поля).
 pub(crate) const BOARD_DIM: usize = SIDE_LEN + 2 * BOARD_MARGIN;
 
+/// Масштаб доски из `SHESHBESH_SCALE` (1..4, по умолчанию 2). Клетка занимает
+/// `2*scale` колонок и `scale` строк, поэтому квадрат остаётся пропорциональным.
+/// На малом терминале можно уменьшить (`SHESHBESH_SCALE=1`).
+pub(crate) fn board_scale() -> usize {
+    std::env::var("SHESHBESH_SCALE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2)
+        .clamp(1, 4)
+}
+
 /// Глиф одной ячейки сетки доски (рендер-независимый).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Glyph {
