@@ -577,6 +577,8 @@ fn App() -> impl IntoView {
             Vec::new()
         };
         let cur = sel.get();
+        let to_move = g.state.to_move;
+        let cur_roll = roll.get();
         g.state.active.clone().into_iter().map(|side| {
             // Класс лотка и кликабельность для выбранного типа (резерв/плен).
             let state_of = |kind: Sel| {
@@ -598,8 +600,13 @@ fn App() -> impl IntoView {
             }).collect_view();
             let cap_n = count_pos(&ps, side, false);
             let (cap_cls, cap_click) = state_of(Sel::Captured);
+            // Кости — на строке стороны, чей сейчас ход.
+            let dice = (side == to_move).then_some(cur_roll).flatten().map(|r| {
+                let [a, b] = r.values();
+                view! { <span class="dice">{die_face(a)} {die_face(b)}</span> }
+            });
             view! {
-                <div class="tray-row">
+                <div class="tray-row" class:active=side == to_move>
                     <b style=format!("color:{}", side_color(side))>{side.letter().to_string()}</b>
                     <span class=res_cls on:click=move |_| if res_click { click(Sel::Reserve) }>
                         "резерв " {dots}
@@ -608,6 +615,7 @@ fn App() -> impl IntoView {
                     <span class=cap_cls on:click=move |_| if cap_click { click(Sel::Captured) }>
                         {captured_cage(side, cap_n)}
                     </span>
+                    {dice}
                 </div>
             }
         }).collect_view()
@@ -616,22 +624,14 @@ fn App() -> impl IntoView {
     view! {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
-            <div class="topbar">
-                <div class="status">
-                    <span class="status-text">
-                        {move || {
-                            let g = game.get();
-                            match g.winner() {
-                                Some(w) => format!("Победила сторона {}", w.letter()),
-                                None => format!("Ход стороны {}", g.state.to_move.letter()),
-                            }
-                        }}
-                    </span>
-                    {move || roll.get().map(|r| {
-                        let [a, b] = r.values();
-                        view! { <span class="dice">{die_face(a)} {die_face(b)}</span> }
-                    })}
-                </div>
+            <div class="status">
+                {move || {
+                    let g = game.get();
+                    match g.winner() {
+                        Some(w) => format!("Победила сторона {}", w.letter()),
+                        None => format!("Ход стороны {}", g.state.to_move.letter()),
+                    }
+                }}
             </div>
             <div class="controls">
                 <button on:click=on_new>"Новая игра"</button>
