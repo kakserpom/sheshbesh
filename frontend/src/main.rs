@@ -686,9 +686,18 @@ fn die3d(v: u8) -> impl IntoView {
         5 => (90, 0),
         _ => (0, 180), // 6
     };
+    // Случайные длительность и задержка — кости останавливаются не одновременно
+    // (сумма < ROLL_ANIM_MS, чтобы кувырок успел завершиться до показа результата).
+    let dur = 1.0 + js_sys::Math::random() * 0.4;
+    let delay = js_sys::Math::random() * 0.1;
     view! {
         <div class="die3d">
-            <div class="cube" style=format!("--rx:{rx}deg;--ry:{ry}deg")>
+            <div
+                class="cube"
+                style=format!(
+                    "--rx:{rx}deg;--ry:{ry}deg;animation-duration:{dur:.3}s;animation-delay:{delay:.3}s",
+                )
+            >
                 <div class="face f-front">{die_face(1)}</div>
                 <div class="face f-back">{die_face(6)}</div>
                 <div class="face f-right">{die_face(3)}</div>
