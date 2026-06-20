@@ -66,13 +66,42 @@
       0%   { transform: rotateX(120deg)  rotateY(-150deg); }
       100% { transform: rotateX(calc(var(--rx) + 720deg)) rotateY(calc(var(--ry) + 360deg)); }
     }
-    /* Небольшой отскок при приземлении (в самом конце кувырка). */
-    @keyframes die-bounce {
-      0%, 80% { transform: translateY(0); }
-      88%     { transform: translateY(-16%); }
-      94%     { transform: translateY(0); }
-      98%     { transform: translateY(-6%); }
-      100%    { transform: translateY(0); }
+    /* Несколько отскоков по ходу кувырка, затухающих к остановке (как настоящая
+       кость, прыгающая по столу). Несколько случайно выбираемых рисунков. */
+    @keyframes die-bounce-a {
+      0%   { transform: translateY(0); }
+      12%  { transform: translateY(-34%); }
+      26%  { transform: translateY(0); }
+      40%  { transform: translateY(-22%); }
+      54%  { transform: translateY(0); }
+      68%  { transform: translateY(-12%); }
+      80%  { transform: translateY(0); }
+      90%  { transform: translateY(-5%); }
+      100% { transform: translateY(0); }
+    }
+    @keyframes die-bounce-b {
+      0%   { transform: translateY(0); }
+      18%  { transform: translateY(-28%); }
+      32%  { transform: translateY(0); }
+      46%  { transform: translateY(-18%); }
+      60%  { transform: translateY(0); }
+      74%  { transform: translateY(-10%); }
+      86%  { transform: translateY(0); }
+      94%  { transform: translateY(-4%); }
+      100% { transform: translateY(0); }
+    }
+    @keyframes die-bounce-c {
+      0%   { transform: translateY(0); }
+      10%  { transform: translateY(-30%); }
+      22%  { transform: translateY(0); }
+      34%  { transform: translateY(-20%); }
+      48%  { transform: translateY(0); }
+      62%  { transform: translateY(-13%); }
+      74%  { transform: translateY(0); }
+      85%  { transform: translateY(-6%); }
+      93%  { transform: translateY(0); }
+      97%  { transform: translateY(-2%); }
+      100% { transform: translateY(0); }
     }
     /* Дубль: золотая рамка + свечение. */
     .dice.double .die-body { stroke: #facc15; stroke-width: 5; }

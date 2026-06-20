@@ -694,15 +694,21 @@ fn die3d(v: u8) -> impl IntoView {
         2 => "die-roll-c",
         _ => "die-roll-d",
     };
+    // Случайный рисунок отскоков (несколько прыжков по ходу кувырка, затухают).
+    let bounce = match (js_sys::Math::random() * 3.0) as u8 {
+        0 => "die-bounce-a",
+        1 => "die-bounce-b",
+        _ => "die-bounce-c",
+    };
     // Широкий разброс длительности + мягкое замедление (движение видно до самого
     // конца) — кости явно останавливаются в разные моменты.
     let dur = 1.1 + js_sys::Math::random() * 0.8;
     let delay = js_sys::Math::random() * 0.12;
     view! {
-        // Обёртка с тем же таймингом — лёгкий «отскок» при приземлении кости.
+        // Обёртка с тем же таймингом — кость подпрыгивает по ходу вращения.
         <div
             class="die3d"
-            style=format!("animation:die-bounce {dur:.3}s ease-out {delay:.3}s forwards")
+            style=format!("animation:{bounce} {dur:.3}s ease-in-out {delay:.3}s forwards")
         >
             <div
                 class="cube"
