@@ -72,8 +72,8 @@ fn enemies_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> Vec<usize> 
 }
 
 /// Стоит ли на клетке периметра `cell` хоть одна фишка (любого игрока).
-/// Используется для правила «нельзя проходить через фишки».
-fn occupied(state: &GameState, cell: PerimeterIdx) -> bool {
+/// Используется для правила «нельзя проходить через фишки» (и оценкой ИИ).
+pub(crate) fn occupied(state: &GameState, cell: PerimeterIdx) -> bool {
     state
         .checkers
         .iter()

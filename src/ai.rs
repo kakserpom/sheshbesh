@@ -6,7 +6,7 @@
 //! достаточно, чтобы агент шёл к Дому, ел чужие фишки и не подставлялся зря.
 
 use crate::board::{CellKind, LOCAL_MOON_EXIT, PERIMETER, Side, cell_kind};
-use crate::moves::{Move, apply};
+use crate::moves::{Move, apply, occupied};
 use crate::state::{GameState, MoonField, Position};
 use crate::turn::Agent;
 
@@ -47,24 +47,48 @@ fn side_score(state: &GameState, side: Side) -> i32 {
         .sum()
 }
 
-/// Число бросков из 36, которыми одна фишка соперника бьёт открытую фишку на
-/// дистанции `d` клеток (классическая таблица «выстрелов»: прямые + комбинации).
-fn shots_for_distance(d: i32) -> i32 {
-    match d {
-        1 => 11,
-        2 => 12,
-        3 => 14,
-        4 => 15,
-        5 => 15,
-        6 => 17,
-        7 => 6,
-        8 => 6,
-        9 => 5,
-        10 => 3,
-        11 => 2,
-        12 => 3,
-        _ => 0,
+/// Число бросков из 36, которыми фишка `ao` с прогресса `p` дотягивается до цели
+/// на дистанции `d` клеток (1..12) — с учётом блокировки: прямой выстрел требует
+/// свободного пути, комбинация — ещё и проходимой промежуточной остановки.
+/// Углы прозрачны для прохода; на Луну/Тюрьму промежуточно встать нельзя.
+fn shots_to(state: &GameState, ao: Side, p: u16, d: i32) -> i32 {
+    if !(1..=12).contains(&d) {
+        return 0;
     }
+    let d = d as usize;
+    let abs = |k: usize| ao.entry().advance(p as usize + k);
+
+    // Предвычислим для дистанций 1..=d: блокирует ли клетка проход и можно ли на
+    // ней промежуточно остановиться (обычная/угол/вход в Дом — да; Луна/Тюрьма — нет).
+    let mut blocks = [false; 13];
+    let mut stop_kind = [false; 13];
+    for k in 1..=d {
+        let kind = cell_kind(abs(k));
+        blocks[k] = kind != CellKind::Corner && occupied(state, abs(k));
+        stop_kind[k] = matches!(
+            kind,
+            CellKind::Plain | CellKind::Corner | CellKind::HomeEntrance
+        );
+    }
+    // Свободны ли промежуточные клетки lo..=hi-1.
+    let seg_clear = |lo: usize, hi: usize| (lo..hi).all(|k| !blocks[k]);
+    // Можно ли промежуточно остановиться на дистанции a (для комбинации).
+    let stoppable = |a: usize| a < d && stop_kind[a] && seg_clear(1, a);
+
+    let direct_ok = d <= 6 && seg_clear(1, d);
+    let mut shots = 0;
+    for x in 1..=6usize {
+        for y in 1..=6usize {
+            let hit = (direct_ok && (x == d || y == d))
+                || (x + y == d
+                    && ((stoppable(x) && seg_clear(x + 1, d))
+                        || (stoppable(y) && seg_clear(y + 1, d))));
+            if hit {
+                shots += 1;
+            }
+        }
+    }
+    shots
 }
 
 /// Угроза фишкам стороны `victim` со стороны `attacker`: сумма по открытым
@@ -88,7 +112,12 @@ fn threats_against(state: &GameState, victim: Side, attacker: Side) -> i32 {
         for oc in state.checkers.iter().filter(|c| c.owner == attacker) {
             match oc.pos {
                 Position::OnTrack { progress } => {
-                    shots += shots_for_distance(cell_in_attacker - progress as i32);
+                    shots += shots_to(
+                        state,
+                        attacker,
+                        progress,
+                        cell_in_attacker - progress as i32,
+                    );
                 }
                 // Резервная фишка входит по «6» на точку входа атакующего.
                 Position::Reserve if cell_in_attacker == 0 => shots += 11,
@@ -187,6 +216,33 @@ mod tests {
 
     fn roll(a: u8, b: u8) -> DiceRoll {
         DiceRoll::new(Die::new(a).unwrap(), Die::new(b).unwrap())
+    }
+
+    #[test]
+    fn shots_account_for_blocked_lines() {
+        // Атакующий A на progress 0 (abs 9); цель на дистанции 4 (abs 13).
+        let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+        s.checkers.clear();
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress: 0 },
+        });
+        let clear = shots_to(&s, Side::A, 0, 4);
+        assert!(clear > 0);
+
+        // Блокер на дистанции 2 (abs 11) перекрывает прямой выстрел и комбинации.
+        let blocker = PerimeterIdx::new(11);
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::OnTrack {
+                progress: Side::C.progress_of(blocker),
+            },
+        });
+        let blocked = shots_to(&s, Side::A, 0, 4);
+        assert!(blocked < clear, "блокер должен снижать число выстрелов");
+
+        // Дистанция вне досягаемости — выстрелов нет.
+        assert_eq!(shots_to(&s, Side::A, 0, 20), 0);
     }
 
     #[test]
