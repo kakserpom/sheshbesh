@@ -28,22 +28,38 @@
     }
     .herald { font-weight: 500; }
     .controls { display: flex; gap: .6rem; align-items: center; margin: .6rem 0; }
-    .dice { display: inline-flex; gap: .4rem; perspective: 340px; }
-    .die { width: 1.8rem; height: 1.8rem; transform-origin: 50% 50%; }
+    .dice { display: inline-flex; gap: .55rem; perspective: 600px; }
+    .die { width: 1.8rem; height: 1.8rem; }
     .die-body { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 3; }
     .die-pip { fill: #0f172a; }
-    /* Бросок: кость перекатывается с грани на грань (3D-кувырок + смена граней). */
-    .dice.rolling .die { animation: die-tumble .14s ease-in-out; }
-    .dice.rolling .die:last-child { animation-name: die-tumble-alt; }
-    @keyframes die-tumble {
-      0%   { transform: rotateX(-82deg) rotateY(12deg) scale(.92); }
-      100% { transform: rotateX(38deg)  rotateY(-8deg) scale(1.06); }
+    /* Настоящий 3D-кубик: 6 граней, кувыркается при броске и встаёт нужной гранью */
+    .die3d { width: 1.8rem; height: 1.8rem; perspective: 600px; }
+    .cube {
+      position: relative; width: 100%; height: 100%;
+      transform-style: preserve-3d;
+      animation: die-roll 1.55s cubic-bezier(.22,.62,.24,1) forwards;
     }
-    @keyframes die-tumble-alt {
-      0%   { transform: rotateY(-82deg) rotateX(-12deg) scale(.92); }
-      100% { transform: rotateY(40deg)  rotateX(10deg)  scale(1.06); }
+    .die3d:last-child .cube { animation-name: die-roll-2; }
+    .face {
+      position: absolute; width: 100%; height: 100%;
+      backface-visibility: hidden;
     }
-    /* Дубль: золотая рамка + свечение (проявляется, когда кости встали на дубль). */
+    .face .die { width: 100%; height: 100%; display: block; }
+    .f-front  { transform: translateZ(.9rem); }
+    .f-back   { transform: rotateY(180deg) translateZ(.9rem); }
+    .f-right  { transform: rotateY(90deg)  translateZ(.9rem); }
+    .f-left   { transform: rotateY(-90deg) translateZ(.9rem); }
+    .f-top    { transform: rotateX(90deg)  translateZ(.9rem); }
+    .f-bottom { transform: rotateX(-90deg) translateZ(.9rem); }
+    @keyframes die-roll {
+      0%   { transform: rotateX(-220deg) rotateY(-170deg); }
+      100% { transform: rotateX(calc(var(--rx) + 720deg)) rotateY(calc(var(--ry) + 1080deg)); }
+    }
+    @keyframes die-roll-2 {
+      0%   { transform: rotateX(200deg) rotateY(190deg); }
+      100% { transform: rotateX(calc(var(--rx) + 1080deg)) rotateY(calc(var(--ry) - 720deg)); }
+    }
+    /* Дубль: золотая рамка + свечение. */
     .dice.double .die-body { stroke: #facc15; stroke-width: 5; }
     .dice.double { filter: drop-shadow(0 0 5px #facc15bb); }
     button {

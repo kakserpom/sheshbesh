@@ -9,33 +9,20 @@ use sheshbesh::board::{
     LOCAL_MOON, LOCAL_MOON_EXIT, LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR, PERIMETER, cell_kind,
 };
 use sheshbesh::{
-    Agent, BOARD_DIM, BOARD_MARGIN, CellKind, DiceRoll, DiceSource, Die, Game, GameState,
-    Heuristic, MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side, apply,
-    checker_cell, legal_turns, margin_coord,
+    Agent, BOARD_DIM, BOARD_MARGIN, CellKind, DiceRoll, DiceSource, Game, GameState, Heuristic,
+    MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side, apply, checker_cell,
+    legal_turns, margin_coord,
 };
 use wasm_bindgen_futures::spawn_local;
 
+/// Длительность анимации броска (3D-кувырок кубика), мс. Должна совпадать с CSS.
+const ROLL_ANIM_MS: u32 = 1550;
 /// Пауза на кадр «результат броска» — кости остановились (мс).
-const HOLD_ROLL_MS: u32 = 1100;
+const HOLD_ROLL_MS: u32 = 1000;
 /// Пауза, когда ходов нет: дольше показываем бросок, прежде чем отдать ход.
 const HOLD_NOMOVE_MS: u32 = 1700;
 /// Пауза на один шаг фишки по клетке, мс.
 const HOLD_STEP_MS: u32 = 650;
-/// Длительность одного «переката» кости с грани на грань при броске, мс.
-const TUMBLE_STEP_MS: u32 = 115;
-/// Сколько перекатов показать перед остановкой костей.
-const TUMBLE_COUNT: usize = 10;
-
-/// Фейковый бросок для k-го кадра переката: грани быстро меняются (a≠b — без
-/// случайных «дублей» во время кручения).
-fn tumble_roll(k: usize) -> DiceRoll {
-    let a = (k * 5 % 6) as u8 + 1;
-    let b = ((k * 5 + 2) % 6) as u8 + 1;
-    DiceRoll::new(
-        Die::new(a).expect("грань 1..=6"),
-        Die::new(b).expect("грань 1..=6"),
-    )
-}
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 fn seed() -> u64 {
@@ -188,22 +175,14 @@ fn commit_frames<F>(
 {
     let side = game.state.to_move;
     let no_move = played.is_empty();
-    // Перекат костей с грани на грань: быстрая смена показанных граней
-    // (дубль перекатывается подольше — отдельная «реакция» на него)…
-    let tumbles = if roll.is_double() {
-        TUMBLE_COUNT + 6
-    } else {
-        TUMBLE_COUNT
-    };
-    for k in 0..tumbles {
-        frames.push(Frame {
-            state: game.state.clone(),
-            roll: Some(tumble_roll(k)),
-            hold: TUMBLE_STEP_MS,
-            rolling: true,
-            note: (k == 0).then(|| format!("{} бросает кости…", side_name(side, human))),
-        });
-    }
+    // Кадр броска: кубики кувыркаются в 3D (анимация в статусе) и встают на грань.
+    frames.push(Frame {
+        state: game.state.clone(),
+        roll: Some(roll),
+        hold: ROLL_ANIM_MS,
+        rolling: true,
+        note: Some(format!("{} бросает кости…", side_name(side, human))),
+    });
     // …затем кости встают на выпавший результат и держатся. Если ходить нечем —
     // держим дольше, чтобы было видно, что выпало, прежде чем ход уходит.
     frames.push(Frame {
@@ -691,6 +670,32 @@ fn die_face(v: u8) -> impl IntoView {
     }
 }
 
+/// Настоящий 3D-кубик: 6 граней (1..6), который кувыркается и встаёт гранью `v`
+/// к зрителю (CSS-анимация `die-roll`; конечный поворот задаётся через `--rx/--ry`).
+fn die3d(v: u8) -> impl IntoView {
+    // Конечный поворот куба, чтобы нужная грань смотрела вперёд (одна ось на грань).
+    let (rx, ry) = match v {
+        1 => (0, 0),
+        2 => (-90, 0),
+        3 => (0, -90),
+        4 => (0, 90),
+        5 => (90, 0),
+        _ => (0, 180), // 6
+    };
+    view! {
+        <div class="die3d">
+            <div class="cube" style=format!("--rx:{rx}deg;--ry:{ry}deg")>
+                <div class="face f-front">{die_face(1)}</div>
+                <div class="face f-back">{die_face(6)}</div>
+                <div class="face f-right">{die_face(3)}</div>
+                <div class="face f-left">{die_face(4)}</div>
+                <div class="face f-top">{die_face(2)}</div>
+                <div class="face f-bottom">{die_face(5)}</div>
+            </div>
+        </div>
+    }
+}
+
 #[component]
 fn App() -> impl IntoView {
     let human = Side::A;
@@ -944,7 +949,7 @@ fn App() -> impl IntoView {
                         .map(|r| {
                             let [a, b] = r.values();
                             let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
-                            view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }
+                            view! { <span class=cls>{die3d(a)} {die3d(b)}</span> }
                         })
                 }}
             </div>
