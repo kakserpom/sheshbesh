@@ -15,8 +15,8 @@ use sheshbesh::{
 };
 use wasm_bindgen_futures::spawn_local;
 
-/// Пауза кадра броска: 3D-кувырок длится до ~1.9с (см. `die3d`) + запас, мс.
-const ROLL_ANIM_MS: u32 = 2150;
+/// Пауза кадра броска: 3D-кувырок длится до ~2.2с (см. `die3d`) + запас, мс.
+const ROLL_ANIM_MS: u32 = 2350;
 /// Пауза на кадр «результат броска» — кости остановились (мс).
 const HOLD_ROLL_MS: u32 = 1000;
 /// Пауза, когда ходов нет: дольше показываем бросок, прежде чем отдать ход.
@@ -676,7 +676,9 @@ fn die_face(v: u8) -> impl IntoView {
 
 /// Настоящий 3D-кубик: 6 граней (1..6), который кувыркается и встаёт гранью `v`
 /// к зрителю (CSS-анимация `die-roll`; конечный поворот задаётся через `--rx/--ry`).
-fn die3d(v: u8) -> impl IntoView {
+/// `idx` (0/1) разводит длительности костей по разным диапазонам — чтобы они
+/// заметно останавливались в разные моменты, а не синхронно.
+fn die3d(v: u8, idx: usize) -> impl IntoView {
     // Конечный поворот куба, чтобы нужная грань смотрела вперёд (одна ось на грань).
     let (rx, ry) = match v {
         1 => (0, 0),
@@ -700,9 +702,10 @@ fn die3d(v: u8) -> impl IntoView {
         1 => "die-bounce-b",
         _ => "die-bounce-c",
     };
-    // Широкий разброс длительности + мягкое замедление (движение видно до самого
-    // конца) — кости явно останавливаются в разные моменты.
-    let dur = 1.1 + js_sys::Math::random() * 0.8;
+    // Разные диапазоны длительности по `idx` (1.0–1.4с и 1.7–2.1с) — одна кость
+    // заведомо крутится дольше другой, остановки явно не совпадают.
+    let base = if idx.is_multiple_of(2) { 1.0 } else { 1.7 };
+    let dur = base + js_sys::Math::random() * 0.4;
     let delay = js_sys::Math::random() * 0.12;
     view! {
         // Обёртка с тем же таймингом — кость подпрыгивает по ходу вращения.
@@ -957,7 +960,7 @@ fn App() -> impl IntoView {
                 let [a, b] = r.values();
                 if spinning {
                     let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
-                    view! { <span class=cls>{die3d(a)} {die3d(b)}</span> }.into_any()
+                    view! { <span class=cls>{die3d(a, 0)} {die3d(b, 1)}</span> }.into_any()
                 } else {
                     let cls = if r.is_double() { "dice double" } else { "dice" };
                     view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }.into_any()
