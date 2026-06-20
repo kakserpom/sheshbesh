@@ -15,8 +15,8 @@ use sheshbesh::{
 };
 use wasm_bindgen_futures::spawn_local;
 
-/// Длительность анимации броска (3D-кувырок кубика), мс. Должна совпадать с CSS.
-const ROLL_ANIM_MS: u32 = 1550;
+/// Пауза кадра броска: 3D-кувырок длится до ~1.65с (см. `die3d`) + запас, мс.
+const ROLL_ANIM_MS: u32 = 1850;
 /// Пауза на кадр «результат броска» — кости остановились (мс).
 const HOLD_ROLL_MS: u32 = 1000;
 /// Пауза, когда ходов нет: дольше показываем бросок, прежде чем отдать ход.
@@ -686,16 +686,23 @@ fn die3d(v: u8) -> impl IntoView {
         5 => (90, 0),
         _ => (0, 180), // 6
     };
-    // Случайные длительность и задержка — кости останавливаются не одновременно
-    // (сумма < ROLL_ANIM_MS, чтобы кувырок успел завершиться до показа результата).
-    let dur = 1.0 + js_sys::Math::random() * 0.4;
-    let delay = js_sys::Math::random() * 0.1;
+    // Случайные траектория, длительность и задержка — каждая кость кувыркается
+    // по-своему и останавливается не одновременно (сумма < ROLL_ANIM_MS).
+    let variant = match (js_sys::Math::random() * 4.0) as u8 {
+        0 => "die-roll-a",
+        1 => "die-roll-b",
+        2 => "die-roll-c",
+        _ => "die-roll-d",
+    };
+    let dur = 1.3 + js_sys::Math::random() * 0.35;
+    let delay = js_sys::Math::random() * 0.12;
     view! {
         <div class="die3d">
             <div
                 class="cube"
                 style=format!(
-                    "--rx:{rx}deg;--ry:{ry}deg;animation-duration:{dur:.3}s;animation-delay:{delay:.3}s",
+                    "--rx:{rx}deg;--ry:{ry}deg;\
+                     animation:{variant} {dur:.3}s cubic-bezier(.25,.66,.4,1) {delay:.3}s forwards",
                 )
             >
                 <div class="face f-front">{die_face(1)}</div>

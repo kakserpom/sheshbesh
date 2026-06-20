@@ -34,12 +34,9 @@
     .die-pip { fill: #0f172a; }
     /* Настоящий 3D-кубик: 6 граней, кувыркается при броске и встаёт нужной гранью */
     .die3d { width: 1.8rem; height: 1.8rem; perspective: 600px; }
-    .cube {
-      position: relative; width: 100%; height: 100%;
-      transform-style: preserve-3d;
-      animation: die-roll 1.55s cubic-bezier(.22,.62,.24,1) forwards;
-    }
-    .die3d:last-child .cube { animation-name: die-roll-2; }
+    /* transform-style тут, а сама анимация (вариант/длительность/задержка) —
+       инлайном в die3d, чтобы каждая кость кувыркалась по-своему. */
+    .cube { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; }
     .face {
       position: absolute; width: 100%; height: 100%;
       backface-visibility: hidden;
@@ -51,13 +48,23 @@
     .f-left   { transform: rotateY(-90deg) translateZ(.9rem); }
     .f-top    { transform: rotateX(90deg)  translateZ(.9rem); }
     .f-bottom { transform: rotateX(-90deg) translateZ(.9rem); }
-    @keyframes die-roll {
-      0%   { transform: rotateX(-220deg) rotateY(-170deg); }
-      100% { transform: rotateX(calc(var(--rx) + 720deg)) rotateY(calc(var(--ry) + 1080deg)); }
+    /* Несколько траекторий кувырка (доп. обороты кратны 360°, поэтому итоговая
+       грань не меняется); вариант выбирается случайно для каждой кости. */
+    @keyframes die-roll-a {
+      0%   { transform: rotateX(-140deg) rotateY(-120deg); }
+      100% { transform: rotateX(calc(var(--rx) + 360deg)) rotateY(calc(var(--ry) + 720deg)); }
     }
-    @keyframes die-roll-2 {
-      0%   { transform: rotateX(200deg) rotateY(190deg); }
-      100% { transform: rotateX(calc(var(--rx) + 1080deg)) rotateY(calc(var(--ry) - 720deg)); }
+    @keyframes die-roll-b {
+      0%   { transform: rotateX(130deg)  rotateY(150deg); }
+      100% { transform: rotateX(calc(var(--rx) + 720deg)) rotateY(calc(var(--ry) - 360deg)); }
+    }
+    @keyframes die-roll-c {
+      0%   { transform: rotateX(-160deg) rotateY(110deg); }
+      100% { transform: rotateX(calc(var(--rx) - 360deg)) rotateY(calc(var(--ry) + 720deg)); }
+    }
+    @keyframes die-roll-d {
+      0%   { transform: rotateX(120deg)  rotateY(-150deg); }
+      100% { transform: rotateX(calc(var(--rx) + 720deg)) rotateY(calc(var(--ry) + 360deg)); }
     }
     /* Дубль: золотая рамка + свечение. */
     .dice.double .die-body { stroke: #facc15; stroke-width: 5; }
