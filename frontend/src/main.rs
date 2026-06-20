@@ -15,10 +15,10 @@ use sheshbesh::{
 };
 use wasm_bindgen_futures::spawn_local;
 
-/// Пауза на кадр «кости брошены» (даём разглядеть бросок), мс.
-const HOLD_ROLL_MS: u32 = 650;
+/// Пауза на кадр «кости брошены» — крутятся кости (мс).
+const HOLD_ROLL_MS: u32 = 950;
 /// Пауза на один шаг фишки по клетке, мс.
-const HOLD_STEP_MS: u32 = 300;
+const HOLD_STEP_MS: u32 = 420;
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 fn seed() -> u64 {
@@ -44,13 +44,14 @@ fn side_color(s: Side) -> &'static str {
 
 // --- Логика ходов ---
 
-/// Один кадр анимации: показываемое состояние доски, (опц.) выпавшие кости и пауза
-/// перед его показом (мс).
+/// Один кадр анимации: показываемое состояние доски, (опц.) выпавшие кости, пауза
+/// перед его показом (мс) и флаг «кости сейчас крутятся» (анимация броска).
 #[derive(Clone)]
 struct Frame {
     state: GameState,
     roll: Option<DiceRoll>,
     hold: u32,
+    rolling: bool,
 }
 
 /// Применяет ход `mv` к `state`, попутно добавляя кадры. Если фишка идёт по дорожке,
@@ -72,6 +73,7 @@ fn apply_with_frames(
                 state: mid,
                 roll: Some(roll),
                 hold: HOLD_STEP_MS,
+                rolling: false,
             });
         }
     }
@@ -80,6 +82,7 @@ fn apply_with_frames(
         state: after.clone(),
         roll: Some(roll),
         hold: HOLD_STEP_MS,
+        rolling: false,
     });
     after
 }
@@ -100,6 +103,7 @@ fn commit_frames<F>(
         state: game.state.clone(),
         roll: Some(roll),
         hold: HOLD_ROLL_MS,
+        rolling: true,
     });
     let pre = game.state.clone();
     let outcome = game.commit_turn(roll, played, forced);
@@ -579,6 +583,8 @@ fn App() -> impl IntoView {
     let sel = RwSignal::new(None::<Sel>);
     // Идёт ли сейчас проигрывание анимации хода (блокирует ввод и авто-бросок).
     let animating = RwSignal::new(false);
+    // Крутятся ли сейчас кости (анимация броска).
+    let rolling = RwSignal::new(false);
 
     // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
     let play = move |frames: Vec<Frame>| {
@@ -591,7 +597,9 @@ fn App() -> impl IntoView {
                 TimeoutFuture::new(frame.hold).await;
                 game.update(|g| g.state = frame.state);
                 roll.set(frame.roll);
+                rolling.set(frame.rolling);
             }
+            rolling.set(false);
             animating.set(false);
         });
     };
@@ -608,6 +616,7 @@ fn App() -> impl IntoView {
             state: g.state.clone(),
             roll: None,
             hold: HOLD_STEP_MS,
+            rolling: false,
         });
         play(frames);
     };
@@ -642,6 +651,7 @@ fn App() -> impl IntoView {
             state: g.state.clone(),
             roll: None,
             hold: HOLD_STEP_MS,
+            rolling: false,
         });
         turns.set(Vec::new());
         prefix.set(Vec::new());
@@ -719,6 +729,7 @@ fn App() -> impl IntoView {
         let cur = sel.get();
         let to_move = g.state.to_move;
         let cur_roll = roll.get();
+        let spinning = rolling.get();
         g.state.active.clone().into_iter().map(|side| {
             // Класс лотка и кликабельность для выбранного типа (резерв/плен).
             let state_of = |kind: Sel| {
@@ -740,10 +751,17 @@ fn App() -> impl IntoView {
             }).collect_view();
             let cap_n = count_pos(&ps, side, false);
             let (cap_cls, cap_click) = state_of(Sel::Captured);
-            // Кости — на строке стороны, чей сейчас ход.
+            // Кости — на строке стороны, чей сейчас ход (с анимацией броска/дубля).
             let dice = (side == to_move).then_some(cur_roll).flatten().map(|r| {
                 let [a, b] = r.values();
-                view! { <span class="dice">{die_face(a)} {die_face(b)}</span> }
+                let mut cls = String::from("dice");
+                if spinning {
+                    cls.push_str(" rolling");
+                }
+                if r.is_double() {
+                    cls.push_str(" double");
+                }
+                view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }
             });
             view! {
                 <div class="tray-row" class:active=side == to_move>

@@ -25,9 +25,26 @@
     .status { font-size: 1.1rem; margin: .4rem 0; min-height: 1.6rem; }
     .controls { display: flex; gap: .6rem; align-items: center; margin: .6rem 0; }
     .dice { display: inline-flex; gap: .35rem; }
-    .die { width: 1.8rem; height: 1.8rem; }
+    .die { width: 1.8rem; height: 1.8rem; transform-origin: 50% 50%; }
     .die-body { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 3; }
     .die-pip { fill: #0f172a; }
+    /* Анимация броска: кости прокручиваются и встают на место */
+    .dice.rolling .die { animation: die-spin .5s ease-out; }
+    .dice.rolling .die:last-child { animation-delay: .07s; }
+    @keyframes die-spin {
+      0%   { transform: rotate(0deg)   scale(.65); }
+      65%  { transform: rotate(390deg) scale(1.18); }
+      100% { transform: rotate(360deg) scale(1); }
+    }
+    /* Дубль: золотая рамка + свечение, а на броске — двойной оборот */
+    .dice.double .die-body { stroke: #facc15; stroke-width: 5; }
+    .dice.double { filter: drop-shadow(0 0 4px #facc15aa); }
+    .dice.rolling.double .die { animation: die-spin-double .68s ease-out; }
+    @keyframes die-spin-double {
+      0%   { transform: rotate(0deg)   scale(.6); }
+      55%  { transform: rotate(560deg) scale(1.32); }
+      100% { transform: rotate(720deg) scale(1); }
+    }
     button {
       background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
       border-radius: .4rem; padding: .35rem .7rem; cursor: pointer; font: inherit;
@@ -83,7 +100,7 @@
     /* Фишки: отдельный слой с плавным переходом позиции (анимация хода) */
     .piece {
       stroke: #0009; stroke-width: .05;
-      transition: cx .28s ease, cy .28s ease, opacity .2s ease;
+      transition: cx .34s ease, cy .34s ease, opacity .2s ease;
     }
     .piece.captive { stroke: #ef4444; stroke-width: .09; }
     .cage-count { fill: #0b1220; font-size: .34px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
