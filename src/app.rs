@@ -314,33 +314,94 @@ fn select_loop(
     }
 }
 
-/// Человек выбирает полный ход. `None` — игрок вышел.
-fn human_pick_turn(
+/// Уникальные ходы на шаге `step` среди последовательностей с префиксом `prefix`.
+/// Так выбор человека всегда остаётся на пути к ходу из `legal_turns`.
+fn step_options(turns: &[Vec<Move>], prefix: &[Move], step: usize) -> Vec<Move> {
+    let mut options: Vec<Move> = Vec::new();
+    for seq in turns
+        .iter()
+        .filter(|t| t.len() > step && t[..step] == *prefix)
+    {
+        if !options.contains(&seq[step]) {
+            options.push(seq[step]);
+        }
+    }
+    options
+}
+
+/// Человек собирает ход по одной кости за шаг, оставаясь на пути к ходу с
+/// максимумом очков. Возвращает выбранную полную последовательность или `None`
+/// (игрок вышел). Все варианты в `turns` имеют одну длину (см. `legal_turns`):
+/// если обе кости играбельны — это всегда два хода, иначе один (или ноль).
+fn human_pick_sequence(
     terminal: &mut DefaultTerminal,
     state: &GameState,
     roll: DiceRoll,
     turns: &[Vec<Move>],
-) -> io::Result<Option<usize>> {
-    let descs: Vec<String> = turns.iter().map(|t| describe_turn(t)).collect();
+) -> io::Result<Option<Vec<Move>>> {
+    let total = turns[0].len();
     let [a, b] = roll.values();
-    let header = vec![
-        Line::from(vec![
-            Span::raw("Ваш ход: "),
-            side_span(state.to_move),
-            Span::raw(format!("   бросок [{a}+{b}]")),
-        ]),
-        Line::raw("↑/↓ — выбор, Enter — применить, q — выход"),
-    ];
-    select_loop(terminal, turns.len(), true, |f, sel| {
-        let preview = preview_after(state, &turns[sel]);
-        draw_pick(
-            f,
-            &preview,
-            "Превью хода",
-            &header,
-            option_lines(&descs, sel),
-        );
-    })
+
+    if total == 0 {
+        // Ходов нет — показываем экран и ждём подтверждения.
+        let header = vec![
+            Line::from(vec![
+                Span::raw("Ваш ход: "),
+                side_span(state.to_move),
+                Span::raw(format!("   бросок [{a}+{b}]")),
+            ]),
+            Line::raw("Ходов нет. Enter — пропустить, q — выход"),
+        ];
+        let labels = vec!["(пропуск — ходов нет)".to_string()];
+        let picked = select_loop(terminal, 1, true, |f, sel| {
+            draw_pick(f, state, "Превью", &header, option_lines(&labels, sel));
+        })?;
+        return Ok(picked.map(|_| Vec::new()));
+    }
+
+    let mut prefix: Vec<Move> = Vec::new();
+    let mut base = state.clone();
+
+    for step in 0..total {
+        // Варианты-ходы на этом шаге среди последовательностей с уже выбранным префиксом.
+        let options = step_options(turns, &prefix, step);
+
+        let labels: Vec<String> = options
+            .iter()
+            .map(|m| format!("{}·{}", m.die, kind_label(m.kind)))
+            .collect();
+        let chosen_desc = if prefix.is_empty() {
+            "—".to_string()
+        } else {
+            describe_turn(&prefix)
+        };
+        let header = vec![
+            Line::from(vec![
+                Span::raw("Ваш ход: "),
+                side_span(state.to_move),
+                Span::raw(format!("   бросок [{a}+{b}]")),
+            ]),
+            Line::raw(format!(
+                "Кость {}/{}   выбрано: {chosen_desc}",
+                step + 1,
+                total
+            )),
+            Line::raw("↑/↓ — выбор, Enter — применить, q — выход"),
+        ];
+        let title = format!("Превью (кость {}/{})", step + 1, total);
+
+        let picked = select_loop(terminal, options.len(), true, |f, sel| {
+            let preview = preview_after(&base, std::slice::from_ref(&options[sel]));
+            draw_pick(f, &preview, &title, &header, option_lines(&labels, sel));
+        })?;
+        let Some(i) = picked else {
+            return Ok(None);
+        };
+        prefix.push(options[i]);
+        base = preview_after(&base, std::slice::from_ref(&options[i]));
+    }
+
+    Ok(Some(prefix))
 }
 
 /// Человек выбирает вынужденный ответный ход на «6» при выкупе.
@@ -416,8 +477,8 @@ pub fn run_interactive<A: Agent>(
             let turns = legal_turns(&game.state, roll);
 
             let chosen = if humans.contains(&side) {
-                match human_pick_turn(&mut terminal, &game.state, roll, &turns)? {
-                    Some(i) => turns[i].clone(),
+                match human_pick_sequence(&mut terminal, &game.state, roll, &turns)? {
+                    Some(seq) => seq,
                     None => return Ok(None), // игрок вышел
                 }
             } else {
@@ -498,6 +559,26 @@ mod tests {
         assert!(text.contains("ввод"));
         // Пустой ход описывается как пропуск.
         assert!(describe_turn(&[]).contains("пропуск"));
+    }
+
+    #[test]
+    fn two_step_options_stay_on_legal_paths() {
+        use crate::dice::{DiceRoll, Die};
+        let state = GameState::new(vec![Side::A, Side::C], Side::A);
+        // Дубль 6-6: можно ввести две фишки — ход из двух «шагов».
+        let roll = DiceRoll::new(Die::new(6).unwrap(), Die::new(6).unwrap());
+        let turns = legal_turns(&state, roll);
+        // Все варианты одной длины (правило максимального хода → обе кости).
+        assert!(turns.iter().all(|t| t.len() == turns[0].len()));
+        assert_eq!(turns[0].len(), 2);
+
+        let first = step_options(&turns, &[], 0);
+        assert!(!first.is_empty());
+        let m0 = first[0];
+        let second = step_options(&turns, std::slice::from_ref(&m0), 1);
+        assert!(!second.is_empty());
+        // Собранная из шагов последовательность — легальный полный ход.
+        assert!(turns.contains(&vec![m0, second[0]]));
     }
 
     #[test]
