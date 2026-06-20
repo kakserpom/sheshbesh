@@ -3,9 +3,10 @@
 //! (фишка → клетка назначения) по одной кости, плюс лотки резерва и плена.
 
 use leptos::prelude::*;
+use sheshbesh::board::{LOCAL_MOON, LOCAL_MOON_EXIT};
 use sheshbesh::{
-    BOARD_DIM, DiceRoll, DiceSource, Game, GameState, Glyph, Heuristic, Move, Position, RandomDice,
-    Side, apply, board_glyphs, checker_cell, legal_turns,
+    BOARD_DIM, DiceRoll, DiceSource, Game, GameState, Glyph, Heuristic, MoonField, Move, Position,
+    RandomDice, Side, apply, board_glyphs, checker_cell, legal_turns, margin_coord,
 };
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
@@ -116,6 +117,87 @@ fn count_pos(s: &GameState, side: Side, want_reserve: bool) -> usize {
         .count()
 }
 
+// --- Геометрия Луны: парабола вход→выход с кружками-полями ---
+
+/// Поле Луны на дуге: его клетка сетки (для кликов) и точка на дуге (для рисунка).
+struct FieldGeom {
+    side: Side,
+    field: MoonField,
+    grid: (usize, usize),
+    pt: (f64, f64),
+    digit: char,
+}
+
+/// Дуга Луны одной стороны: путь, стрелка-наконечник и три поля.
+struct ArcGeom {
+    path: String,
+    arrow: String,
+    fields: Vec<FieldGeom>,
+}
+
+/// Точка на квадратичной кривой Безье.
+fn bez(p0: (f64, f64), c: (f64, f64), p2: (f64, f64), t: f64) -> (f64, f64) {
+    let u = 1.0 - t;
+    (
+        u * u * p0.0 + 2.0 * u * t * c.0 + t * t * p2.0,
+        u * u * p0.1 + 2.0 * u * t * c.1 + t * t * p2.1,
+    )
+}
+
+/// Центр клетки сетки `(строка, столбец)` в координатах SVG.
+fn center_pt((row, col): (usize, usize)) -> (f64, f64) {
+    (col as f64 + 0.5, row as f64 + 0.5)
+}
+
+/// Дуга Луны стороны `side`: от клетки-входа к клетке-выхода, выгиб внутрь квадрата.
+fn moon_arc(side: Side) -> ArcGeom {
+    let p0 = center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON)));
+    let p2 = center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON_EXIT)));
+    let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
+    let c = BOARD_DIM as f64 / 2.0;
+    let dir = (c - mid.0, c - mid.1);
+    let len = (dir.0 * dir.0 + dir.1 * dir.1).sqrt().max(1e-3);
+    let ctrl = (mid.0 + dir.0 / len * 5.0, mid.1 + dir.1 / len * 5.0);
+    let path = format!(
+        "M {:.2} {:.2} Q {:.2} {:.2} {:.2} {:.2}",
+        p0.0, p0.1, ctrl.0, ctrl.1, p2.0, p2.1
+    );
+    // Наконечник стрелки у выхода (по касательной кривой в t=1).
+    let der = (2.0 * (p2.0 - ctrl.0), 2.0 * (p2.1 - ctrl.1));
+    let dl = (der.0 * der.0 + der.1 * der.1).sqrt().max(1e-3);
+    let (ux, uy) = (der.0 / dl, der.1 / dl);
+    let (bx, by) = (p2.0 - ux * 0.7, p2.1 - uy * 0.7);
+    let (px, py) = (-uy, ux);
+    let arrow = format!(
+        "{:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
+        p2.0,
+        p2.1,
+        bx + px * 0.4,
+        by + py * 0.4,
+        bx - px * 0.4,
+        by - py * 0.4
+    );
+    let fields = [
+        (MoonField::One, 0.30, '1'),
+        (MoonField::Three, 0.5, '3'),
+        (MoonField::Six, 0.72, '6'),
+    ]
+    .into_iter()
+    .map(|(field, t, digit)| FieldGeom {
+        side,
+        field,
+        digit,
+        grid: checker_cell(side, Position::Moon { side, field }).expect("moon cell"),
+        pt: bez(p0, ctrl, p2, t),
+    })
+    .collect();
+    ArcGeom {
+        path,
+        arrow,
+        fields,
+    }
+}
+
 /// Клетка-подложка (квадрат со скруглением) заданного CSS-класса.
 fn cell_bg(x: f64, y: f64, class: &'static str) -> impl IntoView {
     view! { <rect x=x + 0.08 y=y + 0.08 width=0.84 height=0.84 rx=0.14 class=class /> }
@@ -138,12 +220,9 @@ fn svg_cell(r: usize, c: usize, g: Glyph, hl: Hl) -> Option<AnyView> {
         Glyph::Landmark('o') => view! { <circle cx=cx cy=cy r=0.3 class="home-slot" /> }.into_any(),
         Glyph::Landmark(_) => cell_bg(x, y, "track").into_any(),
         Glyph::Prison(_) => cell_bg(x, y, "prison").into_any(),
-        Glyph::Moon(ch) if ch.is_ascii_digit() => view! {
-            <circle cx=cx cy=cy r=0.32 class="moon-field" />
-            <text x=cx y=cy class="moon-num">{ch.to_string()}</text>
-        }
-        .into_any(),
-        Glyph::Moon(_) => cell_bg(x, y, "moon").into_any(),
+        // Поля Луны рисуются отдельно на дуге; вход/выход — обычной клеткой с оттенком.
+        Glyph::Moon(ch) if ch.is_ascii_digit() => return None,
+        Glyph::Moon(_) => cell_bg(x, y, "moon-end").into_any(),
         Glyph::Checker(s) => view! {
             {cell_bg(x, y, "track")}
             <circle cx=cx cy=cy r=0.36 class="checker" fill=side_color(s) />
@@ -311,9 +390,18 @@ fn App() -> impl IntoView {
                     }
                     let sel_cell = match cur { Some(Sel::Cell(r, c)) => Some((r, c)), _ => None };
 
+                    // Дуги Луны (все стороны) и их клетки-поля (рисуются на дуге, не в сетке).
+                    let arcs: Vec<ArcGeom> = Side::ALL.iter().map(|&s| moon_arc(s)).collect();
+                    let arc_pt = |grid: (usize, usize)| {
+                        arcs.iter().flat_map(|a| &a.fields).find(|f| f.grid == grid).map(|f| f.pt)
+                    };
+
                     let mut nodes: Vec<AnyView> = Vec::new();
                     for (r, row) in board_glyphs(&ps).into_iter().enumerate() {
                         for (c, g) in row.into_iter().enumerate() {
+                            if arc_pt((r, c)).is_some() {
+                                continue; // поле Луны — на дуге
+                            }
                             let hl = if sel_cell == Some((r, c)) {
                                 Hl::Selected
                             } else if dsts.contains(&(r, c)) {
@@ -328,16 +416,63 @@ fn App() -> impl IntoView {
                             }
                         }
                     }
-                    // Прозрачные кликабельные прямоугольники над интерактивными клетками.
+
+                    // Дуги Луны: путь, наконечник, поля (занятые — фишкой, иначе кружок с цифрой).
+                    for a in &arcs {
+                        nodes.push(view! { <path d=a.path.clone() class="moon-arc" /> }.into_any());
+                        nodes.push(view! { <polygon points=a.arrow.clone() class="moon-arrow" /> }.into_any());
+                        for f in &a.fields {
+                            let occ = ps.checkers.iter()
+                                .find(|c| c.pos == Position::Moon { side: f.side, field: f.field });
+                            if let Some(c) = occ {
+                                nodes.push(view! {
+                                    <circle cx=f.pt.0 cy=f.pt.1 r=0.36 class="checker" fill=side_color(c.owner) />
+                                }.into_any());
+                            } else {
+                                nodes.push(view! {
+                                    <circle cx=f.pt.0 cy=f.pt.1 r=0.3 class="moon-field" />
+                                    <text x=f.pt.0 y=f.pt.1 class="moon-num">{f.digit.to_string()}</text>
+                                }.into_any());
+                            }
+                        }
+                    }
+
+                    // Подсветка для полей Луны — кольцом на дуге.
+                    let ring = |pt: (f64, f64), cls: &'static str| {
+                        view! { <circle cx=pt.0 cy=pt.1 r=0.46 fill="none" class=cls /> }.into_any()
+                    };
+                    if let Some(rc) = sel_cell
+                        && let Some(pt) = arc_pt(rc)
+                    {
+                        nodes.push(ring(pt, "hl-sel"));
+                    }
+                    for &rc in &dsts {
+                        if let Some(pt) = arc_pt(rc) { nodes.push(ring(pt, "hl-dst")); }
+                    }
+                    if cur.is_none() {
+                        for &rc in &srcs {
+                            if let Some(pt) = arc_pt(rc) { nodes.push(ring(pt, "hl-src")); }
+                        }
+                    }
+
+                    // Кликабельные зоны: прямоугольник на клетке либо круг на дуге (Луна).
                     let mut hits: Vec<(usize, usize)> = Vec::new();
                     hits.extend(srcs.iter().copied());
                     hits.extend(dsts.iter().copied());
                     if let Some(rc) = sel_cell { hits.push(rc); }
                     for (r, c) in hits {
-                        nodes.push(view! {
-                            <rect x=c as f64 y=r as f64 width=1 height=1 class="hit"
-                                on:click=move |_| click(Sel::Cell(r, c)) />
-                        }.into_any());
+                        let node = if let Some(pt) = arc_pt((r, c)) {
+                            view! {
+                                <circle cx=pt.0 cy=pt.1 r=0.46 class="hit"
+                                    on:click=move |_| click(Sel::Cell(r, c)) />
+                            }.into_any()
+                        } else {
+                            view! {
+                                <rect x=c as f64 y=r as f64 width=1 height=1 class="hit"
+                                    on:click=move |_| click(Sel::Cell(r, c)) />
+                            }.into_any()
+                        };
+                        nodes.push(node);
                     }
                     nodes
                 }}
