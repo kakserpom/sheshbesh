@@ -10,8 +10,10 @@
 //! буква стороны и число фишек (`A2`), либо буквы сторон при совместном стоянии
 //! (углы/Тюрьма), напр. `AC`.
 
-use crate::board::{CellKind, HOME_DEPTH, PERIMETER, PerimeterIdx, SIDE_LEN, Side, cell_kind};
-use crate::state::{GameState, Position};
+use crate::board::{
+    CellKind, HOME_DEPTH, LOCAL_MOON, PERIMETER, PerimeterIdx, SIDE_LEN, Side, cell_kind,
+};
+use crate::state::{GameState, MoonField, Position};
 
 /// Координата (строка, столбец) клетки периметра в квадратной сетке `SIDE_LEN`².
 pub(crate) fn cell_coord(abs: usize) -> (usize, usize) {
@@ -85,8 +87,28 @@ fn outward(r: usize, c: usize) -> (isize, isize) {
     }
 }
 
-/// Строит `BOARD_DIM`² сетку глифов: первая фишка клетки — на самой клетке,
-/// лишние «дописываются» наружу за край (сверх вместимости — `Overflow`).
+/// Ячейка на `k` шагов внутрь квадрата от клетки периметра `abs` (Дом/Луна).
+fn inward_cell(abs: PerimeterIdx, k: usize) -> (usize, usize) {
+    let (r, c) = cell_coord(abs.get());
+    let (dr, dc) = outward(r, c);
+    let pr = (r + BOARD_MARGIN) as isize - dr * k as isize;
+    let pc = (c + BOARD_MARGIN) as isize - dc * k as isize;
+    (pr as usize, pc as usize)
+}
+
+/// Ранг поля Луны (1→1, 3→2, 6→3) — шаг внутрь от клетки-входа Луны.
+fn moon_rank(field: MoonField) -> usize {
+    match field {
+        MoonField::One => 1,
+        MoonField::Three => 2,
+        MoonField::Six => 3,
+    }
+}
+
+/// Строит `BOARD_DIM`² сетку глифов. Фишки периметра — на клетках (лишние
+/// «дописываются» наружу за край, сверх — `Overflow`). Внутрь квадрата рисуются
+/// Дом (4 слота `o` от входа активных сторон) и поля Луны (`1/3/6` от входа на
+/// Луну каждой стороны); занятые слоты показываются маркером фишки.
 pub(crate) fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
     let mut grid = vec![vec![Glyph::Empty; BOARD_DIM]; BOARD_DIM];
     let shift = |base: usize, d: isize, k: isize| (base as isize + d * k) as usize;
@@ -114,6 +136,34 @@ pub(crate) fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
                 Glyph::Checker(owner);
         }
     }
+
+    // Пустые внутренние слоты: поля Луны (все стороны) и Дом (активные стороны).
+    for side in Side::ALL {
+        let moon = side.local_to_perimeter(LOCAL_MOON);
+        for (rank, digit) in [(1, '1'), (2, '3'), (3, '6')] {
+            let (r, c) = inward_cell(moon, rank);
+            grid[r][c] = Glyph::Landmark(digit);
+        }
+    }
+    for &side in &state.active {
+        for depth in 0..HOME_DEPTH {
+            let (r, c) = inward_cell(side.entry(), depth + 1);
+            grid[r][c] = Glyph::Landmark('o');
+        }
+    }
+
+    // Фишки в Доме и на Луне — поверх слотов.
+    for ch in &state.checkers {
+        let (r, c) = match ch.pos {
+            Position::Home { depth } => inward_cell(ch.owner.entry(), depth as usize + 1),
+            Position::Moon { side, field } => {
+                inward_cell(side.local_to_perimeter(LOCAL_MOON), moon_rank(field))
+            }
+            _ => continue,
+        };
+        grid[r][c] = Glyph::Checker(ch.owner);
+    }
+
     grid
 }
 
@@ -204,6 +254,28 @@ pub fn render(state: &GameState) -> String {
 mod tests {
     use super::*;
     use crate::board::LOCAL_HOME_ENTRANCE;
+
+    #[test]
+    fn home_and_moon_checkers_appear_inside_the_square() {
+        let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
+        state.checkers[0].pos = Position::Home { depth: 0 };
+        state.checkers[1].pos = Position::Moon {
+            side: Side::A,
+            field: MoonField::One,
+        };
+        let grid = board_glyphs(&state);
+
+        // Фишка в Доме — на первой клетке внутрь от входа в Дом.
+        let (hr, hc) = inward_cell(Side::A.entry(), 1);
+        assert_eq!(grid[hr][hc], Glyph::Checker(Side::A));
+        // Фишка на Луне (поле «1») — на первой клетке внутрь от входа на Луну.
+        let (mr, mc) = inward_cell(Side::A.local_to_perimeter(LOCAL_MOON), 1);
+        assert_eq!(grid[mr][mc], Glyph::Checker(Side::A));
+
+        // Пустые слоты Луны размечены цифрами 3 и 6 (поле «1» занято фишкой).
+        let (r3, c3) = inward_cell(Side::A.local_to_perimeter(LOCAL_MOON), 2);
+        assert_eq!(grid[r3][c3], Glyph::Landmark('3'));
+    }
 
     #[test]
     fn corners_map_to_square_corners() {
