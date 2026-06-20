@@ -6,19 +6,22 @@
 //! ANSI-анимацию из модуля [`crate::tui`].
 
 use std::io;
+use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
-use ratatui::{Frame, init, restore};
+use ratatui::{DefaultTerminal, Frame, init, restore};
 
 use crate::board::{HOME_DEPTH, PERIMETER, PerimeterIdx, SIDE_LEN, Side};
+use crate::dice::DiceRoll;
+use crate::moves::{Move, MoveKind, apply, legal_turns};
 use crate::render::{cell_coord, landmark, owners_on};
 use crate::state::{GameState, Position};
-use crate::turn::{Agent, Game, RandomDice, TurnOutcome};
+use crate::turn::{Agent, DiceSource, Game, RandomDice, TurnOutcome};
 
 /// Цвет стороны на доске.
 fn side_color(side: Side) -> Color {
@@ -207,6 +210,247 @@ pub fn run<A: Agent>(active: Vec<Side>, agent: &mut A, step: Duration) -> io::Re
     result
 }
 
+// --- Интерактивная игра человека ---
+
+/// Короткое название характера хода.
+fn kind_label(kind: MoveKind) -> &'static str {
+    match kind {
+        MoveKind::Enter => "ввод",
+        MoveKind::Step => "ход",
+        MoveKind::EnterMoon => "на Луну",
+        MoveKind::MoonAdvance => "Луна+",
+        MoveKind::MoonExit => "с Луны",
+        MoveKind::EnterPrison => "в Тюрьму",
+        MoveKind::PrisonRelease => "из Тюрьмы",
+        MoveKind::EnterHome => "в Дом",
+        MoveKind::Ransom => "выкуп",
+    }
+}
+
+/// Применяет последовательность ходов к копии состояния (для превью).
+fn preview_after(state: &GameState, seq: &[Move]) -> GameState {
+    let mut s = state.clone();
+    for &mv in seq {
+        s = apply(&s, mv);
+    }
+    s
+}
+
+/// Человекочитаемое описание варианта хода.
+fn describe_turn(seq: &[Move]) -> String {
+    if seq.is_empty() {
+        return "(пропуск — ходов нет)".to_string();
+    }
+    let pips: u32 = seq.iter().map(|m| m.die as u32).sum();
+    let parts: Vec<String> = seq
+        .iter()
+        .map(|m| format!("{}·{}", m.die, kind_label(m.kind)))
+        .collect();
+    format!("{pips} очк.: {}", parts.join(", "))
+}
+
+/// Строки списка вариантов с подсветкой выбранного.
+fn option_lines(descs: &[String], sel: usize) -> Vec<Line<'static>> {
+    descs
+        .iter()
+        .enumerate()
+        .map(|(i, d)| {
+            let style = if i == sel {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            Line::styled(format!(" {:>2}. {d} ", i + 1), style)
+        })
+        .collect()
+}
+
+/// Рисует экран выбора: слева превью доски, справа заголовок и список вариантов.
+fn draw_pick(
+    frame: &mut Frame,
+    preview: &GameState,
+    board_title: &str,
+    header: &[Line<'static>],
+    options: Vec<Line<'static>>,
+) {
+    let [left, right] =
+        Layout::horizontal([Constraint::Length(58), Constraint::Min(28)]).areas(frame.area());
+    frame.render_widget(
+        Paragraph::new(board_lines(preview))
+            .block(Block::bordered().title(board_title.to_string())),
+        left,
+    );
+    let mut lines = header.to_vec();
+    lines.push(Line::raw(""));
+    lines.extend(options);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title("Выбор хода")),
+        right,
+    );
+}
+
+/// Навигация по списку клавишами; `Some(i)` — выбран, `None` — выход (`q`/`Esc`).
+fn select_loop(
+    terminal: &mut DefaultTerminal,
+    len: usize,
+    allow_quit: bool,
+    mut render: impl FnMut(&mut Frame, usize),
+) -> io::Result<Option<usize>> {
+    let mut sel = 0usize;
+    loop {
+        terminal.draw(|f| render(f, sel))?;
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => sel = (sel + len - 1) % len,
+                KeyCode::Down | KeyCode::Char('j') => sel = (sel + 1) % len,
+                KeyCode::Enter => return Ok(Some(sel)),
+                KeyCode::Char('q') | KeyCode::Esc if allow_quit => return Ok(None),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Человек выбирает полный ход. `None` — игрок вышел.
+fn human_pick_turn(
+    terminal: &mut DefaultTerminal,
+    state: &GameState,
+    roll: DiceRoll,
+    turns: &[Vec<Move>],
+) -> io::Result<Option<usize>> {
+    let descs: Vec<String> = turns.iter().map(|t| describe_turn(t)).collect();
+    let [a, b] = roll.values();
+    let header = vec![
+        Line::from(vec![
+            Span::raw("Ваш ход: "),
+            side_span(state.to_move),
+            Span::raw(format!("   бросок [{a}+{b}]")),
+        ]),
+        Line::raw("↑/↓ — выбор, Enter — применить, q — выход"),
+    ];
+    select_loop(terminal, turns.len(), true, |f, sel| {
+        let preview = preview_after(state, &turns[sel]);
+        draw_pick(
+            f,
+            &preview,
+            "Превью хода",
+            &header,
+            option_lines(&descs, sel),
+        );
+    })
+}
+
+/// Человек выбирает вынужденный ответный ход на «6» при выкупе.
+fn human_pick_forced(
+    terminal: &mut DefaultTerminal,
+    state: &GameState,
+    captor: Side,
+    options: &[Move],
+) -> io::Result<usize> {
+    let descs: Vec<String> = options
+        .iter()
+        .map(|m| format!("{}·{}", m.die, kind_label(m.kind)))
+        .collect();
+    let header = vec![
+        Line::from(vec![
+            Span::raw("Выкуп — ваш обязательный ход на 6: "),
+            side_span(captor),
+        ]),
+        Line::raw("↑/↓ — выбор, Enter — применить"),
+    ];
+    let idx = select_loop(terminal, options.len(), false, |f, sel| {
+        let preview = preview_after(state, std::slice::from_ref(&options[sel]));
+        draw_pick(
+            f,
+            &preview,
+            "Превью ответа",
+            &header,
+            option_lines(&descs, sel),
+        );
+    })?;
+    Ok(idx.unwrap_or(0))
+}
+
+/// Показывает финальный экран и ждёт `q`/`Esc`/`Enter`.
+fn show_final(
+    terminal: &mut DefaultTerminal,
+    game: &Game,
+    last: Option<&TurnOutcome>,
+) -> io::Result<()> {
+    loop {
+        terminal.draw(|f| draw(f, game, last, false))?;
+        if let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+            && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter)
+        {
+            return Ok(());
+        }
+    }
+}
+
+/// Интерактивная партия: стороны из `humans` ходит человек, остальные — `ai`.
+/// Возвращает победителя, если партия завершилась (а не прервана выходом).
+pub fn run_interactive<A: Agent>(
+    active: Vec<Side>,
+    humans: Vec<Side>,
+    ai: &mut A,
+    step: Duration,
+) -> io::Result<Option<Side>> {
+    let mut dice = RandomDice::from_entropy();
+    let mut game = Game::start(active, &mut dice);
+    let mut terminal = init();
+    let mut last: Option<TurnOutcome> = None;
+
+    let result = (|| -> io::Result<Option<Side>> {
+        loop {
+            if let Some(winner) = game.winner() {
+                show_final(&mut terminal, &game, last.as_ref())?;
+                return Ok(Some(winner));
+            }
+
+            let side = game.state.to_move;
+            let roll = dice.roll();
+            let turns = legal_turns(&game.state, roll);
+
+            let chosen = if humans.contains(&side) {
+                match human_pick_turn(&mut terminal, &game.state, roll, &turns)? {
+                    Some(i) => turns[i].clone(),
+                    None => return Ok(None), // игрок вышел
+                }
+            } else {
+                let i = ai.choose_turn(&game.state, &turns).min(turns.len() - 1);
+                turns[i].clone()
+            };
+
+            let outcome = {
+                let humans = &humans;
+                let term = &mut terminal;
+                let ai = &mut *ai;
+                game.commit_turn(roll, chosen, |state, captor, options| {
+                    if humans.contains(&captor) {
+                        human_pick_forced(term, state, captor, options).unwrap_or(0)
+                    } else {
+                        ai.choose_forced(state, captor, options)
+                    }
+                })
+            };
+            last = Some(outcome);
+
+            // После хода ИИ — пауза, чтобы человек увидел результат.
+            if !humans.contains(&side) {
+                terminal.draw(|f| draw(f, &game, last.as_ref(), false))?;
+                thread::sleep(step);
+            }
+        }
+    })();
+
+    restore();
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +480,34 @@ mod tests {
             .find(|s| s.content.starts_with('A'))
             .expect("должен быть спан с фишкой A");
         assert_eq!(a_span.style.fg, Some(side_color(Side::A)));
+    }
+
+    #[test]
+    fn describe_turn_summarises_moves() {
+        use crate::dice::{DiceRoll, Die};
+        let state = GameState::new(vec![Side::A, Side::C], Side::A);
+        // Бросок (6,6): ввод двух фишек — оба хода по «6».
+        let roll = DiceRoll::new(Die::new(6).unwrap(), Die::new(6).unwrap());
+        let turns = legal_turns(&state, roll);
+        let with_enter = turns
+            .iter()
+            .find(|t| t.iter().all(|m| m.kind == MoveKind::Enter) && !t.is_empty())
+            .expect("должен быть ход с вводом");
+        let text = describe_turn(with_enter);
+        assert!(text.contains("очк."));
+        assert!(text.contains("ввод"));
+        // Пустой ход описывается как пропуск.
+        assert!(describe_turn(&[]).contains("пропуск"));
+    }
+
+    #[test]
+    fn option_lines_highlight_selection() {
+        let descs = vec!["один".to_string(), "два".to_string()];
+        let lines = option_lines(&descs, 1);
+        assert_eq!(lines.len(), 2);
+        // Выбранная строка — инверсная.
+        assert!(lines[1].style.add_modifier.contains(Modifier::REVERSED));
+        assert!(!lines[0].style.add_modifier.contains(Modifier::REVERSED));
     }
 
     #[test]

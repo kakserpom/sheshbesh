@@ -180,39 +180,23 @@ impl Game {
             .find(|&s| self.state.has_won(s))
     }
 
-    /// Вынужденный ответный ход захватчика на «6» (при выкупе). Возвращает
-    /// сделанный ход или `None`, если легального хода на 6 нет (тогда пропуск).
-    fn forced_six_move<A: Agent>(&mut self, captor: Side, agent: &mut A) -> Option<Move> {
-        let moves = forced_six_moves(&self.state, captor);
-        if moves.is_empty() {
-            return None;
-        }
-        let idx = agent
-            .choose_forced(&self.state, captor, &moves)
-            .min(moves.len() - 1);
-        let mv = moves[idx];
-        self.state = apply(&self.state, mv);
-        Some(mv)
-    }
-
-    /// Один бросок текущего игрока.
+    /// Применяет уже выбранную последовательность ходов и завершает ход.
     ///
-    /// Кидает кости, даёт `agent` выбрать легальный полный ход и применяет его.
-    /// Каждый выкуп (`Ransom`) в последовательности тут же влечёт обязательный
-    /// ответный ход захватчика на 6. При дубле ход остаётся за тем же игроком,
-    /// иначе переходит к следующему.
-    pub fn play_turn<D, A>(&mut self, dice: &mut D, agent: &mut A) -> TurnOutcome
+    /// Каждый выкуп (`Ransom`) тут же влечёт обязательный ответный ход захватчика
+    /// на «6»; конкретный ход выбирает `forced(state, captor, &options)` (индекс).
+    /// При дубле ход остаётся за тем же игроком, иначе переходит к следующему.
+    /// Это общий «движок завершения хода» для ИИ (`play_turn`) и интерактива.
+    pub fn commit_turn<F>(
+        &mut self,
+        roll: DiceRoll,
+        played: Vec<Move>,
+        mut forced: F,
+    ) -> TurnOutcome
     where
-        D: DiceSource,
-        A: Agent,
+        F: FnMut(&GameState, Side, &[Move]) -> usize,
     {
         let side = self.state.to_move;
-        let roll = dice.roll();
-        let turns = legal_turns(&self.state, roll);
-        let idx = agent.choose_turn(&self.state, &turns).min(turns.len() - 1);
-        let played = turns[idx].clone();
-
-        let mut forced = Vec::new();
+        let mut forced_moves = Vec::new();
         for &mv in &played {
             // Захватчик известен до применения выкупа (после него фишка — в резерве).
             let captor = if mv.kind == MoveKind::Ransom {
@@ -224,10 +208,13 @@ impl Game {
                 None
             };
             self.state = apply(&self.state, mv);
-            if let Some(captor) = captor
-                && let Some(fm) = self.forced_six_move(captor, agent)
-            {
-                forced.push(fm);
+            if let Some(captor) = captor {
+                let options = forced_six_moves(&self.state, captor);
+                if !options.is_empty() {
+                    let idx = forced(&self.state, captor, &options).min(options.len() - 1);
+                    self.state = apply(&self.state, options[idx]);
+                    forced_moves.push(options[idx]);
+                }
             }
         }
 
@@ -239,9 +226,25 @@ impl Game {
             side,
             roll,
             played,
-            forced,
+            forced: forced_moves,
             again,
         }
+    }
+
+    /// Один бросок текущего игрока: кидает кости, даёт `agent` выбрать ход и
+    /// применяет его (включая вынужденные ответы захватчиков при выкупе).
+    pub fn play_turn<D, A>(&mut self, dice: &mut D, agent: &mut A) -> TurnOutcome
+    where
+        D: DiceSource,
+        A: Agent,
+    {
+        let roll = dice.roll();
+        let turns = legal_turns(&self.state, roll);
+        let idx = agent.choose_turn(&self.state, &turns).min(turns.len() - 1);
+        let played = turns[idx].clone();
+        self.commit_turn(roll, played, |state, captor, options| {
+            agent.choose_forced(state, captor, options)
+        })
     }
 
     /// Гоняет ходы до появления победителя, но не более `max_turns` бросков
