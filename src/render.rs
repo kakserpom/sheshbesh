@@ -56,15 +56,21 @@ pub(crate) const BOARD_MARGIN: usize = 3;
 /// Сторона квадрата сетки глифов (квадрат периметра плюс поля).
 pub(crate) const BOARD_DIM: usize = SIDE_LEN + 2 * BOARD_MARGIN;
 
-/// Масштаб доски из `SHESHBESH_SCALE` (1..4, по умолчанию 2): клетка занимает
-/// `1 + scale` колонок (глиф + `scale` пробелов), высота не меняется. `1` —
-/// самый компактный вид.
-pub(crate) fn board_scale() -> usize {
+/// Ручной масштаб из `SHESHBESH_SCALE` (1..4), если задан, — переопределяет
+/// автоподбор. Клетка занимает `1 + scale` колонок (глиф + `scale` пробелов).
+pub(crate) fn manual_scale() -> Option<usize> {
     std::env::var("SHESHBESH_SCALE")
         .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(2)
-        .clamp(1, 4)
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|s| s.clamp(1, 4))
+}
+
+/// Масштаб доски, подобранный под доступную ширину `inner_width` (без рамки):
+/// наибольший `scale`, при котором строка `BOARD_DIM*(1+scale)` влезает.
+/// `SHESHBESH_SCALE` переопределяет результат.
+pub(crate) fn fit_scale(inner_width: u16) -> usize {
+    manual_scale()
+        .unwrap_or_else(|| ((inner_width as usize / BOARD_DIM).saturating_sub(1)).clamp(1, 4))
 }
 
 /// Глиф одной ячейки сетки доски (рендер-независимый).

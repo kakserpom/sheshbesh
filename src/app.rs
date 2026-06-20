@@ -19,7 +19,7 @@ use ratatui::{DefaultTerminal, Frame, init, restore};
 use crate::board::{HOME_DEPTH, PERIMETER, PerimeterIdx, Side};
 use crate::dice::DiceRoll;
 use crate::moves::{Move, MoveKind, apply, legal_turns};
-use crate::render::{Glyph, board_glyphs, board_scale, margin_coord};
+use crate::render::{Glyph, board_glyphs, fit_scale, margin_coord};
 use crate::state::{GameState, Position};
 use crate::turn::{Agent, DiceSource, Game, RandomDice, TurnOutcome};
 
@@ -71,10 +71,11 @@ fn board_lines_hl(
     state: &GameState,
     from: Option<PerimeterIdx>,
     to: Option<PerimeterIdx>,
+    scale: usize,
 ) -> Vec<Line<'static>> {
     let from_cell = from.map(margin_coord);
     let to_cell = to.map(margin_coord);
-    let pad = Span::raw(" ".repeat(board_scale())); // хвост клетки (горизонтальный масштаб)
+    let pad = Span::raw(" ".repeat(scale)); // хвост клетки (горизонтальный масштаб)
 
     let mut lines = Vec::new();
     for (r, row) in board_glyphs(state).into_iter().enumerate() {
@@ -95,8 +96,13 @@ fn board_lines_hl(
 }
 
 /// Доска без подсветки.
-fn board_lines(state: &GameState) -> Vec<Line<'static>> {
-    board_lines_hl(state, None, None)
+fn board_lines(state: &GameState, scale: usize) -> Vec<Line<'static>> {
+    board_lines_hl(state, None, None, scale)
+}
+
+/// Масштаб доски под ширину области (минус рамка в 2 колонки).
+fn area_scale(width: u16) -> usize {
+    fit_scale(width.saturating_sub(2))
 }
 
 /// Добавляет `n` маркеров фишки стороны через пробел (или `—`, если ноль).
@@ -182,7 +188,7 @@ fn status_lines(game: &Game, last: Option<&TurnOutcome>, paused: bool) -> Vec<Li
     lines
 }
 
-/// Рисует один кадр: слева статус, справа доска.
+/// Рисует один кадр: слева статус, справа доска (масштаб — под ширину области).
 fn draw(frame: &mut Frame, game: &Game, last: Option<&TurnOutcome>, paused: bool) {
     let [left, right] =
         Layout::horizontal([Constraint::Length(34), Constraint::Min(0)]).areas(frame.area());
@@ -191,7 +197,8 @@ fn draw(frame: &mut Frame, game: &Game, last: Option<&TurnOutcome>, paused: bool
         left,
     );
     frame.render_widget(
-        Paragraph::new(board_lines(&game.state)).block(Block::bordered().title("Шеш-Беш")),
+        Paragraph::new(board_lines(&game.state, area_scale(right.width)))
+            .block(Block::bordered().title("Шеш-Беш")),
         right,
     );
 }
@@ -338,7 +345,7 @@ fn draw_pick(
         left,
     );
     frame.render_widget(
-        Paragraph::new(board_lines_hl(board, from, to))
+        Paragraph::new(board_lines_hl(board, from, to, area_scale(right.width)))
             .block(Block::bordered().title(board_title.to_string())),
         right,
     );
@@ -624,7 +631,7 @@ mod tests {
     fn board_lines_have_landmarks_and_colored_checker() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
         state.checkers[0].pos = Position::OnTrack { progress: 0 };
-        let lines = board_lines(&state);
+        let lines = board_lines(&state, 1);
         let text = flatten(&lines);
         for mark in ['+', 'M', 'J', 'h'] {
             assert!(text.contains(mark), "нет landmark {mark}");
@@ -642,7 +649,7 @@ mod tests {
     fn board_has_outer_margins() {
         let state = GameState::new(vec![Side::A, Side::C], Side::A);
         // Сетка увеличена на поля с каждой стороны (масштаб — только по горизонтали).
-        assert_eq!(board_lines(&state).len(), crate::render::BOARD_DIM);
+        assert_eq!(board_lines(&state, 1).len(), crate::render::BOARD_DIM);
     }
 
     #[test]
@@ -657,7 +664,7 @@ mod tests {
         {
             c.pos = Position::OnTrack { progress: 0 };
         }
-        let text = flatten(&board_lines(&state));
+        let text = flatten(&board_lines(&state, 1));
         // На доске буква A встречается только как маркер фишки → не меньше трёх.
         assert!(text.matches('A').count() >= 3);
     }

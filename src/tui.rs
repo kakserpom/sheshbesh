@@ -11,7 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::board::{HOME_DEPTH, Side};
-use crate::render::{Glyph, board_glyphs, board_scale};
+use crate::render::{Glyph, board_glyphs, manual_scale};
 use crate::state::{GameState, Position};
 use crate::turn::{Agent, DiceSource, Game};
 
@@ -52,7 +52,8 @@ fn glyph_token(glyph: Glyph) -> String {
 
 /// Цветной квадрат периметра с внешними полями (см. [`crate::render::board_glyphs`]).
 fn colored_board(state: &GameState) -> String {
-    let pad = " ".repeat(board_scale()); // хвост клетки (горизонтальный масштаб)
+    // Поток без TTY — компактный масштаб 1 (или ручной `SHESHBESH_SCALE`).
+    let pad = " ".repeat(manual_scale().unwrap_or(1));
     board_glyphs(state)
         .into_iter()
         .map(|row| {
