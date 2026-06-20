@@ -54,6 +54,7 @@ fn glyph_span(g: Glyph) -> Span<'static> {
     match g {
         Glyph::Empty => Span::raw(" "),
         Glyph::Landmark(ch) => Span::styled(ch.to_string(), Style::default().fg(Color::DarkGray)),
+        Glyph::Moon(ch) => Span::styled(ch.to_string(), Style::default().fg(Color::LightBlue)),
         Glyph::Checker(side) => checker_marker(side),
         Glyph::Overflow => Span::raw("+"),
     }

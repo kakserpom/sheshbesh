@@ -11,7 +11,8 @@
 //! (углы/Тюрьма), напр. `AC`.
 
 use crate::board::{
-    CellKind, HOME_DEPTH, LOCAL_MOON, PERIMETER, PerimeterIdx, SIDE_LEN, Side, cell_kind,
+    CellKind, HOME_DEPTH, LOCAL_MOON, LOCAL_MOON_EXIT, PERIMETER, PerimeterIdx, SIDE_LEN, Side,
+    cell_kind,
 };
 use crate::state::{GameState, MoonField, Position};
 
@@ -62,6 +63,8 @@ pub(crate) enum Glyph {
     Empty,
     /// Пустая клетка периметра — её landmark-символ.
     Landmark(char),
+    /// Элемент Луны: вход `M`, выход `m` или поле дорожки `1`/`3`/`6`.
+    Moon(char),
     /// Маркер фишки стороны.
     Checker(Side),
     /// Переполнение: фишек на клетке больше, чем влезает наружу.
@@ -121,6 +124,8 @@ pub(crate) fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
 
         grid[pr][pc] = match owners.first() {
             Some(&s) => Glyph::Checker(s),
+            None if cell_kind(p) == CellKind::Moon => Glyph::Moon('M'),
+            None if p.local() == LOCAL_MOON_EXIT => Glyph::Moon('m'),
             None => Glyph::Landmark(landmark(p)),
         };
 
@@ -142,7 +147,7 @@ pub(crate) fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
         let moon = side.local_to_perimeter(LOCAL_MOON);
         for (rank, digit) in [(1, '1'), (2, '3'), (3, '6')] {
             let (r, c) = inward_cell(moon, rank);
-            grid[r][c] = Glyph::Landmark(digit);
+            grid[r][c] = Glyph::Moon(digit);
         }
     }
     for &side in &state.active {
@@ -272,9 +277,9 @@ mod tests {
         let (mr, mc) = inward_cell(Side::A.local_to_perimeter(LOCAL_MOON), 1);
         assert_eq!(grid[mr][mc], Glyph::Checker(Side::A));
 
-        // Пустые слоты Луны размечены цифрами 3 и 6 (поле «1» занято фишкой).
+        // Пустые слоты Луны размечены глифом Луны с цифрой (поле «1» занято фишкой).
         let (r3, c3) = inward_cell(Side::A.local_to_perimeter(LOCAL_MOON), 2);
-        assert_eq!(grid[r3][c3], Glyph::Landmark('3'));
+        assert_eq!(grid[r3][c3], Glyph::Moon('3'));
     }
 
     #[test]

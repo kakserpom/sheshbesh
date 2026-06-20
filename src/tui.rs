@@ -17,6 +17,7 @@ use crate::turn::{Agent, DiceSource, Game};
 
 const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[2m";
+const MOON: &str = "\x1b[94m"; // ярко-синий — элементы Луны
 const CLEAR: &str = "\x1b[2J\x1b[H";
 
 /// ANSI-цвет стороны.
@@ -39,6 +40,7 @@ fn glyph_token(glyph: Glyph) -> String {
     match glyph {
         Glyph::Empty => " ".to_string(),
         Glyph::Landmark(ch) => format!("{DIM}{ch}{RESET}"),
+        Glyph::Moon(ch) => format!("{MOON}{ch}{RESET}"),
         Glyph::Checker(side) => format!("{}{}{RESET}", side_color(side), side.letter()),
         Glyph::Overflow => "+".to_string(),
     }
