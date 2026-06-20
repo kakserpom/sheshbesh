@@ -28,22 +28,24 @@
     .die { width: 1.8rem; height: 1.8rem; transform-origin: 50% 50%; }
     .die-body { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 3; }
     .die-pip { fill: #0f172a; }
-    /* Анимация броска: кости прокручиваются и встают на место */
-    .dice.rolling .die { animation: die-spin .5s ease-out; }
-    .dice.rolling .die:last-child { animation-delay: .07s; }
+    /* Анимация броска: кости долго прокручиваются и встают на место */
+    .dice.rolling .die { animation: die-spin 1.5s cubic-bezier(.25,.8,.3,1); }
+    .dice.rolling .die:last-child { animation-delay: .12s; }
     @keyframes die-spin {
-      0%   { transform: rotate(0deg)   scale(.65); }
-      65%  { transform: rotate(390deg) scale(1.18); }
-      100% { transform: rotate(360deg) scale(1); }
+      0%   { transform: rotate(0deg)    scale(.6); }
+      70%  { transform: rotate(1050deg) scale(1.18); }
+      85%  { transform: rotate(1130deg) scale(1.05); }
+      100% { transform: rotate(1080deg) scale(1); }
     }
-    /* Дубль: золотая рамка + свечение, а на броске — двойной оборот */
+    /* Дубль: золотая рамка + свечение, а на броске — лишний оборот */
     .dice.double .die-body { stroke: #facc15; stroke-width: 5; }
     .dice.double { filter: drop-shadow(0 0 4px #facc15aa); }
-    .dice.rolling.double .die { animation: die-spin-double .68s ease-out; }
+    .dice.rolling.double .die { animation: die-spin-double 1.6s cubic-bezier(.25,.8,.3,1); }
     @keyframes die-spin-double {
-      0%   { transform: rotate(0deg)   scale(.6); }
-      55%  { transform: rotate(560deg) scale(1.32); }
-      100% { transform: rotate(720deg) scale(1); }
+      0%   { transform: rotate(0deg)    scale(.55); }
+      70%  { transform: rotate(1410deg) scale(1.32); }
+      85%  { transform: rotate(1490deg) scale(1.1); }
+      100% { transform: rotate(1440deg) scale(1); }
     }
     button {
       background: #1e293b; color: #e2e8f0; border: 1px solid #334155;

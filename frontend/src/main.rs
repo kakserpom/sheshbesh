@@ -16,7 +16,7 @@ use sheshbesh::{
 use wasm_bindgen_futures::spawn_local;
 
 /// Пауза на кадр «кости брошены» — крутятся кости (мс).
-const HOLD_ROLL_MS: u32 = 950;
+const HOLD_ROLL_MS: u32 = 1700;
 /// Пауза на один шаг фишки по клетке, мс.
 const HOLD_STEP_MS: u32 = 420;
 
