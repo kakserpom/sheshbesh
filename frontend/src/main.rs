@@ -62,13 +62,78 @@ fn side_color(s: Side) -> &'static str {
 // --- Логика ходов ---
 
 /// Один кадр анимации: показываемое состояние доски, (опц.) выпавшие кости, пауза
-/// перед его показом (мс) и флаг «кости сейчас крутятся» (анимация броска).
+/// перед его показом (мс), флаг «кости крутятся» и (опц.) реплика комментатора.
 #[derive(Clone)]
 struct Frame {
     state: GameState,
     roll: Option<DiceRoll>,
     hold: u32,
     rolling: bool,
+    note: Option<String>,
+}
+
+/// Имя стороны для комментатора (для 2 игроков: человек против компьютера).
+fn side_name(side: Side, human: Side) -> &'static str {
+    if side == human {
+        "Вы"
+    } else {
+        "Соперник"
+    }
+}
+
+/// Реплика об одном применённом ходе (съедание/Дом/Луна/Тюрьма/выкуп). Для
+/// обычного шага по периметру реплики нет (`None`) — чтобы не засорять ленту.
+fn move_note(before: &GameState, after: &GameState, mv: Move, human: Side) -> Option<String> {
+    let owner = before.checkers[mv.checker].owner;
+    let name = side_name(owner, human);
+    if mv.kind == MoveKind::Ransom {
+        return Some(format!("{name}: выкуп пленной фишки."));
+    }
+    // Съедание: чья-то фишка стала пленённой именно этим ходом.
+    let captured = after.checkers.iter().enumerate().any(|(j, c)| {
+        matches!(c.pos, Position::Captured { .. })
+            && !matches!(before.checkers[j].pos, Position::Captured { .. })
+    });
+    if captured {
+        return Some(if owner == human {
+            "Вы съедаете фишку соперника!".to_string()
+        } else {
+            "Соперник съедает вашу фишку!".to_string()
+        });
+    }
+    let event = match mv.kind {
+        MoveKind::Enter => "ввод фишки в игру.",
+        MoveKind::EnterMoon => "фишка взлетает на Луну!",
+        MoveKind::MoonAdvance => "продвижение по дорожке Луны.",
+        MoveKind::MoonExit => "сход с Луны.",
+        MoveKind::EnterPrison => "фишка угодила в Тюрьму!",
+        MoveKind::PrisonRelease => "выход из Тюрьмы.",
+        MoveKind::EnterHome => "заход фишки в Дом!",
+        MoveKind::Step | MoveKind::Ransom => return None,
+    };
+    Some(format!("{name}: {event}"))
+}
+
+/// Реплика о броске: что выпало, дубль и отсутствие ходов.
+fn roll_note(side: Side, human: Side, roll: DiceRoll, no_move: bool) -> String {
+    let [a, b] = roll.values();
+    let mut s = format!("{}: выпало {a} и {b}.", side_name(side, human));
+    if roll.is_double() {
+        s.push_str(" Дубль — ещё ход!");
+    }
+    if no_move {
+        s.push_str(" Ходить нечем.");
+    }
+    s
+}
+
+/// Реплика в конце серии кадров: победа или ожидание хода человека.
+fn end_note(game: &Game, human: Side) -> String {
+    match game.winner() {
+        Some(w) if w == human => "Вы победили! 🎉".to_string(),
+        Some(_) => "Соперник победил. Игра окончена.".to_string(),
+        None => "Ваш ход.".to_string(),
+    }
 }
 
 /// Применяет ход `mv` к `state`, попутно добавляя кадры. Если фишка идёт по дорожке,
@@ -79,6 +144,7 @@ fn apply_with_frames(
     state: GameState,
     mv: Move,
     roll: DiceRoll,
+    human: Side,
 ) -> GameState {
     if let Position::OnTrack { progress: sp } = state.checkers[mv.checker].pos {
         for step in 1..mv.die {
@@ -91,15 +157,18 @@ fn apply_with_frames(
                 roll: Some(roll),
                 hold: HOLD_STEP_MS,
                 rolling: false,
+                note: None,
             });
         }
     }
     let after = apply(&state, mv);
+    let note = move_note(&state, &after, mv, human);
     frames.push(Frame {
         state: after.clone(),
         roll: Some(roll),
         hold: HOLD_STEP_MS,
         rolling: false,
+        note,
     });
     after
 }
@@ -112,10 +181,13 @@ fn commit_frames<F>(
     game: &mut Game,
     roll: DiceRoll,
     played: Vec<Move>,
+    human: Side,
     forced: F,
 ) where
     F: FnMut(&GameState, Side, &[Move]) -> usize,
 {
+    let side = game.state.to_move;
+    let no_move = played.is_empty();
     // Перекат костей с грани на грань: быстрая смена показанных граней
     // (дубль перекатывается подольше — отдельная «реакция» на него)…
     let tumbles = if roll.is_double() {
@@ -129,6 +201,7 @@ fn commit_frames<F>(
             roll: Some(tumble_roll(k)),
             hold: TUMBLE_STEP_MS,
             rolling: true,
+            note: (k == 0).then(|| format!("{} бросает кости…", side_name(side, human))),
         });
     }
     // …затем кости встают на выпавший результат и держатся. Если ходить нечем —
@@ -136,12 +209,13 @@ fn commit_frames<F>(
     frames.push(Frame {
         state: game.state.clone(),
         roll: Some(roll),
-        hold: if played.is_empty() {
+        hold: if no_move {
             HOLD_NOMOVE_MS
         } else {
             HOLD_ROLL_MS
         },
         rolling: false,
+        note: Some(roll_note(side, human, roll, no_move)),
     });
     let pre = game.state.clone();
     let outcome = game.commit_turn(roll, played, forced);
@@ -149,9 +223,16 @@ fn commit_frames<F>(
     let mut forced_moves = outcome.forced.iter();
     for mv in &outcome.played {
         let ransom = mv.kind == MoveKind::Ransom;
-        scratch = apply_with_frames(frames, scratch, *mv, roll);
+        scratch = apply_with_frames(frames, scratch, *mv, roll, human);
         if ransom && let Some(&fm) = forced_moves.next() {
-            scratch = apply_with_frames(frames, scratch, fm, roll);
+            let captor = scratch.checkers[fm.checker].owner;
+            scratch = apply_with_frames(frames, scratch, fm, roll, human);
+            if let Some(last) = frames.last_mut() {
+                last.note = Some(format!(
+                    "{}: обязательный ход на 6 после выкупа.",
+                    side_name(captor, human)
+                ));
+            }
         }
     }
 }
@@ -170,7 +251,7 @@ fn ai_frames(game: &mut Game, dice: StoredValue<RandomDice>, human: Side, frames
             .choose_turn(&game.state, &turns)
             .min(turns.len() - 1);
         let played = turns[idx].clone();
-        commit_frames(frames, game, roll, played, |s, c, o| {
+        commit_frames(frames, game, roll, played, human, |s, c, o| {
             Heuristic.choose_forced(s, c, o)
         });
     }
@@ -623,6 +704,15 @@ fn App() -> impl IntoView {
     let animating = RwSignal::new(false);
     // Крутятся ли сейчас кости (анимация броска).
     let rolling = RwSignal::new(false);
+    // Текст ведущего-комментатора над доской.
+    let herald = RwSignal::new(format!(
+        "Игра началась! Первый ход — {}.",
+        if game.get_untracked().state.to_move == human {
+            "ваш"
+        } else {
+            "соперника"
+        }
+    ));
 
     // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
     let play = move |frames: Vec<Frame>| {
@@ -636,6 +726,9 @@ fn App() -> impl IntoView {
                 game.update(|g| g.state = frame.state);
                 roll.set(frame.roll);
                 rolling.set(frame.rolling);
+                if let Some(note) = frame.note {
+                    herald.set(note);
+                }
                 TimeoutFuture::new(frame.hold).await;
             }
             rolling.set(false);
@@ -656,6 +749,7 @@ fn App() -> impl IntoView {
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
+            note: Some(end_note(&g, human)),
         });
         play(frames);
     };
@@ -672,8 +766,18 @@ fn App() -> impl IntoView {
             let mut r = None;
             dice.update_value(|d| r = Some(d.roll()));
             let r = r.expect("roll");
+            let t = legal_turns(&g.state, r);
+            let no_move = t.first().is_none_or(Vec::is_empty);
+            let [a, b] = r.values();
+            herald.set(if no_move {
+                format!("Ваш ход: выпало {a} и {b}. Ходить нечем — пропуск.")
+            } else if r.is_double() {
+                format!("Ваш ход: выпало {a} и {b}. Дубль — ещё ход!")
+            } else {
+                format!("Ваш ход: выпало {a} и {b}. Выберите ход.")
+            });
             roll.set(Some(r));
-            turns.set(legal_turns(&g.state, r));
+            turns.set(t);
             prefix.set(Vec::new());
             sel.set(None);
         }
@@ -684,13 +788,14 @@ fn App() -> impl IntoView {
         // Ход человека анимируется так же пошагово, затем продолжает ИИ.
         let mut g = game.get_untracked();
         let mut frames = Vec::new();
-        commit_frames(&mut frames, &mut g, r, seq, |_, _, _| 0);
+        commit_frames(&mut frames, &mut g, r, seq, human, |_, _, _| 0);
         ai_frames(&mut g, dice, human, &mut frames);
         frames.push(Frame {
             state: g.state.clone(),
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
+            note: Some(end_note(&g, human)),
         });
         turns.set(Vec::new());
         prefix.set(Vec::new());
@@ -746,7 +851,16 @@ fn App() -> impl IntoView {
         turns.set(Vec::new());
         prefix.set(Vec::new());
         sel.set(None);
-        game.set(fresh(dice));
+        let g = fresh(dice);
+        herald.set(format!(
+            "Новая игра! Первый ход — {}.",
+            if g.state.to_move == human {
+                "ваш"
+            } else {
+                "соперника"
+            }
+        ));
+        game.set(g);
         // Если по розыгрышу первый ход достался ИИ — проиграть его сразу.
         run_ai();
     };
@@ -790,18 +904,16 @@ fn App() -> impl IntoView {
             }).collect_view();
             let cap_n = count_pos(&ps, side, false);
             let (cap_cls, cap_click) = state_of(Sel::Captured);
-            // Кости — на строке стороны, чей сейчас ход (с анимацией броска/дубля).
-            let dice = (side == to_move).then_some(cur_roll).flatten().map(|r| {
-                let [a, b] = r.values();
-                let mut cls = String::from("dice");
-                if spinning {
-                    cls.push_str(" rolling");
-                }
-                if r.is_double() {
-                    cls.push_str(" double");
-                }
-                view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }
-            });
+            // Результат броска — на строке ходящей стороны (но НЕ во время кручения:
+            // сам бросок анимируется в статусе над доской).
+            let dice = (side == to_move && !spinning)
+                .then_some(cur_roll)
+                .flatten()
+                .map(|r| {
+                    let [a, b] = r.values();
+                    let cls = if r.is_double() { "dice double" } else { "dice" };
+                    view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }
+                });
             view! {
                 <div class="tray-row" class:active=side == to_move>
                     <b style=format!("color:{}", side_color(side))>{side.letter().to_string()}</b>
@@ -822,12 +934,18 @@ fn App() -> impl IntoView {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
             <div class="status">
+                <span class="herald">{move || herald.get()}</span>
+                // Анимация броска — здесь, в статусе; результат потом ляжет в лоток.
                 {move || {
-                    let g = game.get();
-                    match g.winner() {
-                        Some(w) => format!("Победила сторона {}", w.letter()),
-                        None => format!("Ход стороны {}", g.state.to_move.letter()),
-                    }
+                    let r = roll.get();
+                    (rolling.get())
+                        .then_some(r)
+                        .flatten()
+                        .map(|r| {
+                            let [a, b] = r.values();
+                            let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
+                            view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }
+                        })
                 }}
             </div>
             <div class="controls">
