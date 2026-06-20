@@ -41,70 +41,86 @@ fn side_span(side: Side) -> Span<'static> {
     )
 }
 
-/// Спаны одной клетки периметра (суммарно 2 видимых символа).
-fn cell_spans(state: &GameState, abs: PerimeterIdx) -> Vec<Span<'static>> {
-    let owners = owners_on(state, abs);
-    if owners.is_empty() {
-        return vec![Span::styled(
-            format!("{} ", landmark(abs)),
-            Style::default().fg(Color::DarkGray),
-        )];
-    }
-    let mut distinct: Vec<Side> = Vec::new();
-    for &s in &owners {
-        if !distinct.contains(&s) {
-            distinct.push(s);
-        }
-    }
-    if distinct.len() == 1 {
-        vec![Span::styled(
-            format!("{}{}", distinct[0].letter(), owners.len().min(9)),
-            Style::default().fg(side_color(distinct[0])),
-        )]
+/// Ширина полей вокруг квадрата: лишние фишки на клетке «дописываются» наружу,
+/// до `MARGIN` штук за край (дальше — `+`).
+const MARGIN: usize = 3;
+
+/// Цветной 1-символьный маркер фишки стороны.
+fn checker_marker(side: Side) -> Span<'static> {
+    Span::styled(
+        side.letter().to_string(),
+        Style::default().fg(side_color(side)),
+    )
+}
+
+/// Направление «наружу» от клетки на краю квадрата (углы — по вертикали).
+fn outward(r: usize, c: usize) -> (isize, isize) {
+    if r == 0 {
+        (-1, 0) // верхний край — вверх
+    } else if r == SIDE_LEN - 1 {
+        (1, 0) // нижний край — вниз
+    } else if c == 0 {
+        (0, -1) // левый край — влево
     } else {
-        distinct.iter().take(2).map(|&s| side_span(s)).collect()
+        (0, 1) // правый край — вправо
     }
 }
 
-/// Накладывает фон на все спаны клетки (для подсветки «откуда»/«куда»).
-fn with_bg(spans: Vec<Span<'static>>, color: Color) -> Vec<Span<'static>> {
-    spans
-        .into_iter()
-        .map(|s| {
-            let style = s.style.bg(color);
-            Span::styled(s.content, style)
-        })
-        .collect()
-}
-
-/// Доска как строки-спаны; клетки `from`/`to` подсвечиваются (откуда — синим,
-/// куда — зелёным).
+/// Доска со внешними полями: каждая клетка — 1 символ (фишка или landmark),
+/// лишние фишки клетки «дописываются» наружу. Клетки `from`/`to` подсвечиваются
+/// (откуда — синим, куда — зелёным).
 fn board_lines_hl(
     state: &GameState,
     from: Option<PerimeterIdx>,
     to: Option<PerimeterIdx>,
 ) -> Vec<Line<'static>> {
-    let mut grid: Vec<Vec<Vec<Span>>> = vec![vec![vec![Span::raw("  ")]; SIDE_LEN]; SIDE_LEN];
+    let n = SIDE_LEN + 2 * MARGIN;
+    let mut grid: Vec<Vec<Span>> = vec![vec![Span::raw(" "); n]; n];
+    let shift = |base: usize, d: isize, k: isize| (base as isize + d * k) as usize;
+
     for abs in 0..PERIMETER {
         let (r, c) = cell_coord(abs);
         let p = PerimeterIdx::new(abs);
-        let spans = cell_spans(state, p);
-        grid[r][c] = if Some(p) == to {
-            with_bg(spans, Color::Green)
-        } else if Some(p) == from {
-            with_bg(spans, Color::Blue)
-        } else {
-            spans
+        let owners = owners_on(state, p);
+        let (pr, pc) = (r + MARGIN, c + MARGIN);
+
+        // Базовая клетка: первая фишка либо landmark; с подсветкой хода.
+        let mut base = match owners.first() {
+            Some(&s) => checker_marker(s),
+            None => Span::styled(
+                landmark(p).to_string(),
+                Style::default().fg(Color::DarkGray),
+            ),
         };
+        if Some(p) == to {
+            base.style = base.style.bg(Color::Green);
+        } else if Some(p) == from {
+            base.style = base.style.bg(Color::Blue);
+        }
+        grid[pr][pc] = base;
+
+        // Лишние фишки — наружу от клетки.
+        let (dr, dc) = outward(r, c);
+        for (k, &owner) in owners.iter().skip(1).enumerate() {
+            let slot = k + 1;
+            if slot > MARGIN {
+                grid[shift(pr, dr, MARGIN as isize)][shift(pc, dc, MARGIN as isize)] =
+                    Span::raw("+");
+                break;
+            }
+            grid[shift(pr, dr, slot as isize)][shift(pc, dc, slot as isize)] =
+                checker_marker(owner);
+        }
     }
+
     grid.into_iter()
         .map(|row| {
-            let mut spans = Vec::new();
+            let mut spans = Vec::with_capacity(row.len() * 2);
             for (i, cell) in row.into_iter().enumerate() {
                 if i > 0 {
                     spans.push(Span::raw(" "));
                 }
-                spans.extend(cell);
+                spans.push(cell);
             }
             Line::from(spans)
         })
@@ -325,8 +341,8 @@ fn option_lines(descs: &[String], sel: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// Рисует экран выбора: слева текущая доска с подсветкой хода (`from`/`to`),
-/// справа заголовок и список вариантов.
+/// Рисует экран выбора: слева заголовок и список вариантов, справа текущая
+/// доска с подсветкой выделенного хода (`from`/`to`).
 fn draw_pick(
     frame: &mut Frame,
     board: &GameState,
@@ -337,17 +353,17 @@ fn draw_pick(
     options: Vec<Line<'static>>,
 ) {
     let [left, right] =
-        Layout::horizontal([Constraint::Length(58), Constraint::Min(28)]).areas(frame.area());
-    frame.render_widget(
-        Paragraph::new(board_lines_hl(board, from, to))
-            .block(Block::bordered().title(board_title.to_string())),
-        left,
-    );
+        Layout::horizontal([Constraint::Length(34), Constraint::Min(0)]).areas(frame.area());
     let mut lines = header.to_vec();
     lines.push(Line::raw(""));
     lines.extend(options);
     frame.render_widget(
         Paragraph::new(lines).block(Block::bordered().title("Выбор хода")),
+        left,
+    );
+    frame.render_widget(
+        Paragraph::new(board_lines_hl(board, from, to))
+            .block(Block::bordered().title(board_title.to_string())),
         right,
     );
 }
@@ -624,6 +640,30 @@ mod tests {
             .find(|s| s.content.starts_with('A'))
             .expect("должен быть спан с фишкой A");
         assert_eq!(a_span.style.fg, Some(side_color(Side::A)));
+    }
+
+    #[test]
+    fn board_has_outer_margins() {
+        let state = GameState::new(vec![Side::A, Side::C], Side::A);
+        // Сетка увеличена на поля с каждой стороны.
+        assert_eq!(board_lines(&state).len(), SIDE_LEN + 2 * MARGIN);
+    }
+
+    #[test]
+    fn multiple_checkers_spill_outside_the_field() {
+        let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
+        // Три фишки A на одной клетке (точка входа A) — все должны быть видны.
+        for c in state
+            .checkers
+            .iter_mut()
+            .filter(|c| c.owner == Side::A)
+            .take(3)
+        {
+            c.pos = Position::OnTrack { progress: 0 };
+        }
+        let text = flatten(&board_lines(&state));
+        // На доске буква A встречается только как маркер фишки → не меньше трёх.
+        assert!(text.matches('A').count() >= 3);
     }
 
     #[test]
