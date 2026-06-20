@@ -16,13 +16,15 @@ use sheshbesh::{
 use wasm_bindgen_futures::spawn_local;
 
 /// Пауза на кадр «результат броска» — кости остановились (мс).
-const HOLD_ROLL_MS: u32 = 800;
+const HOLD_ROLL_MS: u32 = 1100;
+/// Пауза, когда ходов нет: дольше показываем бросок, прежде чем отдать ход.
+const HOLD_NOMOVE_MS: u32 = 1700;
 /// Пауза на один шаг фишки по клетке, мс.
-const HOLD_STEP_MS: u32 = 520;
+const HOLD_STEP_MS: u32 = 650;
 /// Длительность одного «переката» кости с грани на грань при броске, мс.
-const TUMBLE_STEP_MS: u32 = 110;
+const TUMBLE_STEP_MS: u32 = 115;
 /// Сколько перекатов показать перед остановкой костей.
-const TUMBLE_COUNT: usize = 9;
+const TUMBLE_COUNT: usize = 10;
 
 /// Фейковый бросок для k-го кадра переката: грани быстро меняются (a≠b — без
 /// случайных «дублей» во время кручения).
@@ -129,11 +131,16 @@ fn commit_frames<F>(
             rolling: true,
         });
     }
-    // …затем кости встают на выпавший результат и держатся.
+    // …затем кости встают на выпавший результат и держатся. Если ходить нечем —
+    // держим дольше, чтобы было видно, что выпало, прежде чем ход уходит.
     frames.push(Frame {
         state: game.state.clone(),
         roll: Some(roll),
-        hold: HOLD_ROLL_MS,
+        hold: if played.is_empty() {
+            HOLD_NOMOVE_MS
+        } else {
+            HOLD_ROLL_MS
+        },
         rolling: false,
     });
     let pre = game.state.clone();
