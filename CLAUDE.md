@@ -15,7 +15,10 @@ TUI (интерактивный ratatui + потоковая ANSI-анимаци
 - `frontend/` (`sheshbesh-gui`) — Leptos CSR-фронтенд (WASM). Зависит от движка с
   `default-features = false`; вся игровая логика (движок + ИИ) работает в браузере,
   доска строится из `sheshbesh::board_glyphs`. Сборка — Trunk.
-- `src-tauri/` (планируется) — Tauri-оболочка вокруг фронтенда.
+- `src-tauri/` (`sheshbesh-tauri`) — Tauri v2-оболочка: нативное окно вокруг
+  фронтенда (IPC не используется — логика во фронтенде). Запуск: `cargo tauri dev`
+  (нужен `cargo install tauri-cli`); `tauri.conf.json` сам зовёт `trunk` для сборки
+  фронтенда. Иконки в `src-tauri/icons/`.
 
 ## Команды
 

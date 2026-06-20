@@ -1,0 +1,11 @@
+[package]
+name = "sheshbesh-tauri"
+version = "0.1.0"
+edition = "2024"
+description = "Шеш-Беш — нативная оболочка GUI на Tauri"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
