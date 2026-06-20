@@ -3,8 +3,8 @@
 
 use leptos::prelude::*;
 use sheshbesh::{
-    DiceRoll, DiceSource, Game, GameState, Glyph, Heuristic, Move, MoveKind, RandomDice, Side,
-    board_glyphs, legal_turns,
+    BOARD_DIM, DiceRoll, DiceSource, Game, GameState, Glyph, Heuristic, Move, MoveKind, RandomDice,
+    Side, board_glyphs, legal_turns,
 };
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
@@ -32,17 +32,50 @@ fn fresh(dice: StoredValue<RandomDice>, human: Side) -> Game {
     game
 }
 
-/// Буква и CSS-цвет глифа клетки; для пленённой — флаг фона.
-fn glyph_view(g: Glyph) -> (String, &'static str, bool) {
-    match g {
-        Glyph::Empty => (" ".into(), "transparent", false),
-        Glyph::Landmark(c) => (c.to_string(), "#6b7280", false),
-        Glyph::Moon(c) => (c.to_string(), "#60a5fa", false),
-        Glyph::Prison(c) => (c.to_string(), "#f87171", false),
-        Glyph::Overflow => ("+".into(), "#6b7280", false),
-        Glyph::Checker(s) => (s.letter().to_string(), side_color(s), false),
-        Glyph::Captive(s) => (s.letter().to_string(), side_color(s), true),
+/// Клетка-подложка (квадрат со скруглением) заданного CSS-класса.
+fn cell_bg(x: f64, y: f64, class: &'static str) -> impl IntoView {
+    view! {
+        <rect x=x + 0.08 y=y + 0.08 width=0.84 height=0.84 rx=0.14 class=class />
     }
+}
+
+/// SVG-узел одной клетки сетки `board_glyphs` (или `None` для пустой).
+fn svg_cell(r: usize, c: usize, g: Glyph) -> Option<AnyView> {
+    let (x, y) = (c as f64, r as f64);
+    let (cx, cy) = (x + 0.5, y + 0.5);
+    let node = match g {
+        Glyph::Empty => return None,
+        Glyph::Landmark('+') => cell_bg(x, y, "corner").into_any(),
+        Glyph::Landmark('h') => cell_bg(x, y, "home-gate").into_any(),
+        Glyph::Landmark('o') => view! {
+            <circle cx=cx cy=cy r=0.3 class="home-slot" />
+        }
+        .into_any(),
+        Glyph::Landmark(_) => cell_bg(x, y, "track").into_any(),
+        Glyph::Prison(_) => cell_bg(x, y, "prison").into_any(),
+        Glyph::Moon(ch) if ch.is_ascii_digit() => view! {
+            <circle cx=cx cy=cy r=0.32 class="moon-field" />
+            <text x=cx y=cy class="moon-num">{ch.to_string()}</text>
+        }
+        .into_any(),
+        Glyph::Moon(_) => cell_bg(x, y, "moon").into_any(),
+        Glyph::Checker(s) => view! {
+            {cell_bg(x, y, "track")}
+            <circle cx=cx cy=cy r=0.36 class="checker" fill=side_color(s) />
+        }
+        .into_any(),
+        Glyph::Captive(s) => view! {
+            {cell_bg(x, y, "prison")}
+            <circle cx=cx cy=cy r=0.34 class="checker" fill=side_color(s) />
+            <circle cx=cx cy=cy r=0.42 class="captive-ring" />
+        }
+        .into_any(),
+        Glyph::Overflow => view! {
+            <text x=cx y=cy class="overflow">"+"</text>
+        }
+        .into_any(),
+    };
+    Some(node)
 }
 
 fn side_color(s: Side) -> &'static str {
@@ -176,25 +209,19 @@ fn App() -> impl IntoView {
                     }).collect_view()
                 }}
             </div>
-            <div class="board">
+            <svg class="board" viewBox=format!("0 0 {d} {d}", d = BOARD_DIM)>
                 {move || {
-                    board_glyphs(&game.get().state).into_iter().map(|row| {
-                        view! {
-                            <div class="row">
-                                {row.into_iter().map(|g| {
-                                    let (ch, color, bg) = glyph_view(g);
-                                    let style = if bg {
-                                        format!("color:#fff;background:{color}")
-                                    } else {
-                                        format!("color:{color}")
-                                    };
-                                    view! { <span class="cell" style=style>{ch}</span> }
-                                }).collect_view()}
-                            </div>
-                        }
-                    }).collect_view()
+                    board_glyphs(&game.get().state)
+                        .into_iter()
+                        .enumerate()
+                        .flat_map(|(r, row)| {
+                            row.into_iter()
+                                .enumerate()
+                                .filter_map(move |(c, g)| svg_cell(r, c, g))
+                        })
+                        .collect_view()
                 }}
-            </div>
+            </svg>
         </div>
     }
 }
