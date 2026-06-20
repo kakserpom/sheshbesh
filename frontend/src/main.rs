@@ -169,33 +169,37 @@ fn commit_frames<F>(
     roll: DiceRoll,
     played: Vec<Move>,
     human: Side,
+    roll_anim: bool,
     forced: F,
 ) where
     F: FnMut(&GameState, Side, &[Move]) -> usize,
 {
     let side = game.state.to_move;
     let no_move = played.is_empty();
-    // Кадр броска: кубики кувыркаются в 3D (анимация в статусе) и встают на грань.
-    frames.push(Frame {
-        state: game.state.clone(),
-        roll: Some(roll),
-        hold: ROLL_ANIM_MS,
-        rolling: true,
-        note: Some(format!("{} бросает кости…", side_name(side, human))),
-    });
-    // …затем кости встают на выпавший результат и держатся. Если ходить нечем —
-    // держим дольше, чтобы было видно, что выпало, прежде чем ход уходит.
-    frames.push(Frame {
-        state: game.state.clone(),
-        roll: Some(roll),
-        hold: if no_move {
-            HOLD_NOMOVE_MS
-        } else {
-            HOLD_ROLL_MS
-        },
-        rolling: false,
-        note: Some(roll_note(side, human, roll, no_move)),
-    });
+    // Анимация броска нужна, когда кости ещё не показаны (ход ИИ). Для человека
+    // бросок уже анимирован в начале его хода — тут только продвигаем фишки.
+    if roll_anim {
+        // Кадр броска: кубики кувыркаются в 3D (анимация в статусе) и встают на грань.
+        frames.push(Frame {
+            state: game.state.clone(),
+            roll: Some(roll),
+            hold: ROLL_ANIM_MS,
+            rolling: true,
+            note: Some(format!("{} бросает кости…", side_name(side, human))),
+        });
+        // …затем кости встают на результат и держатся. Если ходить нечем — дольше.
+        frames.push(Frame {
+            state: game.state.clone(),
+            roll: Some(roll),
+            hold: if no_move {
+                HOLD_NOMOVE_MS
+            } else {
+                HOLD_ROLL_MS
+            },
+            rolling: false,
+            note: Some(roll_note(side, human, roll, no_move)),
+        });
+    }
     let pre = game.state.clone();
     let outcome = game.commit_turn(roll, played, forced);
     let mut scratch = pre;
@@ -230,7 +234,7 @@ fn ai_frames(game: &mut Game, dice: StoredValue<RandomDice>, human: Side, frames
             .choose_turn(&game.state, &turns)
             .min(turns.len() - 1);
         let played = turns[idx].clone();
-        commit_frames(frames, game, roll, played, human, |s, c, o| {
+        commit_frames(frames, game, roll, played, human, true, |s, c, o| {
             Heuristic.choose_forced(s, c, o)
         });
     }
@@ -774,17 +778,27 @@ fn App() -> impl IntoView {
             let t = legal_turns(&g.state, r);
             let no_move = t.first().is_none_or(Vec::is_empty);
             let [a, b] = r.values();
-            herald.set(if no_move {
-                format!("Ваш ход: выпало {a} и {b}. Ходить нечем — пропуск.")
-            } else if r.is_double() {
-                format!("Ваш ход: выпало {a} и {b}. Дубль — ещё ход!")
-            } else {
-                format!("Ваш ход: выпало {a} и {b}. Выберите ход.")
+            // Анимируем бросок человека так же, как у соперника: кубики кувыркаются
+            // в статусе, затем показывается результат и включается выбор хода.
+            animating.set(true);
+            spawn_local(async move {
+                herald.set("Ваш ход — бросаем кости…".to_string());
+                roll.set(Some(r));
+                rolling.set(true);
+                TimeoutFuture::new(ROLL_ANIM_MS).await;
+                rolling.set(false);
+                herald.set(if no_move {
+                    format!("Ваш ход: выпало {a} и {b}. Ходить нечем — пропуск.")
+                } else if r.is_double() {
+                    format!("Ваш ход: выпало {a} и {b}. Дубль — ещё ход!")
+                } else {
+                    format!("Ваш ход: выпало {a} и {b}. Выберите ход.")
+                });
+                turns.set(t);
+                prefix.set(Vec::new());
+                sel.set(None);
+                animating.set(false);
             });
-            roll.set(Some(r));
-            turns.set(t);
-            prefix.set(Vec::new());
-            sel.set(None);
         }
     });
 
@@ -793,7 +807,7 @@ fn App() -> impl IntoView {
         // Ход человека анимируется так же пошагово, затем продолжает ИИ.
         let mut g = game.get_untracked();
         let mut frames = Vec::new();
-        commit_frames(&mut frames, &mut g, r, seq, human, |_, _, _| 0);
+        commit_frames(&mut frames, &mut g, r, seq, human, false, |_, _, _| 0);
         ai_frames(&mut g, dice, human, &mut frames);
         frames.push(Frame {
             state: g.state.clone(),
