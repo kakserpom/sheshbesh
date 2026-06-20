@@ -74,8 +74,7 @@ fn board_lines_hl(
 ) -> Vec<Line<'static>> {
     let from_cell = from.map(margin_coord);
     let to_cell = to.map(margin_coord);
-    let scale = board_scale();
-    let pad = Span::raw(" ".repeat(2 * scale - 1)); // хвост клетки до ширины 2*scale
+    let pad = Span::raw(" ".repeat(board_scale())); // хвост клетки (горизонтальный масштаб)
 
     let mut lines = Vec::new();
     for (r, row) in board_glyphs(state).into_iter().enumerate() {
@@ -91,10 +90,6 @@ fn board_lines_hl(
             spans.push(pad.clone());
         }
         lines.push(Line::from(spans));
-        // Пустые строки для вертикального масштаба.
-        for _ in 1..scale {
-            lines.push(Line::raw(""));
-        }
     }
     lines
 }
@@ -646,11 +641,8 @@ mod tests {
     #[test]
     fn board_has_outer_margins() {
         let state = GameState::new(vec![Side::A, Side::C], Side::A);
-        // Сетка увеличена на поля с каждой стороны; масштаб умножает число строк.
-        assert_eq!(
-            board_lines(&state).len(),
-            crate::render::BOARD_DIM * board_scale()
-        );
+        // Сетка увеличена на поля с каждой стороны (масштаб — только по горизонтали).
+        assert_eq!(board_lines(&state).len(), crate::render::BOARD_DIM);
     }
 
     #[test]
