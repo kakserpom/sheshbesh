@@ -151,31 +151,44 @@ fn center_pt((row, col): (usize, usize)) -> (f64, f64) {
 
 /// Дуга Луны стороны `side`: от клетки-входа к клетке-выхода, выгиб внутрь квадрата.
 fn moon_arc(side: Side) -> ArcGeom {
-    let p0 = center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON)));
-    let p2 = center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON_EXIT)));
-    let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
     let c = BOARD_DIM as f64 / 2.0;
+    // Сдвиг точки внутрь квадрата (к центру), чтобы концы дуги не лежали на клетках.
+    let nudge = |p: (f64, f64), amt: f64| {
+        let d = (c - p.0, c - p.1);
+        let l = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-3);
+        (p.0 + d.0 / l * amt, p.1 + d.1 / l * amt)
+    };
+    let p0 = nudge(
+        center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON))),
+        0.8,
+    );
+    let p2 = nudge(
+        center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON_EXIT))),
+        0.8,
+    );
+    let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
     let dir = (c - mid.0, c - mid.1);
     let len = (dir.0 * dir.0 + dir.1 * dir.1).sqrt().max(1e-3);
-    let ctrl = (mid.0 + dir.0 / len * 5.0, mid.1 + dir.1 / len * 5.0);
+    // Большой выгиб: вершина дуги уходит за Дом (≈ bulge/2 клеток внутрь от середины).
+    let ctrl = (mid.0 + dir.0 / len * 11.0, mid.1 + dir.1 / len * 11.0);
     let path = format!(
         "M {:.2} {:.2} Q {:.2} {:.2} {:.2} {:.2}",
         p0.0, p0.1, ctrl.0, ctrl.1, p2.0, p2.1
     );
-    // Наконечник стрелки у выхода (по касательной кривой в t=1).
+    // Маленький аккуратный наконечник у выхода (по касательной кривой в t=1).
     let der = (2.0 * (p2.0 - ctrl.0), 2.0 * (p2.1 - ctrl.1));
     let dl = (der.0 * der.0 + der.1 * der.1).sqrt().max(1e-3);
     let (ux, uy) = (der.0 / dl, der.1 / dl);
-    let (bx, by) = (p2.0 - ux * 0.7, p2.1 - uy * 0.7);
+    let (bx, by) = (p2.0 - ux * 0.3, p2.1 - uy * 0.3);
     let (px, py) = (-uy, ux);
     let arrow = format!(
         "{:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
         p2.0,
         p2.1,
-        bx + px * 0.4,
-        by + py * 0.4,
-        bx - px * 0.4,
-        by - py * 0.4
+        bx + px * 0.14,
+        by + py * 0.14,
+        bx - px * 0.14,
+        by - py * 0.14
     );
     let fields = [
         (MoonField::One, 0.30, '1'),
