@@ -58,41 +58,41 @@ fn colored_board(state: &GameState) -> String {
         .join("\n")
 }
 
-/// Цветная панель «вне доски» по каждой активной стороне.
+/// `n` маркеров фишки стороны через пробел (или `—`, если ноль).
+fn markers(side: Side, n: usize) -> String {
+    if n == 0 {
+        return format!("{DIM}—{RESET}");
+    }
+    let one = format!("{}{}{RESET}", side_color(side), side.letter());
+    vec![one; n].join(" ")
+}
+
+/// Цветная панель «вне доски»: резерв, Дом и плен — маркерами фишек.
 fn colored_panel(state: &GameState) -> String {
     let mut lines = Vec::new();
     for &side in &state.active {
         let own = || state.checkers.iter().filter(move |c| c.owner == side);
-
         let reserve = own().filter(|c| c.pos == Position::Reserve).count();
-
-        let mut home = String::new();
-        for depth in 0..HOME_DEPTH as u8 {
-            home.push(if own().any(|c| c.pos == Position::Home { depth }) {
-                '#'
-            } else {
-                '_'
-            });
-        }
-
-        let moon: String = own()
-            .filter_map(|c| match c.pos {
-                Position::Moon { field, .. } => Some(match field.required_roll() {
-                    1 => '1',
-                    3 => '3',
-                    _ => '6',
-                }),
-                _ => None,
-            })
-            .collect();
-
         let captured = own()
             .filter(|c| matches!(c.pos, Position::Captured { .. }))
             .count();
 
+        let home: String = (0..HOME_DEPTH as u8)
+            .map(|depth| {
+                if own().any(|c| c.pos == Position::Home { depth }) {
+                    format!("{}{}{RESET}", side_color(side), side.letter())
+                } else {
+                    format!("{DIM}o{RESET}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
         lines.push(format!(
-            "Сторона {}: резерв {reserve} | дом [{home}] | луна [{moon}] | плен {captured}",
+            "{}  резерв: {}   дом: {home}   плен: {}",
             colored_side(side),
+            markers(side, reserve),
+            markers(side, captured),
         ));
     }
     lines.join("\n")
@@ -172,7 +172,8 @@ mod tests {
         assert!(f.starts_with(CLEAR)); // очистка экрана
         assert!(f.contains("ЗАГОЛОВОК"));
         assert!(f.contains(side_color(Side::A))); // цвет фишки A
-        assert!(f.contains("Сторона"));
+        assert!(f.contains("резерв:")); // панель статуса
+        assert!(f.contains("плен:"));
     }
 
     #[test]

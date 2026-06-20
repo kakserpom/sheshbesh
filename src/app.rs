@@ -95,7 +95,21 @@ fn board_lines(state: &GameState) -> Vec<Line<'static>> {
     board_lines_hl(state, None, None)
 }
 
-/// Панель «вне доски» по каждой стороне.
+/// Добавляет `n` маркеров фишки стороны через пробел (или `—`, если ноль).
+fn push_markers(spans: &mut Vec<Span<'static>>, side: Side, n: usize) {
+    if n == 0 {
+        spans.push(Span::styled("—", Style::default().fg(Color::DarkGray)));
+        return;
+    }
+    for i in 0..n {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(checker_marker(side));
+    }
+}
+
+/// Панель «вне доски» по каждой стороне: резерв, Дом и плен — маркерами фишек.
 fn panel_lines(state: &GameState) -> Vec<Line<'static>> {
     state
         .active
@@ -103,33 +117,28 @@ fn panel_lines(state: &GameState) -> Vec<Line<'static>> {
         .map(|&side| {
             let own = || state.checkers.iter().filter(move |c| c.owner == side);
             let reserve = own().filter(|c| c.pos == Position::Reserve).count();
-            let mut home = String::new();
-            for depth in 0..HOME_DEPTH as u8 {
-                home.push(if own().any(|c| c.pos == Position::Home { depth }) {
-                    '#'
-                } else {
-                    '_'
-                });
-            }
-            let moon: String = own()
-                .filter_map(|c| match c.pos {
-                    Position::Moon { field, .. } => Some(match field.required_roll() {
-                        1 => '1',
-                        3 => '3',
-                        _ => '6',
-                    }),
-                    _ => None,
-                })
-                .collect();
             let captured = own()
                 .filter(|c| matches!(c.pos, Position::Captured { .. }))
                 .count();
-            Line::from(vec![
-                side_span(side),
-                Span::raw(format!(
-                    ": резерв {reserve} | дом [{home}] | луна [{moon}] | плен {captured}"
-                )),
-            ])
+
+            let mut spans = vec![side_span(side), Span::raw("  резерв: ")];
+            push_markers(&mut spans, side, reserve);
+
+            spans.push(Span::raw("   дом: "));
+            for depth in 0..HOME_DEPTH as u8 {
+                if depth > 0 {
+                    spans.push(Span::raw(" "));
+                }
+                if own().any(|c| c.pos == Position::Home { depth }) {
+                    spans.push(checker_marker(side));
+                } else {
+                    spans.push(Span::styled("o", Style::default().fg(Color::DarkGray)));
+                }
+            }
+
+            spans.push(Span::raw("   плен: "));
+            push_markers(&mut spans, side, captured);
+            Line::from(spans)
         })
         .collect()
 }
