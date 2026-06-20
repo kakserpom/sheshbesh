@@ -9,16 +9,31 @@ use sheshbesh::board::{
     LOCAL_MOON, LOCAL_MOON_EXIT, LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR, PERIMETER, cell_kind,
 };
 use sheshbesh::{
-    Agent, BOARD_DIM, BOARD_MARGIN, CellKind, DiceRoll, DiceSource, Game, GameState, Heuristic,
-    MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side, apply, checker_cell,
-    legal_turns, margin_coord,
+    Agent, BOARD_DIM, BOARD_MARGIN, CellKind, DiceRoll, DiceSource, Die, Game, GameState,
+    Heuristic, MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side, apply,
+    checker_cell, legal_turns, margin_coord,
 };
 use wasm_bindgen_futures::spawn_local;
 
-/// Пауза на кадр «кости брошены» — крутятся кости (мс).
-const HOLD_ROLL_MS: u32 = 1600;
+/// Пауза на кадр «результат броска» — кости остановились (мс).
+const HOLD_ROLL_MS: u32 = 800;
 /// Пауза на один шаг фишки по клетке, мс.
 const HOLD_STEP_MS: u32 = 520;
+/// Длительность одного «переката» кости с грани на грань при броске, мс.
+const TUMBLE_STEP_MS: u32 = 110;
+/// Сколько перекатов показать перед остановкой костей.
+const TUMBLE_COUNT: usize = 9;
+
+/// Фейковый бросок для k-го кадра переката: грани быстро меняются (a≠b — без
+/// случайных «дублей» во время кручения).
+fn tumble_roll(k: usize) -> DiceRoll {
+    let a = (k * 5 % 6) as u8 + 1;
+    let b = ((k * 5 + 2) % 6) as u8 + 1;
+    DiceRoll::new(
+        Die::new(a).expect("грань 1..=6"),
+        Die::new(b).expect("грань 1..=6"),
+    )
+}
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 fn seed() -> u64 {
@@ -99,11 +114,27 @@ fn commit_frames<F>(
 ) where
     F: FnMut(&GameState, Side, &[Move]) -> usize,
 {
+    // Перекат костей с грани на грань: быстрая смена показанных граней
+    // (дубль перекатывается подольше — отдельная «реакция» на него)…
+    let tumbles = if roll.is_double() {
+        TUMBLE_COUNT + 6
+    } else {
+        TUMBLE_COUNT
+    };
+    for k in 0..tumbles {
+        frames.push(Frame {
+            state: game.state.clone(),
+            roll: Some(tumble_roll(k)),
+            hold: TUMBLE_STEP_MS,
+            rolling: true,
+        });
+    }
+    // …затем кости встают на выпавший результат и держатся.
     frames.push(Frame {
         state: game.state.clone(),
         roll: Some(roll),
         hold: HOLD_ROLL_MS,
-        rolling: true,
+        rolling: false,
     });
     let pre = game.state.clone();
     let outcome = game.commit_turn(roll, played, forced);

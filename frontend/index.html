@@ -24,29 +24,24 @@
     h1 { font-weight: 600; margin: .2rem 0; font-size: 1.4rem; }
     .status { font-size: 1.1rem; margin: .4rem 0; min-height: 1.6rem; }
     .controls { display: flex; gap: .6rem; align-items: center; margin: .6rem 0; }
-    .dice { display: inline-flex; gap: .35rem; }
+    .dice { display: inline-flex; gap: .4rem; perspective: 340px; }
     .die { width: 1.8rem; height: 1.8rem; transform-origin: 50% 50%; }
     .die-body { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 3; }
     .die-pip { fill: #0f172a; }
-    /* Анимация броска: кости долго прокручиваются и встают на место */
-    .dice.rolling .die { animation: die-spin 1.5s cubic-bezier(.25,.8,.3,1); }
-    .dice.rolling .die:last-child { animation-delay: .12s; }
-    @keyframes die-spin {
-      0%   { transform: rotate(0deg)    scale(.6); }
-      70%  { transform: rotate(1050deg) scale(1.18); }
-      85%  { transform: rotate(1130deg) scale(1.05); }
-      100% { transform: rotate(1080deg) scale(1); }
+    /* Бросок: кость перекатывается с грани на грань (3D-кувырок + смена граней). */
+    .dice.rolling .die { animation: die-tumble .14s ease-in-out; }
+    .dice.rolling .die:last-child { animation-name: die-tumble-alt; }
+    @keyframes die-tumble {
+      0%   { transform: rotateX(-82deg) rotateY(12deg) scale(.92); }
+      100% { transform: rotateX(38deg)  rotateY(-8deg) scale(1.06); }
     }
-    /* Дубль: золотая рамка + свечение, а на броске — лишний оборот */
+    @keyframes die-tumble-alt {
+      0%   { transform: rotateY(-82deg) rotateX(-12deg) scale(.92); }
+      100% { transform: rotateY(40deg)  rotateX(10deg)  scale(1.06); }
+    }
+    /* Дубль: золотая рамка + свечение (проявляется, когда кости встали на дубль). */
     .dice.double .die-body { stroke: #facc15; stroke-width: 5; }
-    .dice.double { filter: drop-shadow(0 0 4px #facc15aa); }
-    .dice.rolling.double .die { animation: die-spin-double 1.6s cubic-bezier(.25,.8,.3,1); }
-    @keyframes die-spin-double {
-      0%   { transform: rotate(0deg)    scale(.55); }
-      70%  { transform: rotate(1410deg) scale(1.32); }
-      85%  { transform: rotate(1490deg) scale(1.1); }
-      100% { transform: rotate(1440deg) scale(1); }
-    }
+    .dice.double { filter: drop-shadow(0 0 5px #facc15bb); }
     button {
       background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
       border-radius: .4rem; padding: .35rem .7rem; cursor: pointer; font: inherit;
