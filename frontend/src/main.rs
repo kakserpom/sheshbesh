@@ -3,14 +3,22 @@
 //! плавную анимацию перемещения (CSS-переход `cx`/`cy`). Человек играет стороной A
 //! против эвристики; ход собирается кликами (фишка → клетка) по одной кости.
 
+use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use sheshbesh::board::{
     LOCAL_MOON, LOCAL_MOON_EXIT, LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR, PERIMETER, cell_kind,
 };
 use sheshbesh::{
-    BOARD_DIM, CellKind, DiceRoll, DiceSource, Game, GameState, Heuristic, MoonField, Move,
-    PerimeterIdx, Position, RandomDice, Side, apply, checker_cell, legal_turns, margin_coord,
+    Agent, BOARD_DIM, BOARD_MARGIN, CellKind, DiceRoll, DiceSource, Game, GameState, Heuristic,
+    MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side, apply, checker_cell,
+    legal_turns, margin_coord,
 };
+use wasm_bindgen_futures::spawn_local;
+
+/// Пауза на кадр «кости брошены» (даём разглядеть бросок), мс.
+const HOLD_ROLL_MS: u32 = 650;
+/// Пауза на один шаг фишки по клетке, мс.
+const HOLD_STEP_MS: u32 = 300;
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 fn seed() -> u64 {
@@ -36,22 +44,100 @@ fn side_color(s: Side) -> &'static str {
 
 // --- Логика ходов ---
 
-fn advance_ai(game: &mut Game, dice: StoredValue<RandomDice>, human: Side) {
-    let mut guard = 0;
-    while game.winner().is_none() && game.state.to_move != human && guard < 2000 {
-        dice.update_value(|d| {
-            game.play_turn(d, &mut Heuristic);
-        });
-        guard += 1;
+/// Один кадр анимации: показываемое состояние доски, (опц.) выпавшие кости и пауза
+/// перед его показом (мс).
+#[derive(Clone)]
+struct Frame {
+    state: GameState,
+    roll: Option<DiceRoll>,
+    hold: u32,
+}
+
+/// Применяет ход `mv` к `state`, попутно добавляя кадры. Если фишка идёт по дорожке,
+/// эмитится по кадру на **каждую промежуточную клетку** (фишка «шагает», а не
+/// перепрыгивает сразу на конечную). Возвращает состояние после хода.
+fn apply_with_frames(
+    frames: &mut Vec<Frame>,
+    state: GameState,
+    mv: Move,
+    roll: DiceRoll,
+) -> GameState {
+    if let Position::OnTrack { progress: sp } = state.checkers[mv.checker].pos {
+        for step in 1..mv.die {
+            let mut mid = state.clone();
+            mid.checkers[mv.checker].pos = Position::OnTrack {
+                progress: sp + u16::from(step),
+            };
+            frames.push(Frame {
+                state: mid,
+                roll: Some(roll),
+                hold: HOLD_STEP_MS,
+            });
+        }
+    }
+    let after = apply(&state, mv);
+    frames.push(Frame {
+        state: after.clone(),
+        roll: Some(roll),
+        hold: HOLD_STEP_MS,
+    });
+    after
+}
+
+/// Разворачивает один ход (бросок + выбранная последовательность) в кадры: сперва
+/// «кости брошены», затем по фишке за раз (с пошаговым проходом по клеткам), включая
+/// вынужденные ответные ходы захватчиков при выкупе. Продвигает `game`.
+fn commit_frames<F>(
+    frames: &mut Vec<Frame>,
+    game: &mut Game,
+    roll: DiceRoll,
+    played: Vec<Move>,
+    forced: F,
+) where
+    F: FnMut(&GameState, Side, &[Move]) -> usize,
+{
+    frames.push(Frame {
+        state: game.state.clone(),
+        roll: Some(roll),
+        hold: HOLD_ROLL_MS,
+    });
+    let pre = game.state.clone();
+    let outcome = game.commit_turn(roll, played, forced);
+    let mut scratch = pre;
+    let mut forced_moves = outcome.forced.iter();
+    for mv in &outcome.played {
+        let ransom = mv.kind == MoveKind::Ransom;
+        scratch = apply_with_frames(frames, scratch, *mv, roll);
+        if ransom && let Some(&fm) = forced_moves.next() {
+            scratch = apply_with_frames(frames, scratch, fm, roll);
+        }
     }
 }
 
-fn fresh(dice: StoredValue<RandomDice>, human: Side) -> Game {
+/// Дополняет `frames` ходами ИИ (всех не-человеческих сторон, с дублями и выкупами)
+/// от текущего состояния `game` до хода человека. Продвигает `game`.
+fn ai_frames(game: &mut Game, dice: StoredValue<RandomDice>, human: Side, frames: &mut Vec<Frame>) {
+    let mut guard = 0;
+    while game.winner().is_none() && game.state.to_move != human && guard < 4000 {
+        guard += 1;
+        let mut roll = None;
+        dice.update_value(|d| roll = Some(d.roll()));
+        let roll = roll.expect("roll");
+        let turns = legal_turns(&game.state, roll);
+        let idx = Heuristic
+            .choose_turn(&game.state, &turns)
+            .min(turns.len() - 1);
+        let played = turns[idx].clone();
+        commit_frames(frames, game, roll, played, |s, c, o| {
+            Heuristic.choose_forced(s, c, o)
+        });
+    }
+}
+
+fn fresh(dice: StoredValue<RandomDice>) -> Game {
     let mut game = None;
     dice.update_value(|d| game = Some(Game::start(vec![Side::A, Side::A.opposite()], d)));
-    let mut game = game.expect("game started");
-    advance_ai(&mut game, dice, human);
-    game
+    game.expect("game started")
 }
 
 fn after_prefix(game: &Game, prefix: &[Move]) -> GameState {
@@ -139,19 +225,19 @@ struct ArcGeom {
 /// Дуга Луны стороны `side`: парабола от входа к выходу, выгиб внутрь квадрата.
 fn moon_arc(side: Side) -> ArcGeom {
     let c = BOARD_DIM as f64 / 2.0;
-    let nudge = |p: (f64, f64), amt: f64| {
+    // Концы параболы — в середине внутренней грани клеток входа и выхода Луны
+    // (сдвиг от центра на пол-клетки строго к центру доски, по перпендикуляру).
+    let edge = |coord| {
+        let p = center_pt(coord);
         let d = (c - p.0, c - p.1);
-        let l = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-3);
-        (p.0 + d.0 / l * amt, p.1 + d.1 / l * amt)
+        if d.0.abs() > d.1.abs() {
+            (p.0 + d.0.signum() * 0.5, p.1)
+        } else {
+            (p.0, p.1 + d.1.signum() * 0.5)
+        }
     };
-    let p0 = nudge(
-        center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON))),
-        0.8,
-    );
-    let p2 = nudge(
-        center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON_EXIT))),
-        0.8,
-    );
+    let p0 = edge(margin_coord(side.local_to_perimeter(LOCAL_MOON)));
+    let p2 = edge(margin_coord(side.local_to_perimeter(LOCAL_MOON_EXIT)));
     let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
     let dir = (c - mid.0, c - mid.1);
     let len = (dir.0 * dir.0 + dir.1 * dir.1).sqrt().max(1e-3);
@@ -486,16 +572,55 @@ fn die_face(v: u8) -> impl IntoView {
 fn App() -> impl IntoView {
     let human = Side::A;
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
-    let game = RwSignal::new(fresh(dice, human));
+    let game = RwSignal::new(fresh(dice));
     let roll = RwSignal::new(None::<DiceRoll>);
     let turns = RwSignal::new(Vec::<Vec<Move>>::new());
     let prefix = RwSignal::new(Vec::<Move>::new());
     let sel = RwSignal::new(None::<Sel>);
+    // Идёт ли сейчас проигрывание анимации хода (блокирует ввод и авто-бросок).
+    let animating = RwSignal::new(false);
 
-    // Авто-бросок в начале хода человека.
+    // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
+    let play = move |frames: Vec<Frame>| {
+        if frames.is_empty() {
+            return;
+        }
+        animating.set(true);
+        spawn_local(async move {
+            for frame in frames {
+                TimeoutFuture::new(frame.hold).await;
+                game.update(|g| g.state = frame.state);
+                roll.set(frame.roll);
+            }
+            animating.set(false);
+        });
+    };
+
+    // Если ход за оппонентом (ИИ) — собрать кадры и проиграть их пошагово.
+    let run_ai = move || {
+        let mut g = game.get_untracked();
+        if g.winner().is_some() || g.state.to_move == human {
+            return;
+        }
+        let mut frames = Vec::new();
+        ai_frames(&mut g, dice, human, &mut frames);
+        frames.push(Frame {
+            state: g.state.clone(),
+            roll: None,
+            hold: HOLD_STEP_MS,
+        });
+        play(frames);
+    };
+
+    // Авто-бросок в начале хода человека (но не во время анимации).
     Effect::new(move |_| {
         let g = game.get();
-        if g.winner().is_none() && g.state.to_move == human && roll.get_untracked().is_none() {
+        let busy = animating.get();
+        if !busy
+            && g.winner().is_none()
+            && g.state.to_move == human
+            && roll.get_untracked().is_none()
+        {
             let mut r = None;
             dice.update_value(|d| r = Some(d.roll()));
             let r = r.expect("roll");
@@ -508,19 +633,29 @@ fn App() -> impl IntoView {
 
     let commit = move |seq: Vec<Move>| {
         let r = roll.get_untracked().expect("roll");
-        game.update(|g| {
-            g.commit_turn(r, seq, |_, _, _| 0);
-            advance_ai(g, dice, human);
+        // Ход человека анимируется так же пошагово, затем продолжает ИИ.
+        let mut g = game.get_untracked();
+        let mut frames = Vec::new();
+        commit_frames(&mut frames, &mut g, r, seq, |_, _, _| 0);
+        ai_frames(&mut g, dice, human, &mut frames);
+        frames.push(Frame {
+            state: g.state.clone(),
+            roll: None,
+            hold: HOLD_STEP_MS,
         });
-        roll.set(None);
         turns.set(Vec::new());
         prefix.set(Vec::new());
         sel.set(None);
+        play(frames);
     };
 
     let click = move |target: Sel| {
         let g = game.get_untracked();
-        if g.winner().is_some() || g.state.to_move != human || roll.get_untracked().is_none() {
+        if animating.get_untracked()
+            || g.winner().is_some()
+            || g.state.to_move != human
+            || roll.get_untracked().is_none()
+        {
             return;
         }
         let pre = prefix.get_untracked();
@@ -562,8 +697,13 @@ fn App() -> impl IntoView {
         turns.set(Vec::new());
         prefix.set(Vec::new());
         sel.set(None);
-        game.set(fresh(dice, human));
+        game.set(fresh(dice));
+        // Если по розыгрышу первый ход достался ИИ — проиграть его сразу.
+        run_ai();
     };
+
+    // На старте партии первый ход может принадлежать ИИ — анимируем его.
+    run_ai();
 
     // Лотки сторон (резерв + плен-каземат) — построчно, слева от доски.
     let render_trays = move || {
@@ -650,7 +790,13 @@ fn App() -> impl IntoView {
             <div class="main">
             <div class="trays">{render_trays}</div>
             <div class="board-area">
-            <svg class="board" viewBox=format!("0 0 {d} {d}", d = BOARD_DIM)>
+            // Кадрируем viewBox по содержимому: пустые поля BOARD_MARGIN по краям
+            // (нужные движку/TUI) обрезаем, оставляя лишь тонкий зазор 0.5.
+            <svg class="board" viewBox=format!(
+                "{o} {o} {s} {s}",
+                o = BOARD_MARGIN as f64 - 0.5,
+                s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 1.0,
+            )>
                 {move || static_board(&game.get().state)}
 
                 <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>

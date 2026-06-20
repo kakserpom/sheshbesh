@@ -9,3 +9,5 @@ sheshbesh = { path = "..", default-features = false }
 leptos = { version = "0.8", features = ["csr"] }
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
+gloo-timers = { version = "0.4.0", features = ["futures"] }
+wasm-bindgen-futures = "0.4.75"
