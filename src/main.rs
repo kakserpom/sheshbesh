@@ -1,23 +1,26 @@
-use sheshbesh::{Game, Heuristic, RandomDice, Side, tui};
+use std::io::{IsTerminal, stdout};
 use std::time::Duration;
 
-fn main() {
-    // Визуализация: эвристика играет сама с собой, партия проигрывается покадрово.
-    // Темп и предел ходов настраиваются через окружение.
-    let delay_ms = env_u64("SHESHBESH_DELAY_MS", 150);
-    let max_turns = env_u64("SHESHBESH_MAX_TURNS", 1000) as usize;
+use sheshbesh::{Game, Heuristic, RandomDice, Side, app, tui};
 
-    let mut dice = RandomDice::from_entropy();
-    let mut game = Game::start(vec![Side::A, Side::A.opposite()], &mut dice);
+fn main() {
+    // Темп и предел ходов настраиваются через окружение.
+    let delay = Duration::from_millis(env_u64("SHESHBESH_DELAY_MS", 150));
+    let max_turns = env_u64("SHESHBESH_MAX_TURNS", 1000) as usize;
+    let sides = vec![Side::A, Side::A.opposite()];
     let mut agent = Heuristic;
 
-    tui::play_animated(
-        &mut game,
-        &mut dice,
-        &mut agent,
-        Duration::from_millis(delay_ms),
-        max_turns,
-    );
+    if stdout().is_terminal() {
+        // Настоящий терминал — интерактивный TUI на ratatui.
+        if let Err(e) = app::run(sides, &mut agent, delay) {
+            eprintln!("Ошибка TUI: {e}");
+        }
+    } else {
+        // Вывод в пайп/лог — потоковая ANSI-анимация.
+        let mut dice = RandomDice::from_entropy();
+        let mut game = Game::start(sides, &mut dice);
+        tui::play_animated(&mut game, &mut dice, &mut agent, delay, max_turns);
+    }
 }
 
 /// Читает беззнаковое целое из переменной окружения или возвращает значение по умолчанию.

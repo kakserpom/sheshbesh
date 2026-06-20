@@ -5,6 +5,7 @@
 //! Генерация ходов и движок правил будут добавлены отдельно.
 
 pub mod ai;
+pub mod app;
 pub mod board;
 pub mod dice;
 pub mod moves;
