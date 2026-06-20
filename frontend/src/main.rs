@@ -202,33 +202,52 @@ fn moon_field_point(side: Side, field: MoonField) -> (f64, f64) {
         .expect("moon field")
 }
 
+/// Полудлина каземата вдоль стороны и его полуглубина внутрь доски.
+const CAGE_HALF_LEN: f64 = 1.0;
+const CAGE_HALF_DEPTH: f64 = 0.5;
+/// Сдвиг каземата вдоль стороны в сторону Дома.
+const CAGE_HOME_SHIFT: f64 = 0.8;
+/// Крайние слоты фишек по длинной оси каземата.
+const CAGE_SLOT_END: f64 = 0.66;
+
+#[derive(Clone, Copy)]
 struct PrisonGeom {
     coord: (usize, usize),
     cage: (f64, f64),
+    /// Единичный вектор вдоль стороны в сторону Дома (длинная ось каземата).
+    along: (f64, f64),
     /// Каземат на вертикальной стороне (вход слева/справа) — рисуется развёрнутым.
     vertical: bool,
 }
 
 /// Тюрьмы всех сторон: клетка-маркер на периметре и «каземат» внутри доски
-/// вплотную к ней (сдвиг строго перпендикулярно стороне на пол-клетки + пол-каземата).
+/// вплотную к ней (по перпендикуляру) и сдвинутый вдоль стороны к Дому.
 fn prison_geoms() -> Vec<PrisonGeom> {
     let c = BOARD_DIM as f64 / 2.0;
     let mut out = Vec::new();
     for side in Side::ALL {
+        let home = center_pt(margin_coord(side.entry()));
         for local in [LOCAL_PRISON_NEAR, LOCAL_PRISON_FAR] {
             let coord = margin_coord(side.local_to_perimeter(local));
             let p = center_pt(coord);
             let d = (c - p.0, c - p.1); // внутрь, к центру
-            // Доминирующая ось — перпендикуляр к стороне; сдвигаем строго по ней.
+            // Доминирующая ось — перпендикуляр к стороне; вторая — вдоль стороны.
             let vertical = d.0.abs() > d.1.abs();
-            let cage = if vertical {
-                (p.0 + d.0.signum(), p.1)
+            let (inward, along) = if vertical {
+                ((d.0.signum(), 0.0), (0.0, (home.1 - p.1).signum()))
             } else {
-                (p.0, p.1 + d.1.signum())
+                ((0.0, d.1.signum()), ((home.0 - p.0).signum(), 0.0))
             };
+            // Вплотную к клетке (пол-клетки + полуглубина) и сдвиг к Дому.
+            let depth = 0.5 + CAGE_HALF_DEPTH;
+            let cage = (
+                p.0 + inward.0 * depth + along.0 * CAGE_HOME_SHIFT,
+                p.1 + inward.1 * depth + along.1 * CAGE_HOME_SHIFT,
+            );
             out.push(PrisonGeom {
                 coord,
                 cage,
+                along,
                 vertical,
             });
         }
@@ -236,11 +255,29 @@ fn prison_geoms() -> Vec<PrisonGeom> {
     out
 }
 
+fn prison_geom(coord: (usize, usize)) -> Option<PrisonGeom> {
+    prison_geoms().into_iter().find(|p| p.coord == coord)
+}
+
 fn prison_cage(coord: (usize, usize)) -> Option<(f64, f64)> {
-    prison_geoms()
-        .into_iter()
-        .find(|p| p.coord == coord)
-        .map(|p| p.cage)
+    prison_geom(coord).map(|p| p.cage)
+}
+
+/// Точка слота `k` из `n` по длинной оси каземата (центрирована, симметрична).
+fn prison_slot_point(g: &PrisonGeom, k: usize, n: usize) -> (f64, f64) {
+    let off = if n > 1 {
+        (k as f64 - (n as f64 - 1.0) / 2.0) * (2.0 * CAGE_SLOT_END / (n as f64 - 1.0))
+    } else {
+        0.0
+    };
+    (g.cage.0 + g.along.0 * off, g.cage.1 + g.along.1 * off)
+}
+
+/// Индекс слота фишки-пленника `owner` (по порядку активных сторон) и их число.
+fn prison_slot(state: &GameState, owner: Side) -> (usize, usize) {
+    let n = state.active.len().max(1);
+    let k = state.active.iter().position(|&s| s == owner).unwrap_or(0);
+    (k, n)
 }
 
 /// Сторона-владелец клетки Дома (вход или слот) среди активных, иначе `None`.
@@ -270,6 +307,15 @@ fn slot_key(pos: Position, owner: Side) -> Slot {
 /// Координаты фишки `i` на доске и видимость (вне доски → невидима, в лотке).
 fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
     let ch = state.checkers[i];
+    // Пленники одной стороны делят слот (накладываются в один кружок со счётчиком),
+    // а разные цвета разнесены по длинной оси каземата — без диагональной стопки.
+    if let Position::Prison { .. } = ch.pos {
+        let coord = checker_cell(ch.owner, ch.pos).expect("prison cell");
+        let g = prison_geom(coord).expect("prison geom");
+        let (k, n) = prison_slot(state, ch.owner);
+        let (x, y) = prison_slot_point(&g, k, n);
+        return (x, y, true);
+    }
     let (base, visible) = match ch.pos {
         Position::Reserve | Position::Captured { .. } => {
             (center_pt(margin_coord(ch.owner.entry())), false)
@@ -363,7 +409,12 @@ fn static_board(state: &GameState) -> Vec<AnyView> {
     for pg in prison_geoms() {
         let (cx, cy) = pg.cage;
         // По длинной оси — вдоль стороны (1.4), по короткой — внутрь доски (1.0).
-        let (hw, hh) = if pg.vertical { (0.5, 0.7) } else { (0.7, 0.5) };
+        // Длинная ось — вдоль стороны (2·CAGE_HALF_LEN), короткая — внутрь доски.
+        let (hw, hh) = if pg.vertical {
+            (CAGE_HALF_DEPTH, CAGE_HALF_LEN)
+        } else {
+            (CAGE_HALF_LEN, CAGE_HALF_DEPTH)
+        };
         nodes.push(
             view! {
                 <rect x=cx - hw y=cy - hh width=2.0 * hw height=2.0 * hh rx=0.1 class="cage" />
@@ -371,17 +422,42 @@ fn static_board(state: &GameState) -> Vec<AnyView> {
             .into_any(),
         );
         for k in 0..3 {
-            let off = -0.45 + f64::from(k) * 0.45;
+            let off = -0.6 + f64::from(k) * 0.6;
             let (x1, y1, x2, y2) = if pg.vertical {
-                (cx - 0.45, cy + off, cx + 0.45, cy + off)
+                (cx - 0.4, cy + off, cx + 0.4, cy + off)
             } else {
-                (cx + off, cy - 0.45, cx + off, cy + 0.45)
+                (cx + off, cy - 0.4, cx + off, cy + 0.4)
             };
             nodes.push(view! { <line x1=x1 y1=y1 x2=x2 y2=y2 class="cage-bar" /> }.into_any());
         }
     }
 
     nodes
+}
+
+/// Координаты точек (1..6) на кости в сетке 3×3 (поле 100×100).
+fn die_pips(v: u8) -> Vec<(i32, i32)> {
+    let (lo, mid, hi) = (28, 50, 72);
+    match v {
+        1 => vec![(mid, mid)],
+        2 => vec![(lo, lo), (hi, hi)],
+        3 => vec![(lo, lo), (mid, mid), (hi, hi)],
+        4 => vec![(lo, lo), (hi, lo), (lo, hi), (hi, hi)],
+        5 => vec![(lo, lo), (hi, lo), (mid, mid), (lo, hi), (hi, hi)],
+        _ => vec![(lo, lo), (hi, lo), (lo, mid), (hi, mid), (lo, hi), (hi, hi)],
+    }
+}
+
+/// Грань игральной кости со значением `v` как маленький SVG.
+fn die_face(v: u8) -> impl IntoView {
+    view! {
+        <svg class="die" viewBox="0 0 100 100">
+            <rect x=6 y=6 width=88 height=88 rx=20 class="die-body" />
+            {die_pips(v).into_iter()
+                .map(|(x, y)| view! { <circle cx=x cy=y r=10 class="die-pip" /> })
+                .collect_view()}
+        </svg>
+    }
 }
 
 #[component]
@@ -471,20 +547,22 @@ fn App() -> impl IntoView {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
             <div class="status">
-                {move || {
-                    let g = game.get();
-                    match g.winner() {
-                        Some(w) => format!("Победила сторона {}", w.letter()),
-                        None => format!("Ход стороны {}", g.state.to_move.letter()),
-                    }
-                }}
+                <span class="status-text">
+                    {move || {
+                        let g = game.get();
+                        match g.winner() {
+                            Some(w) => format!("Победила сторона {}", w.letter()),
+                            None => format!("Ход стороны {}", g.state.to_move.letter()),
+                        }
+                    }}
+                </span>
+                {move || roll.get().map(|r| {
+                    let [a, b] = r.values();
+                    view! { <span class="dice">{die_face(a)} {die_face(b)}</span> }
+                })}
             </div>
             <div class="controls">
                 <button on:click=on_new>"Новая игра"</button>
-                {move || roll.get().map(|r| {
-                    let [a, b] = r.values();
-                    view! { <span class="dice">{format!("кости: {a} + {b}")}</span> }
-                })}
                 {move || {
                     let g = game.get();
                     let no_moves = roll.get().is_some()
@@ -503,7 +581,7 @@ fn App() -> impl IntoView {
 
                 <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
                     <circle
-                        r=0.36
+                        r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. }) { 0.3 } else { 0.36 }
                         class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. }) {
                             "piece captive"
                         } else {
@@ -515,6 +593,30 @@ fn App() -> impl IntoView {
                         opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
                     />
                 </For>
+
+                // Счётчик одноцветных пленников в каземате (>1 — цифра внутри кружка).
+                {move || {
+                    let g = game.get();
+                    let s = &g.state;
+                    let mut nodes: Vec<AnyView> = Vec::new();
+                    for pg in prison_geoms() {
+                        for &side in &s.active {
+                            let cnt = s.checkers.iter().filter(|c| {
+                                c.owner == side
+                                    && matches!(c.pos, Position::Prison { .. })
+                                    && checker_cell(c.owner, c.pos) == Some(pg.coord)
+                            }).count();
+                            if cnt > 1 {
+                                let (k, n) = prison_slot(s, side);
+                                let (x, y) = prison_slot_point(&pg, k, n);
+                                nodes.push(view! {
+                                    <text x=x y=y class="cage-count">{cnt.to_string()}</text>
+                                }.into_any());
+                            }
+                        }
+                    }
+                    nodes
+                }}
 
                 {move || {
                     let g = game.get();

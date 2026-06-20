@@ -22,9 +22,12 @@
       padding: .6rem 1.2rem 1rem; width: 100%; max-width: 1100px;
     }
     h1 { font-weight: 600; margin: .2rem 0; font-size: 1.4rem; }
-    .status { font-size: 1.1rem; margin: .4rem 0; }
+    .status { display: flex; align-items: center; gap: .8rem; font-size: 1.1rem; margin: .4rem 0; min-height: 2rem; }
     .controls { display: flex; gap: .6rem; align-items: center; margin: .6rem 0; }
-    .dice { color: #94a3b8; }
+    .dice { display: inline-flex; gap: .35rem; }
+    .die { width: 1.8rem; height: 1.8rem; }
+    .die-body { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 3; }
+    .die-pip { fill: #0f172a; }
     button {
       background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
       border-radius: .4rem; padding: .35rem .7rem; cursor: pointer; font: inherit;
@@ -72,6 +75,7 @@
       transition: cx .28s ease, cy .28s ease, opacity .2s ease;
     }
     .piece.captive { stroke: #ef4444; stroke-width: .09; }
+    .cage-count { fill: #0b1220; font-size: .34px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
     /* Подсветка ходов и кликабельные зоны */
     .hl-src { stroke: #f59e0b; stroke-width: .07; }
     .hl-dst { stroke: #22c55e; stroke-width: .09; }
