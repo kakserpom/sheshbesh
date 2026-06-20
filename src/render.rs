@@ -135,6 +135,22 @@ pub fn margin_coord(abs: PerimeterIdx) -> (usize, usize) {
     (r + BOARD_MARGIN, c + BOARD_MARGIN)
 }
 
+/// Ячейка сетки `(строка, столбец)`, где рисуется фишка владельца `owner` в
+/// позиции `pos` (та же раскладка, что в [`board_glyphs`]). `None` — фишка вне
+/// доски (резерв или плен). Полезно GUI для сопоставления кликов и ходов.
+pub fn checker_cell(owner: Side, pos: Position) -> Option<(usize, usize)> {
+    match pos {
+        Position::OnTrack { .. } | Position::Prison { .. } => {
+            pos.perimeter_cell(owner).map(margin_coord)
+        }
+        Position::Home { depth } => Some(inward_cell(owner.entry(), depth as usize + 1)),
+        Position::Moon { side, field } => {
+            Some(inward_cell(side.local_to_perimeter(LOCAL_MOON), moon_rank(field)))
+        }
+        Position::Reserve | Position::Captured { .. } => None,
+    }
+}
+
 /// Направление «наружу» от клетки на краю квадрата (углы — по вертикали).
 fn outward(r: usize, c: usize) -> (isize, isize) {
     if r == 0 {
@@ -229,14 +245,11 @@ pub fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
 
     // Фишки в Доме и на Луне — поверх слотов.
     for ch in &state.checkers {
-        let (r, c) = match ch.pos {
-            Position::Home { depth } => inward_cell(ch.owner.entry(), depth as usize + 1),
-            Position::Moon { side, field } => {
-                inward_cell(side.local_to_perimeter(LOCAL_MOON), moon_rank(field))
-            }
-            _ => continue,
-        };
-        grid[r][c] = Glyph::Checker(ch.owner);
+        if matches!(ch.pos, Position::Home { .. } | Position::Moon { .. })
+            && let Some((r, c)) = checker_cell(ch.owner, ch.pos)
+        {
+            grid[r][c] = Glyph::Checker(ch.owner);
+        }
     }
 
     grid

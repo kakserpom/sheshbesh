@@ -25,8 +25,18 @@
       border-radius: .4rem; padding: .35rem .7rem; cursor: pointer; font: inherit;
     }
     button:hover { background: #334155; }
-    .moves { display: flex; flex-wrap: wrap; gap: .4rem; margin: .4rem 0 1rem; }
-    .move { font-size: .85rem; }
+    /* Лотки резерва/плена */
+    .trays { display: flex; flex-direction: column; gap: .3rem; margin: .6rem 0; }
+    .tray-row { display: flex; align-items: center; gap: .5rem; }
+    .chip {
+      display: inline-flex; align-items: center; gap: .3rem;
+      padding: .15rem .5rem; border-radius: .5rem; border: 1px solid #334155;
+      background: #1e293b; color: #cbd5e1; font-size: .85rem;
+    }
+    .chip.src { border-color: #f59e0b; cursor: pointer; box-shadow: 0 0 0 1px #f59e0b inset; }
+    .chip.dst { border-color: #22c55e; cursor: pointer; box-shadow: 0 0 0 1px #22c55e inset; }
+    .chip.sel { border-color: #e2e8f0; cursor: pointer; box-shadow: 0 0 0 2px #e2e8f0 inset; }
+    .dot { width: .7rem; height: .7rem; border-radius: 50%; display: inline-block; }
 
     /* Векторная доска (SVG) */
     .board {
@@ -44,6 +54,11 @@
     .checker { stroke: #0009; stroke-width: .05; }
     .captive-ring { fill: none; stroke: #ef4444; stroke-width: .08; }
     .overflow { fill: #94a3b8; font-size: .7px; text-anchor: middle; dominant-baseline: central; }
+    /* Подсветка ходов и кликабельные зоны */
+    .hl-src { stroke: #f59e0b; stroke-width: .07; }
+    .hl-dst { stroke: #22c55e; stroke-width: .09; }
+    .hl-sel { stroke: #e2e8f0; stroke-width: .1; }
+    .hit { fill: transparent; cursor: pointer; }
   </style>
 </head>
 <body></body>

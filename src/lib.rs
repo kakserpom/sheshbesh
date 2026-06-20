@@ -23,7 +23,9 @@ pub use ai::Heuristic;
 pub use board::{CellKind, PerimeterIdx, Side};
 pub use dice::{DiceRoll, Die};
 pub use moves::{Move, MoveKind, apply, legal_moves, legal_turns, max_pips};
-pub use render::{BOARD_DIM, BOARD_MARGIN, Glyph, board_glyphs, margin_coord, render};
+pub use render::{
+    BOARD_DIM, BOARD_MARGIN, Glyph, board_glyphs, checker_cell, margin_coord, render,
+};
 pub use state::{Checker, GameState, MoonField, Position};
 pub use turn::{
     Agent, DiceSource, FirstChoice, Game, RandomDice, ScriptedDice, TurnOutcome, determine_first,
