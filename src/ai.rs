@@ -67,61 +67,76 @@ fn shots_for_distance(d: i32) -> i32 {
     }
 }
 
-/// Риск быть съеденным: сумма по открытым фишкам стороны `side` от
-/// (вероятность попадания) × (ставка = ценность фишки + 25 за уход в плен).
+/// Угроза фишкам стороны `victim` со стороны `attacker`: сумма по открытым
+/// фишкам `victim` от (вероятность попадания фишками `attacker`) × (ставка =
+/// ценность фишки + 25 за пленение).
 ///
 /// Открыта только фишка на обычной клетке периметра; углы, Тюрьма и Луна
-/// безопасны. Угрозу создают фишки соперников на дорожке (в пределах 1..12
-/// клеток позади) и в резерве (вход по «6» на свою точку входа).
-fn capture_risk(state: &GameState, side: Side) -> i32 {
-    let opponents: Vec<Side> = state
-        .active
-        .iter()
-        .copied()
-        .filter(|&s| s != side)
-        .collect();
+/// безопасны. Бьют фишки `attacker` на дорожке (в пределах 1..12 клеток позади)
+/// и в резерве (вход по «6» на свою точку входа).
+fn threats_against(state: &GameState, victim: Side, attacker: Side) -> i32 {
     let mut total = 0;
-    for checker in state.checkers.iter().filter(|c| c.owner == side) {
-        let Some(cell) = checker.pos.perimeter_cell(side) else {
+    for checker in state.checkers.iter().filter(|c| c.owner == victim) {
+        let Some(cell) = checker.pos.perimeter_cell(victim) else {
             continue;
         };
         if !matches!(cell_kind(cell), CellKind::Plain | CellKind::HomeEntrance) {
             continue;
         }
+        let cell_in_attacker = attacker.progress_of(cell) as i32;
         let mut shots = 0;
-        for &opp in &opponents {
-            let cell_in_opp = opp.progress_of(cell) as i32;
-            for oc in state.checkers.iter().filter(|c| c.owner == opp) {
-                match oc.pos {
-                    Position::OnTrack { progress } => {
-                        shots += shots_for_distance(cell_in_opp - progress as i32);
-                    }
-                    // Резервная фишка входит по «6» на точку входа соперника.
-                    Position::Reserve if cell_in_opp == 0 => shots += 11,
-                    _ => {}
+        for oc in state.checkers.iter().filter(|c| c.owner == attacker) {
+            match oc.pos {
+                Position::OnTrack { progress } => {
+                    shots += shots_for_distance(cell_in_attacker - progress as i32);
                 }
+                // Резервная фишка входит по «6» на точку входа атакующего.
+                Position::Reserve if cell_in_attacker == 0 => shots += 11,
+                _ => {}
             }
         }
         let shots = shots.min(36);
-        let stake = checker_value(side, checker.pos) + 25;
+        let stake = checker_value(victim, checker.pos) + 25;
         total += shots * stake / 36;
     }
     total
 }
 
-/// Оценка позиции с точки зрения стороны `me`: своё преимущество над сильнейшим
-/// соперником за вычетом риска быть съеденным. Съедание чужой фишки роняет её
-/// ценность (и поднимает оценку), а собственные открытые фишки — штрафуются.
+/// Стороны-соперники для `side`.
+fn opponents_of(state: &GameState, side: Side) -> impl Iterator<Item = Side> + '_ {
+    state.active.iter().copied().filter(move |&s| s != side)
+}
+
+/// Риск быть съеденным: суммарная угроза моим фишкам со стороны всех соперников.
+fn capture_risk(state: &GameState, side: Side) -> i32 {
+    opponents_of(state, side)
+        .map(|opp| threats_against(state, side, opp))
+        .sum()
+}
+
+/// Угрозы, которые `side` создаёт чужим открытым фишкам, — по всем соперникам.
+fn threat_value(state: &GameState, side: Side) -> i32 {
+    opponents_of(state, side)
+        .map(|opp| threats_against(state, opp, side))
+        .sum()
+}
+
+/// Вес атакующего бонуса относительно защитного штрафа: угроза реализуется лишь
+/// на следующем своём ходу (соперник успевает увести фишку), поэтому — наполовину.
+const THREAT_BONUS_NUM: i32 = 1;
+const THREAT_BONUS_DEN: i32 = 2;
+
+/// Оценка позиции с точки зрения стороны `me`: преимущество над сильнейшим
+/// соперником, минус риск быть съеденным, плюс (слабее) свои угрозы чужим
+/// открытым фишкам.
 fn evaluate(state: &GameState, me: Side) -> i32 {
     let mine = side_score(state, me);
-    let best_opponent = state
-        .active
-        .iter()
-        .filter(|&&s| s != me)
-        .map(|&s| side_score(state, s))
+    let best_opponent = opponents_of(state, me)
+        .map(|s| side_score(state, s))
         .max()
         .unwrap_or(0);
     mine - best_opponent - capture_risk(state, me)
+        + threat_value(state, me) * THREAT_BONUS_NUM / THREAT_BONUS_DEN
 }
 
 /// Применяет последовательность ходов к копии состояния (без вынужденных ответных
@@ -248,6 +263,29 @@ mod tests {
             s
         };
         assert_eq!(capture_risk(&safe, Side::A), 0);
+    }
+
+    #[test]
+    fn threat_value_sees_attackable_enemy_blot() {
+        // C-фишка открыта на abs 12; моя (A) фишка в 3 клетках позади — угроза.
+        let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+        s.checkers.clear();
+        let cell = PerimeterIdx::new(12);
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::OnTrack {
+                progress: Side::C.progress_of(cell),
+            },
+        });
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack {
+                progress: Side::A.progress_of(cell) - 3,
+            },
+        });
+        // Для A это угроза по чужой фишке; для C — риск (симметрия).
+        assert!(threat_value(&s, Side::A) > 0);
+        assert_eq!(threat_value(&s, Side::A), capture_risk(&s, Side::C));
     }
 
     #[test]
