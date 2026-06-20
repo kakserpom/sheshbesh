@@ -14,6 +14,7 @@ cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"
 cast_sign_loss = "allow"
 cast_lossless = "allow"
+cast_precision_loss = "allow"
 # `#[must_use]` на каждом геттере/билдере — слишком шумно.
 must_use_candidate = "allow"
 return_self_not_must_use = "allow"

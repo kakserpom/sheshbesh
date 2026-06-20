@@ -66,15 +66,45 @@ pub(crate) fn manual_scale() -> Option<usize> {
         .map(|s| s.clamp(1, 4))
 }
 
-/// Масштаб доски под доступную область (без рамки): наибольший `scale`, при
-/// котором квадрат `BOARD_DIM` клеток влезает и по ширине (`2*scale` колонок на
-/// клетку), и по высоте (`scale` строк). `SHESHBESH_SCALE` переопределяет.
-pub(crate) fn fit_scale(inner_width: u16, inner_height: u16) -> usize {
-    manual_scale().unwrap_or_else(|| {
-        let by_width = inner_width as usize / (2 * BOARD_DIM);
-        let by_height = inner_height as usize / BOARD_DIM;
-        by_width.min(by_height).clamp(1, 4)
-    })
+/// Соотношение «высота/ширина» символа терминала. Берётся из реального размера
+/// ячейки в пикселях (`crossterm::window_size`); при недоступности — 2.0.
+/// `SHESHBESH_ASPECT` переопределяет.
+fn cell_aspect() -> f64 {
+    if let Some(a) = std::env::var("SHESHBESH_ASPECT")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        && a > 0.0
+    {
+        return a.clamp(1.0, 4.0);
+    }
+    if let Ok(ws) = crossterm::terminal::window_size()
+        && ws.width > 0
+        && ws.height > 0
+        && ws.columns > 0
+        && ws.rows > 0
+    {
+        let char_w = f64::from(ws.width) / f64::from(ws.columns);
+        let char_h = f64::from(ws.height) / f64::from(ws.rows);
+        if char_w > 0.0 {
+            return (char_h / char_w).clamp(1.0, 4.0);
+        }
+    }
+    2.0
+}
+
+/// Размер клетки доски `(колонок, строк)` под область `inner_width × inner_height`
+/// (без рамки): доска остаётся физически квадратной (`колонок/строк ≈ аспект`) и
+/// влезает по обеим осям. `SHESHBESH_SCALE` задаёт строки вручную.
+pub(crate) fn cell_size(inner_width: u16, inner_height: u16) -> (usize, usize) {
+    let aspect = cell_aspect();
+    let cols = |rows: usize| ((aspect * rows as f64).round() as usize).max(1);
+    if let Some(rows) = manual_scale() {
+        return (cols(rows), rows);
+    }
+    let by_height = (inner_height as usize / BOARD_DIM).max(1);
+    let by_width = ((f64::from(inner_width) / (BOARD_DIM as f64 * aspect)).floor() as usize).max(1);
+    let rows = by_height.min(by_width).clamp(1, 4);
+    (cols(rows), rows)
 }
 
 /// Глиф одной ячейки сетки доски (рендер-независимый).
