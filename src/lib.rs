@@ -10,6 +10,7 @@ pub mod dice;
 pub mod moves;
 pub mod render;
 pub mod state;
+pub mod tui;
 pub mod turn;
 
 pub use ai::Heuristic;

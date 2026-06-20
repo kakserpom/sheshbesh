@@ -14,7 +14,7 @@ use crate::board::{CellKind, HOME_DEPTH, PERIMETER, PerimeterIdx, SIDE_LEN, Side
 use crate::state::{GameState, Position};
 
 /// Координата (строка, столбец) клетки периметра в квадратной сетке `SIDE_LEN`².
-fn cell_coord(abs: usize) -> (usize, usize) {
+pub(crate) fn cell_coord(abs: usize) -> (usize, usize) {
     let n = SIDE_LEN - 1; // 18
     let side = abs / n; // 0..3
     let local = abs % n; // 0..17
@@ -27,7 +27,7 @@ fn cell_coord(abs: usize) -> (usize, usize) {
 }
 
 /// Landmark-символ пустой клетки.
-fn landmark(abs: PerimeterIdx) -> char {
+pub(crate) fn landmark(abs: PerimeterIdx) -> char {
     match cell_kind(abs) {
         CellKind::Corner => '+',
         CellKind::Moon => 'M',
@@ -38,7 +38,7 @@ fn landmark(abs: PerimeterIdx) -> char {
 }
 
 /// Стороны фишек, стоящих на клетке периметра `abs` (с повторами).
-fn owners_on(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
+pub(crate) fn owners_on(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
     state
         .checkers
         .iter()
