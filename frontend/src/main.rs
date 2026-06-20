@@ -546,20 +546,62 @@ fn App() -> impl IntoView {
     view! {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
-            <div class="status">
-                <span class="status-text">
+            <div class="topbar">
+                <div class="status">
+                    <span class="status-text">
+                        {move || {
+                            let g = game.get();
+                            match g.winner() {
+                                Some(w) => format!("Победила сторона {}", w.letter()),
+                                None => format!("Ход стороны {}", g.state.to_move.letter()),
+                            }
+                        }}
+                    </span>
+                    {move || roll.get().map(|r| {
+                        let [a, b] = r.values();
+                        view! { <span class="dice">{die_face(a)} {die_face(b)}</span> }
+                    })}
+                </div>
+                <div class="trays">
                     {move || {
                         let g = game.get();
-                        match g.winner() {
-                            Some(w) => format!("Победила сторона {}", w.letter()),
-                            None => format!("Ход стороны {}", g.state.to_move.letter()),
-                        }
+                        let pre = prefix.get();
+                        let ps = after_prefix(&g, &pre);
+                        let active = roll.get().is_some()
+                            && g.winner().is_none()
+                            && g.state.to_move == human;
+                        let cands = if active { step_opts(&turns.get(), &pre) } else { Vec::new() };
+                        let cur = sel.get();
+                        g.state.active.clone().into_iter().map(|side| {
+                            let chip = |kind: Sel, label: &'static str, n: usize| {
+                                let is_human = side == human;
+                                let is_src = is_human && cands.iter().any(|&m| move_source(&ps, m) == kind);
+                                let is_dst = is_human && matches!(cur, Some(s) if cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind));
+                                let is_sel = cur == Some(kind);
+                                let cls = if is_sel { "chip sel" }
+                                    else if is_dst { "chip dst" }
+                                    else if is_src { "chip src" }
+                                    else { "chip" };
+                                let dots = (0..n).map(|_| view! {
+                                    <span class="dot" style=format!("background:{}", side_color(side)) />
+                                }).collect_view();
+                                let clickable = is_src || is_dst || is_sel;
+                                view! {
+                                    <span class=cls on:click=move |_| if clickable { click(kind) }>
+                                        {label} " " {dots} " " {n.to_string()}
+                                    </span>
+                                }
+                            };
+                            view! {
+                                <div class="tray-row">
+                                    <b style=format!("color:{}", side_color(side))>{side.letter().to_string()}</b>
+                                    {chip(Sel::Reserve, "резерв", count_pos(&ps, side, true))}
+                                    {chip(Sel::Captured, "плен", count_pos(&ps, side, false))}
+                                </div>
+                            }
+                        }).collect_view()
                     }}
-                </span>
-                {move || roll.get().map(|r| {
-                    let [a, b] = r.values();
-                    view! { <span class="dice">{die_face(a)} {die_face(b)}</span> }
-                })}
+                </div>
             </div>
             <div class="controls">
                 <button on:click=on_new>"Новая игра"</button>
@@ -678,47 +720,6 @@ fn App() -> impl IntoView {
                     nodes
                 }}
             </svg>
-            </div>
-
-            <div class="trays">
-                {move || {
-                    let g = game.get();
-                    let pre = prefix.get();
-                    let ps = after_prefix(&g, &pre);
-                    let active = roll.get().is_some()
-                        && g.winner().is_none()
-                        && g.state.to_move == human;
-                    let cands = if active { step_opts(&turns.get(), &pre) } else { Vec::new() };
-                    let cur = sel.get();
-                    g.state.active.clone().into_iter().map(|side| {
-                        let chip = |kind: Sel, label: &'static str, n: usize| {
-                            let is_human = side == human;
-                            let is_src = is_human && cands.iter().any(|&m| move_source(&ps, m) == kind);
-                            let is_dst = is_human && matches!(cur, Some(s) if cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind));
-                            let is_sel = cur == Some(kind);
-                            let cls = if is_sel { "chip sel" }
-                                else if is_dst { "chip dst" }
-                                else if is_src { "chip src" }
-                                else { "chip" };
-                            let dots = (0..n).map(|_| view! {
-                                <span class="dot" style=format!("background:{}", side_color(side)) />
-                            }).collect_view();
-                            let clickable = is_src || is_dst || is_sel;
-                            view! {
-                                <span class=cls on:click=move |_| if clickable { click(kind) }>
-                                    {label} " " {dots} " " {n.to_string()}
-                                </span>
-                            }
-                        };
-                        view! {
-                            <div class="tray-row">
-                                <b style=format!("color:{}", side_color(side))>{side.letter().to_string()}</b>
-                                {chip(Sel::Reserve, "резерв", count_pos(&ps, side, true))}
-                                {chip(Sel::Captured, "плен", count_pos(&ps, side, false))}
-                            </div>
-                        }
-                    }).collect_view()
-                }}
             </div>
         </div>
     }
