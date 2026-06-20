@@ -51,14 +51,15 @@ pub(crate) fn owners_on(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
 }
 
 /// Ширина полей вокруг квадрата для «дописывания» лишних фишек наружу.
-pub(crate) const BOARD_MARGIN: usize = 3;
+pub const BOARD_MARGIN: usize = 3;
 
 /// Сторона квадрата сетки глифов (квадрат периметра плюс поля).
-pub(crate) const BOARD_DIM: usize = SIDE_LEN + 2 * BOARD_MARGIN;
+pub const BOARD_DIM: usize = SIDE_LEN + 2 * BOARD_MARGIN;
 
 /// Ручной масштаб из `SHESHBESH_SCALE` (1..4), если задан, — переопределяет
 /// автоподбор. Клетка занимает `2*scale` колонок × `scale` строк (так доска
 /// остаётся квадратной: символ терминала примерно вдвое выше своей ширины).
+#[cfg(feature = "tui")]
 pub(crate) fn manual_scale() -> Option<usize> {
     std::env::var("SHESHBESH_SCALE")
         .ok()
@@ -69,6 +70,7 @@ pub(crate) fn manual_scale() -> Option<usize> {
 /// Соотношение «высота/ширина» символа терминала. Берётся из реального размера
 /// ячейки в пикселях (`crossterm::window_size`); при недоступности — 2.0.
 /// `SHESHBESH_ASPECT` переопределяет.
+#[cfg(feature = "tui")]
 fn cell_aspect() -> f64 {
     if let Some(a) = std::env::var("SHESHBESH_ASPECT")
         .ok()
@@ -95,6 +97,7 @@ fn cell_aspect() -> f64 {
 /// Размер клетки доски `(колонок, строк)` под область `inner_width × inner_height`
 /// (без рамки): доска остаётся физически квадратной (`колонок/строк ≈ аспект`) и
 /// влезает по обеим осям. `SHESHBESH_SCALE` задаёт строки вручную.
+#[cfg(feature = "tui")]
 pub(crate) fn cell_size(inner_width: u16, inner_height: u16) -> (usize, usize) {
     let aspect = cell_aspect();
     let cols = |rows: usize| ((aspect * rows as f64).round() as usize).max(1);
@@ -109,7 +112,7 @@ pub(crate) fn cell_size(inner_width: u16, inner_height: u16) -> (usize, usize) {
 
 /// Глиф одной ячейки сетки доски (рендер-независимый).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Glyph {
+pub enum Glyph {
     /// Пусто (поле/внутренность квадрата).
     Empty,
     /// Пустая клетка периметра — её landmark-символ.
@@ -127,7 +130,7 @@ pub(crate) enum Glyph {
 }
 
 /// Координата базовой ячейки сетки глифов для клетки периметра `abs`.
-pub(crate) fn margin_coord(abs: PerimeterIdx) -> (usize, usize) {
+pub fn margin_coord(abs: PerimeterIdx) -> (usize, usize) {
     let (r, c) = cell_coord(abs.get());
     (r + BOARD_MARGIN, c + BOARD_MARGIN)
 }
@@ -167,7 +170,7 @@ fn moon_rank(field: MoonField) -> usize {
 /// «дописываются» наружу за край, сверх — `Overflow`). Внутрь квадрата рисуются
 /// Дом (4 слота `o` от входа активных сторон) и поля Луны (`1/3/6` от входа на
 /// Луну каждой стороны); занятые слоты показываются маркером фишки.
-pub(crate) fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
+pub fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
     let mut grid = vec![vec![Glyph::Empty; BOARD_DIM]; BOARD_DIM];
     let shift = |base: usize, d: isize, k: isize| (base as isize + d * k) as usize;
 

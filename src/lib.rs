@@ -5,20 +5,25 @@
 //! Генерация ходов и движок правил будут добавлены отдельно.
 
 pub mod ai;
-pub mod app;
 pub mod board;
 pub mod dice;
 pub mod moves;
 pub mod render;
 pub mod state;
-pub mod tui;
 pub mod turn;
+
+// Терминальные интерфейсы — только с фичей `tui` (тянут crossterm/ratatui).
+// Без неё крейт остаётся чистым движком, пригодным для компиляции в WASM.
+#[cfg(feature = "tui")]
+pub mod app;
+#[cfg(feature = "tui")]
+pub mod tui;
 
 pub use ai::Heuristic;
 pub use board::{CellKind, PerimeterIdx, Side};
 pub use dice::{DiceRoll, Die};
 pub use moves::{Move, MoveKind, apply, legal_moves, legal_turns, max_pips};
-pub use render::render;
+pub use render::{BOARD_DIM, BOARD_MARGIN, Glyph, board_glyphs, margin_coord, render};
 pub use state::{Checker, GameState, MoonField, Position};
 pub use turn::{
     Agent, DiceSource, FirstChoice, Game, RandomDice, ScriptedDice, TurnOutcome, determine_first,
