@@ -66,12 +66,36 @@ fn cell_spans(state: &GameState, abs: PerimeterIdx) -> Vec<Span<'static>> {
     }
 }
 
-/// Доска как набор строк-спанов для `Paragraph`.
-fn board_lines(state: &GameState) -> Vec<Line<'static>> {
+/// Накладывает фон на все спаны клетки (для подсветки «откуда»/«куда»).
+fn with_bg(spans: Vec<Span<'static>>, color: Color) -> Vec<Span<'static>> {
+    spans
+        .into_iter()
+        .map(|s| {
+            let style = s.style.bg(color);
+            Span::styled(s.content, style)
+        })
+        .collect()
+}
+
+/// Доска как строки-спаны; клетки `from`/`to` подсвечиваются (откуда — синим,
+/// куда — зелёным).
+fn board_lines_hl(
+    state: &GameState,
+    from: Option<PerimeterIdx>,
+    to: Option<PerimeterIdx>,
+) -> Vec<Line<'static>> {
     let mut grid: Vec<Vec<Vec<Span>>> = vec![vec![vec![Span::raw("  ")]; SIDE_LEN]; SIDE_LEN];
     for abs in 0..PERIMETER {
         let (r, c) = cell_coord(abs);
-        grid[r][c] = cell_spans(state, PerimeterIdx::new(abs));
+        let p = PerimeterIdx::new(abs);
+        let spans = cell_spans(state, p);
+        grid[r][c] = if Some(p) == to {
+            with_bg(spans, Color::Green)
+        } else if Some(p) == from {
+            with_bg(spans, Color::Blue)
+        } else {
+            spans
+        };
     }
     grid.into_iter()
         .map(|row| {
@@ -85,6 +109,11 @@ fn board_lines(state: &GameState) -> Vec<Line<'static>> {
             Line::from(spans)
         })
         .collect()
+}
+
+/// Доска без подсветки.
+fn board_lines(state: &GameState) -> Vec<Line<'static>> {
+    board_lines_hl(state, None, None)
 }
 
 /// Панель «вне доски» по каждой стороне.
@@ -236,6 +265,37 @@ fn preview_after(state: &GameState, seq: &[Move]) -> GameState {
     s
 }
 
+/// Легенда подсветки: синий — откуда, зелёный — куда.
+fn legend_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("  ", Style::default().bg(Color::Blue)),
+        Span::raw(" откуда   "),
+        Span::styled("  ", Style::default().bg(Color::Green)),
+        Span::raw(" куда"),
+    ])
+}
+
+/// Клетки «откуда» и «куда» для хода (для подсветки на текущей доске).
+/// Для входа на Луну/в Дом часть концов вне периметра (`None`).
+fn move_endpoints(base: &GameState, mv: Move) -> (Option<PerimeterIdx>, Option<PerimeterIdx>) {
+    let owner = base.checkers[mv.checker].owner;
+    let from = base.checkers[mv.checker].pos.perimeter_cell(owner);
+    let after = preview_after(base, std::slice::from_ref(&mv));
+    let to = after.checkers[mv.checker]
+        .pos
+        .perimeter_cell(owner)
+        .or_else(|| {
+            // Вход на Луну: фишка уходит на дорожку, но подсветим клетку приземления.
+            if let Position::OnTrack { progress } = base.checkers[mv.checker].pos {
+                let target = progress as usize + mv.die as usize;
+                (target < PERIMETER).then(|| owner.entry().advance(target))
+            } else {
+                None
+            }
+        });
+    (from, to)
+}
+
 /// Человекочитаемое описание варианта хода.
 fn describe_turn(seq: &[Move]) -> String {
     if seq.is_empty() {
@@ -265,10 +325,13 @@ fn option_lines(descs: &[String], sel: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// Рисует экран выбора: слева превью доски, справа заголовок и список вариантов.
+/// Рисует экран выбора: слева текущая доска с подсветкой хода (`from`/`to`),
+/// справа заголовок и список вариантов.
 fn draw_pick(
     frame: &mut Frame,
-    preview: &GameState,
+    board: &GameState,
+    from: Option<PerimeterIdx>,
+    to: Option<PerimeterIdx>,
     board_title: &str,
     header: &[Line<'static>],
     options: Vec<Line<'static>>,
@@ -276,7 +339,7 @@ fn draw_pick(
     let [left, right] =
         Layout::horizontal([Constraint::Length(58), Constraint::Min(28)]).areas(frame.area());
     frame.render_widget(
-        Paragraph::new(board_lines(preview))
+        Paragraph::new(board_lines_hl(board, from, to))
             .block(Block::bordered().title(board_title.to_string())),
         left,
     );
@@ -354,7 +417,15 @@ fn human_pick_sequence(
         ];
         let labels = vec!["(пропуск — ходов нет)".to_string()];
         let picked = select_loop(terminal, 1, true, |f, sel| {
-            draw_pick(f, state, "Превью", &header, option_lines(&labels, sel));
+            draw_pick(
+                f,
+                state,
+                None,
+                None,
+                "Текущая позиция",
+                &header,
+                option_lines(&labels, sel),
+            );
         })?;
         return Ok(picked.map(|_| Vec::new()));
     }
@@ -386,13 +457,22 @@ fn human_pick_sequence(
                 step + 1,
                 total
             )),
+            legend_line(),
             Line::raw("↑/↓ — выбор, Enter — применить, q — выход"),
         ];
-        let title = format!("Превью (кость {}/{})", step + 1, total);
+        let title = format!("Позиция (кость {}/{})", step + 1, total);
 
         let picked = select_loop(terminal, options.len(), true, |f, sel| {
-            let preview = preview_after(&base, std::slice::from_ref(&options[sel]));
-            draw_pick(f, &preview, &title, &header, option_lines(&labels, sel));
+            let (from, to) = move_endpoints(&base, options[sel]);
+            draw_pick(
+                f,
+                &base,
+                from,
+                to,
+                &title,
+                &header,
+                option_lines(&labels, sel),
+            );
         })?;
         let Some(i) = picked else {
             return Ok(None);
@@ -420,14 +500,17 @@ fn human_pick_forced(
             Span::raw("Выкуп — ваш обязательный ход на 6: "),
             side_span(captor),
         ]),
+        legend_line(),
         Line::raw("↑/↓ — выбор, Enter — применить"),
     ];
     let idx = select_loop(terminal, options.len(), false, |f, sel| {
-        let preview = preview_after(state, std::slice::from_ref(&options[sel]));
+        let (from, to) = move_endpoints(state, options[sel]);
         draw_pick(
             f,
-            &preview,
-            "Превью ответа",
+            state,
+            from,
+            to,
+            "Текущая позиция",
             &header,
             option_lines(&descs, sel),
         );
