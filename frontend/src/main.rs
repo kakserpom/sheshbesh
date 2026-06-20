@@ -205,9 +205,12 @@ fn moon_field_point(side: Side, field: MoonField) -> (f64, f64) {
 struct PrisonGeom {
     coord: (usize, usize),
     cage: (f64, f64),
+    /// Каземат на вертикальной стороне (вход слева/справа) — рисуется развёрнутым.
+    vertical: bool,
 }
 
-/// Тюрьмы всех сторон: клетка-маркер на периметре и «каземат» внутри доски.
+/// Тюрьмы всех сторон: клетка-маркер на периметре и «каземат» внутри доски
+/// вплотную к ней (сдвиг строго перпендикулярно стороне на пол-клетки + пол-каземата).
 fn prison_geoms() -> Vec<PrisonGeom> {
     let c = BOARD_DIM as f64 / 2.0;
     let mut out = Vec::new();
@@ -216,10 +219,17 @@ fn prison_geoms() -> Vec<PrisonGeom> {
             let coord = margin_coord(side.local_to_perimeter(local));
             let p = center_pt(coord);
             let d = (c - p.0, c - p.1); // внутрь, к центру
-            let l = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-3);
+            // Доминирующая ось — перпендикуляр к стороне; сдвигаем строго по ней.
+            let vertical = d.0.abs() > d.1.abs();
+            let cage = if vertical {
+                (p.0 + d.0.signum(), p.1)
+            } else {
+                (p.0, p.1 + d.1.signum())
+            };
             out.push(PrisonGeom {
                 coord,
-                cage: (p.0 + d.0 / l * 1.8, p.1 + d.1 / l * 1.8),
+                cage,
+                vertical,
             });
         }
     }
@@ -352,16 +362,22 @@ fn static_board(state: &GameState) -> Vec<AnyView> {
     // Тюрьма: каземат с решёткой (фишки в нём рисует слой фишек).
     for pg in prison_geoms() {
         let (cx, cy) = pg.cage;
+        // По длинной оси — вдоль стороны (1.4), по короткой — внутрь доски (1.0).
+        let (hw, hh) = if pg.vertical { (0.5, 0.7) } else { (0.7, 0.5) };
         nodes.push(
-            view! { <rect x=cx - 0.7 y=cy - 0.5 width=1.4 height=1.0 rx=0.1 class="cage" /> }
-                .into_any(),
+            view! {
+                <rect x=cx - hw y=cy - hh width=2.0 * hw height=2.0 * hh rx=0.1 class="cage" />
+            }
+            .into_any(),
         );
         for k in 0..3 {
-            let bx = cx - 0.45 + f64::from(k) * 0.45;
-            nodes.push(
-                view! { <line x1=bx y1=cy - 0.45 x2=bx y2=cy + 0.45 class="cage-bar" /> }
-                    .into_any(),
-            );
+            let off = -0.45 + f64::from(k) * 0.45;
+            let (x1, y1, x2, y2) = if pg.vertical {
+                (cx - 0.45, cy + off, cx + 0.45, cy + off)
+            } else {
+                (cx + off, cy - 0.45, cx + off, cy + 0.45)
+            };
+            nodes.push(view! { <line x1=x1 y1=y1 x2=x2 y2=y2 class="cage-bar" /> }.into_any());
         }
     }
 
