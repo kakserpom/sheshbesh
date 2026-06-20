@@ -676,9 +676,7 @@ fn die_face(v: u8) -> impl IntoView {
 
 /// Настоящий 3D-кубик: 6 граней (1..6), который кувыркается и встаёт гранью `v`
 /// к зрителю (CSS-анимация `die-roll`; конечный поворот задаётся через `--rx/--ry`).
-/// `idx` (0/1) разводит длительности костей по разным диапазонам — чтобы они
-/// заметно останавливались в разные моменты, а не синхронно.
-fn die3d(v: u8, idx: usize) -> impl IntoView {
+fn die3d(v: u8) -> impl IntoView {
     // Конечный поворот куба, чтобы нужная грань смотрела вперёд (одна ось на грань).
     let (rx, ry) = match v {
         1 => (0, 0),
@@ -702,10 +700,10 @@ fn die3d(v: u8, idx: usize) -> impl IntoView {
         1 => "die-bounce-b",
         _ => "die-bounce-c",
     };
-    // Разные диапазоны длительности по `idx` (0.85–1.25с и 1.8–2.2с) — одна кость
-    // заведомо крутится заметно дольше другой, остановки явно не совпадают.
-    let base = if idx.is_multiple_of(2) { 0.85 } else { 1.8 };
-    let dur = base + js_sys::Math::random() * 0.4;
+    // Независимая случайная длительность из одного широкого диапазона (0.9–2.2с):
+    // кости могут встать и почти одновременно, и в заметно разные моменты —
+    // настоящий случайный бросок (равномерное вращение делает разницу видимой).
+    let dur = 0.9 + js_sys::Math::random() * 1.3;
     let delay = js_sys::Math::random() * 0.12;
     view! {
         // Обёртка с тем же таймингом — кость подпрыгивает по ходу вращения.
@@ -960,7 +958,7 @@ fn App() -> impl IntoView {
                 let [a, b] = r.values();
                 if spinning {
                     let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
-                    view! { <span class=cls>{die3d(a, 0)} {die3d(b, 1)}</span> }.into_any()
+                    view! { <span class=cls>{die3d(a)} {die3d(b)}</span> }.into_any()
                 } else {
                     let cls = if r.is_double() { "dice double" } else { "dice" };
                     view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }.into_any()
