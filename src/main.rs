@@ -1,10 +1,10 @@
-use sheshbesh::{FirstChoice, Game, RandomDice, Side, render};
+use sheshbesh::{Game, Heuristic, RandomDice, Side, render};
 
 fn main() {
-    // Демонстрация: партия на двоих с розыгрышем первого хода; агент берёт первый ход.
+    // Демонстрация: эвристика играет сама с собой; первый ход разыгрывается костями.
     let mut dice = RandomDice::from_entropy();
     let mut game = Game::start(vec![Side::A, Side::A.opposite()], &mut dice);
-    let mut agent = FirstChoice;
+    let mut agent = Heuristic;
     println!(
         "Право первого хода: сторона {}",
         game.state.to_move.letter()

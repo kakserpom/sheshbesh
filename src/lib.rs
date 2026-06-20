@@ -4,6 +4,7 @@
 //! (раздел «Правила игры»); здесь закодирована только их структурная часть.
 //! Генерация ходов и движок правил будут добавлены отдельно.
 
+pub mod ai;
 pub mod board;
 pub mod dice;
 pub mod moves;
@@ -11,6 +12,7 @@ pub mod render;
 pub mod state;
 pub mod turn;
 
+pub use ai::Heuristic;
 pub use board::{CellKind, PerimeterIdx, Side};
 pub use dice::{DiceRoll, Die};
 pub use moves::{Move, MoveKind, apply, legal_moves, legal_turns, max_pips};
