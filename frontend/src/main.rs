@@ -1190,6 +1190,8 @@ fn App() -> impl IntoView {
                 let spinning = rolling.get();
                 roll.get().map(|r| {
                     let (ax, ay) = outside_anchor(to_move, DICE_OUT);
+                    let (out, _) = reserve_axes(to_move);
+                    let vertical = out.0 != 0.0; // Дом на левой/правой стороне доски
                     let vb_o = BOARD_MARGIN as f64 - RESERVE_PAD;
                     let vb_s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD;
                     let fx = (ax - vb_o) / vb_s * 100.0;
@@ -1203,7 +1205,7 @@ fn App() -> impl IntoView {
                         view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }.into_any()
                     };
                     view! {
-                        <div class="board-dice" style=format!("left:{fx:.2}%;top:{fy:.2}%")>{inner}</div>
+                        <div class="board-dice" class:vert=vertical style=format!("left:{fx:.2}%;top:{fy:.2}%")>{inner}</div>
                     }
                 })
             }}

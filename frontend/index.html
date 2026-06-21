@@ -160,6 +160,8 @@
     }
     /* Кости — HTML-оверлей над доской, спозиционированный по координатам viewBox. */
     .board-dice { position: absolute; transform: translate(-50%, -50%); pointer-events: none; }
+    /* На вертикальных сторонах (Дом слева/справа) кости разворачиваем поперёк. */
+    .board-dice.vert { transform: translate(-50%, -50%) rotate(90deg); }
     .track { fill: #1e293b; stroke: #334155; stroke-width: .03; }
     .corner { fill: #334155; stroke: #475569; stroke-width: .03; }
     .home-gate { fill: #1e293b; stroke-width: .06; } /* цвет рамки — через атрибут (цвет игрока) */
