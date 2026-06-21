@@ -1,7 +1,9 @@
 //! Leptos-фронтенд Шеш-Беш: вся игровая логика — движок `sheshbesh` в WASM.
 //! Доска — векторная (SVG); фишки рисуются отдельным слоем keyed-кружков, что даёт
-//! плавную анимацию перемещения (CSS-переход `cx`/`cy`). Человек играет стороной A
-//! против эвристики; ход собирается кликами (фишка → клетка) по одной кости.
+//! плавную анимацию перемещения (CSS-переход `cx`/`cy`). Перед партией — экран
+//! настроек (2/3/4 игрока, тип каждой стороны: человек/компьютер). Ход человека
+//! собирается кликами (фишка → клетка) по одной кости; компьютерные стороны ходят
+//! сами (эвристика).
 
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
@@ -61,34 +63,32 @@ struct Frame {
     note: Option<String>,
 }
 
-/// Имя стороны для комментатора (для 2 игроков: человек против компьютера).
-fn side_name(side: Side, human: Side) -> &'static str {
-    if side == human {
-        "Вы"
+/// Имя стороны для комментатора: «Игрок L» (человек) или «ИИ L» (компьютер).
+fn side_name(side: Side, humans: &[Side]) -> String {
+    let who = if humans.contains(&side) {
+        "Игрок"
     } else {
-        "Соперник"
-    }
+        "ИИ"
+    };
+    format!("{who} {}", side.letter())
 }
 
 /// Реплика об одном применённом ходе (съедание/Дом/Луна/Тюрьма/выкуп). Для
 /// обычного шага по периметру реплики нет (`None`) — чтобы не засорять ленту.
-fn move_note(before: &GameState, after: &GameState, mv: Move, human: Side) -> Option<String> {
+fn move_note(before: &GameState, after: &GameState, mv: Move, humans: &[Side]) -> Option<String> {
     let owner = before.checkers[mv.checker].owner;
-    let name = side_name(owner, human);
+    let name = side_name(owner, humans);
     if mv.kind == MoveKind::Ransom {
         return Some(format!("{name}: выкуп пленной фишки."));
     }
     // Съедание: чья-то фишка стала пленённой именно этим ходом.
-    let captured = after.checkers.iter().enumerate().any(|(j, c)| {
+    let victim = after.checkers.iter().enumerate().find(|(j, c)| {
         matches!(c.pos, Position::Captured { .. })
-            && !matches!(before.checkers[j].pos, Position::Captured { .. })
+            && !matches!(before.checkers[*j].pos, Position::Captured { .. })
     });
-    if captured {
-        return Some(if owner == human {
-            "Вы съедаете фишку соперника!".to_string()
-        } else {
-            "Соперник съедает вашу фишку!".to_string()
-        });
+    if let Some((j, _)) = victim {
+        let v = side_name(before.checkers[j].owner, humans);
+        return Some(format!("{name} съедает фишку: {v}!"));
     }
     let event = match mv.kind {
         MoveKind::Enter => "ввод фишки в игру.",
@@ -104,9 +104,9 @@ fn move_note(before: &GameState, after: &GameState, mv: Move, human: Side) -> Op
 }
 
 /// Реплика о броске: что выпало, дубль и отсутствие ходов.
-fn roll_note(side: Side, human: Side, roll: DiceRoll, no_move: bool) -> String {
+fn roll_note(side: Side, humans: &[Side], roll: DiceRoll, no_move: bool) -> String {
     let [a, b] = roll.values();
-    let mut s = format!("{}: выпало {a} и {b}.", side_name(side, human));
+    let mut s = format!("{}: выпало {a} и {b}.", side_name(side, humans));
     if roll.is_double() {
         s.push_str(" Дубль — ещё ход!");
     }
@@ -116,14 +116,11 @@ fn roll_note(side: Side, human: Side, roll: DiceRoll, no_move: bool) -> String {
     s
 }
 
-/// Реплика в конце серии кадров: только победа. Для перехода к ходу человека реплики
-/// нет (`None`) — её сразу же сменит «Ваш ход — бросаем кости…».
-fn end_note(game: &Game, human: Side) -> Option<String> {
-    match game.winner() {
-        Some(w) if w == human => Some("Вы победили! 🎉".to_string()),
-        Some(_) => Some("Соперник победил. Игра окончена.".to_string()),
-        None => None,
-    }
+/// Реплика в конце серии кадров: только победа. Для перехода к ходу игрока реплики
+/// нет (`None`) — её сразу же сменит сообщение о его броске.
+fn end_note(game: &Game, humans: &[Side]) -> Option<String> {
+    game.winner()
+        .map(|w| format!("{} победил! Игра окончена.", side_name(w, humans)))
 }
 
 /// Применяет ход `mv` к `state`, попутно добавляя кадры. Если фишка идёт по дорожке,
@@ -134,7 +131,7 @@ fn apply_with_frames(
     state: GameState,
     mv: Move,
     roll: DiceRoll,
-    human: Side,
+    humans: &[Side],
 ) -> GameState {
     if let Position::OnTrack { progress: sp } = state.checkers[mv.checker].pos {
         for step in 1..mv.die {
@@ -152,7 +149,7 @@ fn apply_with_frames(
         }
     }
     let after = apply(&state, mv);
-    let note = move_note(&state, &after, mv, human);
+    let note = move_note(&state, &after, mv, humans);
     frames.push(Frame {
         state: after.clone(),
         roll: Some(roll),
@@ -171,7 +168,7 @@ fn commit_frames<F>(
     game: &mut Game,
     roll: DiceRoll,
     played: Vec<Move>,
-    human: Side,
+    humans: &[Side],
     roll_anim: bool,
     forced: F,
 ) where
@@ -179,7 +176,7 @@ fn commit_frames<F>(
 {
     let side = game.state.to_move;
     let no_move = played.is_empty();
-    // Анимация броска нужна, когда кости ещё не показаны (ход ИИ). Для человека
+    // Анимация броска нужна, когда кости ещё не показаны (ход ИИ). У игрока-человека
     // бросок уже анимирован в начале его хода — тут только продвигаем фишки.
     if roll_anim {
         // Кадр броска: кубики кувыркаются в 3D (анимация в статусе) и встают на грань.
@@ -188,7 +185,7 @@ fn commit_frames<F>(
             roll: Some(roll),
             hold: ROLL_ANIM_MS,
             rolling: true,
-            note: Some(format!("{} бросает кости…", side_name(side, human))),
+            note: Some(format!("{} бросает кости…", side_name(side, humans))),
         });
         // …затем кости встают на результат и держатся. Если ходить нечем — дольше.
         frames.push(Frame {
@@ -200,7 +197,7 @@ fn commit_frames<F>(
                 HOLD_ROLL_MS
             },
             rolling: false,
-            note: Some(roll_note(side, human, roll, no_move)),
+            note: Some(roll_note(side, humans, roll, no_move)),
         });
     }
     let pre = game.state.clone();
@@ -209,25 +206,30 @@ fn commit_frames<F>(
     let mut forced_moves = outcome.forced.iter();
     for mv in &outcome.played {
         let ransom = mv.kind == MoveKind::Ransom;
-        scratch = apply_with_frames(frames, scratch, *mv, roll, human);
+        scratch = apply_with_frames(frames, scratch, *mv, roll, humans);
         if ransom && let Some(&fm) = forced_moves.next() {
             let captor = scratch.checkers[fm.checker].owner;
-            scratch = apply_with_frames(frames, scratch, fm, roll, human);
+            scratch = apply_with_frames(frames, scratch, fm, roll, humans);
             if let Some(last) = frames.last_mut() {
                 last.note = Some(format!(
                     "{}: обязательный ход на 6 после выкупа.",
-                    side_name(captor, human)
+                    side_name(captor, humans)
                 ));
             }
         }
     }
 }
 
-/// Дополняет `frames` ходами ИИ (всех не-человеческих сторон, с дублями и выкупами)
-/// от текущего состояния `game` до хода человека. Продвигает `game`.
-fn ai_frames(game: &mut Game, dice: StoredValue<RandomDice>, human: Side, frames: &mut Vec<Frame>) {
+/// Дополняет `frames` ходами компьютерных сторон (с дублями и выкупами) от текущего
+/// состояния `game` до хода игрока-человека. Продвигает `game`.
+fn ai_frames(
+    game: &mut Game,
+    dice: StoredValue<RandomDice>,
+    humans: &[Side],
+    frames: &mut Vec<Frame>,
+) {
     let mut guard = 0;
-    while game.winner().is_none() && game.state.to_move != human && guard < 4000 {
+    while game.winner().is_none() && !humans.contains(&game.state.to_move) && guard < 4000 {
         guard += 1;
         let mut roll = None;
         dice.update_value(|d| roll = Some(d.roll()));
@@ -237,16 +239,25 @@ fn ai_frames(game: &mut Game, dice: StoredValue<RandomDice>, human: Side, frames
             .choose_turn(&game.state, &turns)
             .min(turns.len() - 1);
         let played = turns[idx].clone();
-        commit_frames(frames, game, roll, played, human, true, |s, c, o| {
+        commit_frames(frames, game, roll, played, humans, true, |s, c, o| {
             Heuristic.choose_forced(s, c, o)
         });
     }
 }
 
-fn fresh(dice: StoredValue<RandomDice>) -> Game {
+fn fresh(dice: StoredValue<RandomDice>, active: Vec<Side>) -> Game {
     let mut game = None;
-    dice.update_value(|d| game = Some(Game::start(vec![Side::A, Side::A.opposite()], d)));
+    dice.update_value(|d| game = Some(Game::start(active.clone(), d)));
     game.expect("game started")
+}
+
+/// Активные стороны для `n` игроков: 2 — противоположные, 3 — A/B/C, 4 — все.
+fn active_for(n: usize) -> Vec<Side> {
+    match n {
+        2 => vec![Side::A, Side::A.opposite()],
+        3 => vec![Side::A, Side::B, Side::C],
+        _ => Side::ALL.to_vec(),
+    }
 }
 
 /// Уникальные ходы текущего шага среди полных ходов с префиксом `prefix`.
@@ -748,9 +759,12 @@ fn die3d(v: u8) -> impl IntoView {
 
 #[component]
 fn App() -> impl IntoView {
-    let human = Side::A;
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
-    let game = RwSignal::new(fresh(dice));
+    // Настройки: число игроков и какие стороны управляются человеком.
+    let players = RwSignal::new(2usize);
+    let humans = RwSignal::new(vec![Side::A]);
+    let started = RwSignal::new(false);
+    let game = RwSignal::new(fresh(dice, active_for(2)));
     let roll = RwSignal::new(None::<DiceRoll>);
     let turns = RwSignal::new(Vec::<Vec<Move>>::new());
     let prefix = RwSignal::new(Vec::<Move>::new());
@@ -759,19 +773,11 @@ fn App() -> impl IntoView {
     // вынужденного ответа выкупа и передачи очереди), пока доска уже продвинута.
     let turn_start = StoredValue::new(game.get_untracked().state.clone());
     // Идёт ли сейчас проигрывание анимации хода (блокирует ввод и авто-бросок).
-    // Стартует как `true`: даём паузу-заставку перед первым ходом (см. `kickoff`).
-    let animating = RwSignal::new(true);
+    let animating = RwSignal::new(false);
     // Крутятся ли сейчас кости (анимация броска).
     let rolling = RwSignal::new(false);
     // Текст ведущего-комментатора над доской.
-    let herald = RwSignal::new(format!(
-        "Игра началась! Первый ход — {}.",
-        if game.get_untracked().state.to_move == human {
-            "ваш"
-        } else {
-            "соперника"
-        }
-    ));
+    let herald = RwSignal::new(String::new());
 
     // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
     let play = move |frames: Vec<Frame>| {
@@ -795,20 +801,21 @@ fn App() -> impl IntoView {
         });
     };
 
-    // Если ход за оппонентом (ИИ) — собрать кадры и проиграть их пошагово.
+    // Если ход за компьютерной стороной — собрать кадры и проиграть их пошагово.
     let run_ai = move || {
         let mut g = game.get_untracked();
-        if g.winner().is_some() || g.state.to_move == human {
+        let hs = humans.get_untracked();
+        if g.winner().is_some() || hs.contains(&g.state.to_move) {
             return;
         }
         let mut frames = Vec::new();
-        ai_frames(&mut g, dice, human, &mut frames);
+        ai_frames(&mut g, dice, &hs, &mut frames);
         frames.push(Frame {
             state: g.state.clone(),
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
-            note: end_note(&g, human),
+            note: end_note(&g, &hs),
         });
         play(frames);
     };
@@ -824,13 +831,15 @@ fn App() -> impl IntoView {
         });
     };
 
-    // Авто-бросок в начале хода человека (но не во время анимации).
+    // Авто-бросок в начале хода игрока-человека (но не во время анимации).
     Effect::new(move |_| {
         let g = game.get();
         let busy = animating.get();
-        if !busy
+        let hs = humans.get_untracked();
+        if started.get()
+            && !busy
             && g.winner().is_none()
-            && g.state.to_move == human
+            && hs.contains(&g.state.to_move)
             && roll.get_untracked().is_none()
         {
             let mut r = None;
@@ -840,21 +849,22 @@ fn App() -> impl IntoView {
             let t = legal_turns(&g.state, r);
             let no_move = t.first().is_none_or(Vec::is_empty);
             let [a, b] = r.values();
-            // Анимируем бросок человека так же, как у соперника: кубики кувыркаются
-            // в статусе, затем показывается результат и включается выбор хода.
+            let name = side_name(g.state.to_move, &hs);
+            // Анимируем бросок игрока так же, как у компьютера: кубики кувыркаются,
+            // затем показывается результат и включается выбор хода.
             animating.set(true);
             spawn_local(async move {
-                herald.set("Ваш ход — бросаем кости…".to_string());
+                herald.set(format!("{name} бросает кости…"));
                 roll.set(Some(r));
                 rolling.set(true);
                 TimeoutFuture::new(ROLL_ANIM_MS).await;
                 rolling.set(false);
                 herald.set(if no_move {
-                    format!("Ваш ход: выпало {a} и {b}. Ходить нечем — пропуск.")
+                    format!("{name}: выпало {a} и {b}. Ходить нечем — пропуск.")
                 } else if r.is_double() {
-                    format!("Ваш ход: выпало {a} и {b}. Дубль — ещё ход!")
+                    format!("{name}: выпало {a} и {b}. Дубль — ещё ход!")
                 } else {
-                    format!("Ваш ход: выпало {a} и {b}. Выберите ход.")
+                    format!("{name}: выпало {a} и {b}. Выберите ход.")
                 });
                 turns.set(t);
                 prefix.set(Vec::new());
@@ -868,20 +878,21 @@ fn App() -> impl IntoView {
     // отсюда доигрываем вынужденный ответ выкупа, передаём очередь и ходим ИИ.
     let finish = move |mut frames: Vec<Frame>, after: GameState, played: Vec<Move>| {
         let r = roll.get_untracked().expect("roll");
+        let hs = humans.get_untracked();
         let mut fg = Game::new(turn_start.get_value());
         let outcome = fg.commit_turn(r, played, |_, _, _| 0);
         let mut scratch = after;
         for &fm in &outcome.forced {
-            scratch = apply_with_frames(&mut frames, scratch, fm, r, human);
+            scratch = apply_with_frames(&mut frames, scratch, fm, r, &hs);
         }
         let _ = scratch;
-        ai_frames(&mut fg, dice, human, &mut frames);
+        ai_frames(&mut fg, dice, &hs, &mut frames);
         frames.push(Frame {
             state: fg.state.clone(),
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
-            note: end_note(&fg, human),
+            note: end_note(&fg, &hs),
         });
         turns.set(Vec::new());
         prefix.set(Vec::new());
@@ -891,9 +902,10 @@ fn App() -> impl IntoView {
 
     let click = move |target: Sel| {
         let g = game.get_untracked();
+        let hs = humans.get_untracked();
         if animating.get_untracked()
             || g.winner().is_some()
-            || g.state.to_move != human
+            || !hs.contains(&g.state.to_move)
             || roll.get_untracked().is_none()
         {
             return;
@@ -919,7 +931,7 @@ fn App() -> impl IntoView {
                     let total = turns.get_untracked().first().map_or(0, Vec::len);
                     // Выбранную часть хода проигрываем сразу — пошагово, по клеткам.
                     let mut frames = Vec::new();
-                    let after = apply_with_frames(&mut frames, ps.clone(), m, r, human);
+                    let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs);
                     if np.len() >= total {
                         finish(frames, after, np);
                     } else {
@@ -944,42 +956,85 @@ fn App() -> impl IntoView {
         }
     };
 
-    let on_new = move |_| {
+    // Запуск партии по выбранным настройкам (число игроков и кто человек).
+    let start_game = move |_| {
+        let active = active_for(players.get_untracked());
         dice.update_value(|d| *d = RandomDice::from_seed(seed()));
         roll.set(None);
         turns.set(Vec::new());
         prefix.set(Vec::new());
         sel.set(None);
-        let g = fresh(dice);
+        let g = fresh(dice, active);
+        let hs = humans.get_untracked();
         herald.set(format!(
-            "Новая игра! Первый ход — {}.",
-            if g.state.to_move == human {
-                "ваш"
-            } else {
-                "соперника"
-            }
+            "Игра началась! Ходит {}.",
+            side_name(g.state.to_move, &hs)
         ));
         game.set(g);
-        // Пауза-заставка, затем первый ход (бросок человека или ход ИИ).
+        started.set(true);
         kickoff();
     };
+    // Назад к настройкам (кнопка «Настройки»).
+    let to_settings = move |_| started.set(false);
 
-    // Старт партии: заставка-пауза, потом первый ход.
-    kickoff();
+    // Переключатель типа стороны (человек ↔ компьютер) в настройках.
+    let toggle_human = move |side: Side| {
+        humans.update(|h| {
+            if let Some(i) = h.iter().position(|&s| s == side) {
+                h.remove(i);
+            } else {
+                h.push(side);
+            }
+        });
+    };
 
     view! {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
+            // Экран настроек до старта партии: число игроков и тип каждой стороны.
+            {move || (!started.get()).then(|| view! {
+                <div class="settings">
+                    <div class="set-row">
+                        <span>"Игроков:"</span>
+                        {[2usize, 3, 4].into_iter().map(|n| view! {
+                            <button
+                                class:on=move || players.get() == n
+                                on:click=move |_| { players.set(n); humans.set(vec![Side::A]); }
+                            >{n.to_string()}</button>
+                        }).collect_view()}
+                    </div>
+                    {move || {
+                        let act = active_for(players.get());
+                        act.into_iter().map(|s| {
+                            let is_h = move || humans.get().contains(&s);
+                            view! {
+                                <div class="set-row">
+                                    <b style=format!("color:{}", side_color(s))>
+                                        {format!("Сторона {}", s.letter())}
+                                    </b>
+                                    <button class:on=is_h on:click=move |_| toggle_human(s)>
+                                        {move || if is_h() { "Человек" } else { "Компьютер" }}
+                                    </button>
+                                </div>
+                            }
+                        }).collect_view()
+                    }}
+                    <button class="primary" on:click=start_game>"Начать игру"</button>
+                </div>
+            })}
+
+            // Игровой экран после старта.
+            {move || started.get().then(|| view! {
             <div class="status">
                 <span class="herald">{move || herald.get()}</span>
             </div>
             <div class="controls">
-                <button on:click=on_new>"Новая игра"</button>
+                <button on:click=to_settings>"Настройки"</button>
                 {move || {
                     let g = game.get();
                     let no_moves = roll.get().is_some()
                         && g.winner().is_none()
-                        && g.state.to_move == human
+                        && humans.get().contains(&g.state.to_move)
                         && turns.get().first().is_none_or(Vec::is_empty);
                     no_moves.then(|| view! {
                         <button on:click=move |_| finish(Vec::new(), game.get_untracked().state.clone(), Vec::new())>
@@ -1043,10 +1098,11 @@ fn App() -> impl IntoView {
                     let g = game.get();
                     let pre = prefix.get();
                     let ps = g.state.clone(); // доска уже продвинута применёнными частями
+                    let mover = g.state.to_move;
                     let active = !animating.get()
                         && roll.get().is_some()
                         && g.winner().is_none()
-                        && g.state.to_move == human;
+                        && humans.get().contains(&mover);
                     let cands = if active { step_opts(&turns.get(), &pre) } else { Vec::new() };
                     let cur = sel.get();
 
@@ -1108,7 +1164,7 @@ fn App() -> impl IntoView {
                             cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind)
                         });
                         let is_sel = cur == Some(kind);
-                        let (zx, zy) = outside_anchor(human, out_dist);
+                        let (zx, zy) = outside_anchor(mover, out_dist);
                         if is_sel {
                             nodes.push(ring_pt(zx, zy, "hl-sel"));
                         } else if is_dst {
@@ -1153,6 +1209,7 @@ fn App() -> impl IntoView {
             }}
             </div>
             </div>
+            })}
         </div>
     }
 }
