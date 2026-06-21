@@ -275,6 +275,17 @@ fn prison_pass(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
     })
 }
 
+/// Легален ли конкретный ход в данном состоянии (без паники, в отличие от `apply`).
+/// Нужно туровому циклу: ответный ход захватчика при выкупе может сделать
+/// нелегальным следующий ход выбранной последовательности — такой ход пропускается.
+pub fn move_legal(state: &GameState, mv: Move) -> bool {
+    if mv.kind == MoveKind::PrisonPass {
+        prison_pass(state, mv.checker, mv.die).is_some()
+    } else {
+        resolve(state, mv.checker, mv.die).is_some()
+    }
+}
+
 /// Все легальные ходы стороны `side` для значения кости `die`.
 fn moves_for_side(state: &GameState, side: Side, die: u8) -> Vec<Move> {
     state

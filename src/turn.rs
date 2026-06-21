@@ -12,7 +12,7 @@
 
 use crate::board::Side;
 use crate::dice::{DiceRoll, Die};
-use crate::moves::{Move, MoveKind, apply, forced_six_moves, legal_turns};
+use crate::moves::{Move, MoveKind, apply, forced_six_moves, legal_turns, move_legal};
 use crate::state::{GameState, Position};
 
 /// Источник бросков костей — абстракция ради тестируемости.
@@ -142,10 +142,13 @@ pub struct TurnOutcome {
     pub side: Side,
     /// Что выпало.
     pub roll: DiceRoll,
-    /// Применённая последовательность ходов (пустая, если ходов не было).
+    /// Фактически применённые ходы игрока (без пропущенных из-за ответа захватчика).
     pub played: Vec<Move>,
     /// Вынужденные ответные ходы захватчиков, вызванные выкупами в этом ходе.
     pub forced: Vec<Move>,
+    /// Все применённые ходы В ПОРЯДКЕ применения: ход игрока, а сразу за выкупом —
+    /// обязательный ответ захватчика. Удобно для анимации.
+    pub applied: Vec<Move>,
     /// Дубль: тот же игрок получает ещё один ход.
     pub again: bool,
 }
@@ -195,28 +198,40 @@ impl Game {
         F: FnMut(&GameState, Side, &[Move]) -> usize,
     {
         let side = self.state.to_move;
-        // Сначала применяем все ходы игрока (последовательность согласована с
-        // `legal_turns`), запоминая захватчиков выкупленных фишек. Их обязательные
-        // ответные ходы применяем ПОСЛЕ — чтобы ответ соперника не делал нелегальным
-        // следующий ход игрока (это ломало бы согласованную последовательность).
-        let mut captors = Vec::new();
-        for &mv in &played {
-            if mv.kind == MoveKind::Ransom
-                && let Position::Captured { captor } = self.state.checkers[mv.checker].pos
-            {
-                captors.push(captor);
-            }
-            self.state = apply(&self.state, mv);
-        }
+        let mut applied_player = Vec::new();
         let mut forced_moves = Vec::new();
-        for captor in captors {
-            let options = forced_six_moves(&self.state, captor);
-            if !options.is_empty() {
-                let idx = forced(&self.state, captor, &options).min(options.len() - 1);
-                self.state = apply(&self.state, options[idx]);
-                forced_moves.push(options[idx]);
+        let mut applied = Vec::new();
+        for mv in played {
+            // Ответный ход захватчика на предыдущий выкуп мог сделать этот ход
+            // нелегальным (например, съесть фишку, которой собирались ходить) —
+            // тогда пропускаем его.
+            if !move_legal(&self.state, mv) {
+                continue;
+            }
+            // Захватчик известен до применения выкупа (после фишка — в резерве).
+            let captor = if mv.kind == MoveKind::Ransom {
+                match self.state.checkers[mv.checker].pos {
+                    Position::Captured { captor } => Some(captor),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            self.state = apply(&self.state, mv);
+            applied_player.push(mv);
+            applied.push(mv);
+            // Обязательный ответ захватчика — СРАЗУ после выкупа.
+            if let Some(captor) = captor {
+                let options = forced_six_moves(&self.state, captor);
+                if !options.is_empty() {
+                    let idx = forced(&self.state, captor, &options).min(options.len() - 1);
+                    self.state = apply(&self.state, options[idx]);
+                    forced_moves.push(options[idx]);
+                    applied.push(options[idx]);
+                }
             }
         }
+        let played = applied_player;
 
         let again = roll.is_double() && self.winner().is_none();
         if !again {
@@ -226,6 +241,7 @@ impl Game {
             side,
             roll,
             played,
+            applied,
             forced: forced_moves,
             again,
         }

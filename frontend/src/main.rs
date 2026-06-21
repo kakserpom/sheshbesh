@@ -212,20 +212,16 @@ fn commit_frames<F>(
     }
     let pre = game.state.clone();
     let outcome = game.commit_turn(roll, played, forced);
-    // Сначала анимируем ходы игрока, затем — обязательные ответы захватчиков (как
-    // и применяет `commit_turn`): иначе ответ соперника мог бы «сломать» следующий
-    // ход игрока.
+    // Анимируем в порядке применения (`applied`): ход игрока, а сразу за выкупом —
+    // обязательный ответ захватчика (его фишка — не текущей ходящей стороны).
     let mut scratch = pre;
-    for mv in &outcome.played {
+    for mv in &outcome.applied {
+        let forced_resp = scratch.checkers[mv.checker].owner != side;
         scratch = apply_with_frames(frames, scratch, *mv, roll, humans);
-    }
-    for &fm in &outcome.forced {
-        let captor = scratch.checkers[fm.checker].owner;
-        scratch = apply_with_frames(frames, scratch, fm, roll, humans);
-        if let Some(last) = frames.last_mut() {
+        if forced_resp && let Some(last) = frames.last_mut() {
             last.note = Some(format!(
                 "{}: обязательный ход на 6 после выкупа.",
-                side_name(captor, humans)
+                side_name(scratch.checkers[mv.checker].owner, humans)
             ));
         }
     }
