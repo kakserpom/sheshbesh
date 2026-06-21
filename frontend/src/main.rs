@@ -683,8 +683,19 @@ fn prison_slot(state: &GameState, owner: Side) -> (usize, usize) {
     (k, n)
 }
 
-/// Шаг разноса разноцветных фишек на угловой клетке (наружу от центра доски).
+/// Шаг разноса разноцветных фишек на угловой клетке и на поле Луны (наружу).
 const CORNER_GAP: f64 = 0.6;
+const MOON_GAP: f64 = 0.5;
+
+/// Точка `k`-го слота: от базовой точки `base` наружу от центра доски с шагом `gap`
+/// (`k == 0` — на самой точке). Одноцветные совпадают (рисуются со счётчиком).
+fn outward_slot(base: (f64, f64), k: usize, gap: f64) -> (f64, f64) {
+    let c = BOARD_DIM as f64 / 2.0;
+    let d = (base.0 - c, base.1 - c);
+    let len = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-3);
+    let off = k as f64 * gap;
+    (base.0 + d.0 / len * off, base.1 + d.1 / len * off)
+}
 
 /// Абсолютная клетка-угол, на которой стоит фишка (`None`, если не на углу).
 /// Угол — единственная (кроме Тюрьмы) клетка, где уживаются разные фишки.
@@ -713,17 +724,33 @@ fn corner_sides(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
         .collect()
 }
 
-/// Точка слота `k` фишки на угловой клетке (как в Тюрьме, но разнос — наружу от
-/// центра доски): `k == 0` — на самой клетке, дальше — наружу. Одноцветные
-/// совпадают в один кружок (рисуются со счётчиком).
+/// Точка слота `k` фишки на угловой клетке (как в Тюрьме, но разнос — наружу).
 fn corner_slot_point(coord: (usize, usize), k: usize) -> (f64, f64) {
-    let c = BOARD_DIM as f64 / 2.0;
-    let p = center_pt(coord);
-    let d = (p.0 - c, p.1 - c);
-    let len = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-3);
-    let off = k as f64 * CORNER_GAP;
-    (p.0 + d.0 / len * off, p.1 + d.1 / len * off)
+    outward_slot(center_pt(coord), k, CORNER_GAP)
 }
+
+/// Активные стороны с фишкой на поле `field` Луны стороны `side` (в их порядке).
+fn moon_sides(state: &GameState, side: Side, field: MoonField) -> Vec<Side> {
+    state
+        .active
+        .iter()
+        .copied()
+        .filter(|&s| {
+            state
+                .checkers
+                .iter()
+                .any(|c| c.owner == s && c.pos == Position::Moon { side, field })
+        })
+        .collect()
+}
+
+/// Точка слота `k` фишки на поле Луны: как на углу — разнос наружу от центра доски.
+fn moon_slot_point(side: Side, field: MoonField, k: usize) -> (f64, f64) {
+    outward_slot(moon_field_point(side, field), k, MOON_GAP)
+}
+
+/// Все три поля Луны (по порядку прохождения).
+const MOON_FIELDS: [MoonField; 3] = [MoonField::One, MoonField::Three, MoonField::Six];
 
 /// Бейджи-счётчики одноцветных стопок (Тюрьма и углы): точка слота и число (>1).
 /// Одноцветные фишки накладываются в один кружок, поверх которого рисуется цифра.
@@ -760,6 +787,22 @@ fn stack_counts(state: &GameState) -> Vec<((f64, f64), usize)> {
                 .count();
             if cnt > 1 {
                 out.push((corner_slot_point(coord, k), cnt));
+            }
+        }
+    }
+    // Поля Луны: одноцветные фишки на одном поле.
+    for side in Side::ALL {
+        for field in MOON_FIELDS {
+            let sides = moon_sides(state, side, field);
+            for (k, &owner) in sides.iter().enumerate() {
+                let cnt = state
+                    .checkers
+                    .iter()
+                    .filter(|c| c.owner == owner && c.pos == Position::Moon { side, field })
+                    .count();
+                if cnt > 1 {
+                    out.push((moon_slot_point(side, field, k), cnt));
+                }
             }
         }
     }
@@ -811,17 +854,16 @@ fn home_side(state: &GameState, coord: (usize, usize)) -> Option<Side> {
     })
 }
 
-/// «Гнездо» фишки — для группировки наложенных друг на друга (сдвиг при стопке).
+/// «Гнездо» фишки — для группировки наложенных на обычной клетке (союзные фишки):
+/// угол/Луна/Тюрьма имеют собственную раскладку, сюда не попадают.
 #[derive(PartialEq, Eq)]
 enum Slot {
     Cell((usize, usize)),
-    Moon(Side, MoonField),
     Off,
 }
 
 fn slot_key(pos: Position, owner: Side) -> Slot {
     match pos {
-        Position::Moon { side, field } => Slot::Moon(side, field),
         Position::Reserve | Position::Captured { .. } => Slot::Off,
         _ => checker_cell(owner, pos).map_or(Slot::Off, Slot::Cell),
     }
@@ -856,8 +898,8 @@ fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
         let (x, y) = outside_point(captor, CAPTURED_OUT, k, n);
         return (x, y, true);
     }
-    // Угол — единственная (кроме Тюрьмы) клетка с разными фишками: рисуем как в
-    // Тюрьме (одноцветные — в один кружок со счётчиком), но разносим цвета НАРУЖУ.
+    // Угол — единственная (кроме Тюрьмы) клетка периметра с разными фишками: рисуем
+    // как в Тюрьме (одноцветные — в один кружок со счётчиком), но цвета — НАРУЖУ.
     if let Some(abs) = checker_corner(ch.owner, ch.pos) {
         let coord = checker_cell(ch.owner, ch.pos).expect("corner cell");
         let sides = corner_sides(state, abs);
@@ -865,15 +907,17 @@ fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
         let (x, y) = corner_slot_point(coord, k);
         return (x, y, true);
     }
-    let (base, visible) = match ch.pos {
-        Position::Moon { side, field } => (moon_field_point(side, field), true),
-        _ => {
-            // На клетке (в т.ч. при проходе сквозь клетку Тюрьмы) — по центру клетки.
-            // В каземат попадают только настоящие пленники (обработаны выше).
-            let coord = checker_cell(ch.owner, ch.pos).expect("on-board cell");
-            (center_pt(coord), true)
-        }
-    };
+    // Поле Луны — тоже стопка из разных фишек: так же, как на углу.
+    if let Position::Moon { side, field } = ch.pos {
+        let sides = moon_sides(state, side, field);
+        let k = sides.iter().position(|&s| s == ch.owner).unwrap_or(0);
+        let (x, y) = moon_slot_point(side, field, k);
+        return (x, y, true);
+    }
+    // На клетке (в т.ч. при проходе сквозь клетку Тюрьмы) — по центру клетки.
+    // В каземат попадают только настоящие пленники (обработаны выше).
+    let coord = checker_cell(ch.owner, ch.pos).expect("on-board cell");
+    let (base, visible) = (center_pt(coord), true);
     let key = slot_key(ch.pos, ch.owner);
     let rank = (0..i)
         .filter(|&j| slot_key(state.checkers[j].pos, state.checkers[j].owner) == key)
