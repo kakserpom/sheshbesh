@@ -288,20 +288,6 @@ fn sel_of(owner: Side, pos: Position) -> Sel {
     }
 }
 
-fn count_pos(s: &GameState, side: Side, want_reserve: bool) -> usize {
-    s.checkers
-        .iter()
-        .filter(|c| {
-            c.owner == side
-                && if want_reserve {
-                    c.pos == Position::Reserve
-                } else {
-                    matches!(c.pos, Position::Captured { .. })
-                }
-        })
-        .count()
-}
-
 // --- Геометрия ---
 
 /// Центр клетки сетки `(строка, столбец)` в координатах SVG.
@@ -474,6 +460,43 @@ fn prison_slot(state: &GameState, owner: Side) -> (usize, usize) {
     (k, n)
 }
 
+// Зоны снаружи доски напротив клетки входа Дома (выносы наружу, в клетках):
+// резерв ближе всего, плен дальше, бросок костей — ещё дальше.
+const RESERVE_OUT: f64 = 1.0;
+const CAPTURED_OUT: f64 = 1.85;
+const DICE_OUT: f64 = 2.75;
+const RESERVE_GAP: f64 = 0.64;
+/// Запас viewBox под выносные зоны снаружи доски (в клетках).
+const RESERVE_PAD: f64 = 3.3;
+
+/// Единичные оси у клетки входа Дома `side`: наружу (перпендикуляр к стороне) и
+/// вдоль стороны.
+fn reserve_axes(side: Side) -> ((f64, f64), (f64, f64)) {
+    let c = BOARD_DIM as f64 / 2.0;
+    let home = center_pt(margin_coord(side.entry()));
+    let d = (home.0 - c, home.1 - c); // наружу: от центра к Дому
+    if d.0.abs() > d.1.abs() {
+        ((d.0.signum(), 0.0), (0.0, 1.0))
+    } else {
+        ((0.0, d.1.signum()), (1.0, 0.0))
+    }
+}
+
+/// Центр зоны на выносе `out` наружу от клетки входа Дома стороны.
+fn outside_anchor(side: Side, out_dist: f64) -> (f64, f64) {
+    let home = center_pt(margin_coord(side.entry()));
+    let (out, _) = reserve_axes(side);
+    (home.0 + out.0 * out_dist, home.1 + out.1 * out_dist)
+}
+
+/// Точка `k`-й из `n` фишек в выносном ряду стороны (вдоль стороны, центрирован).
+fn outside_point(side: Side, out_dist: f64, k: usize, n: usize) -> (f64, f64) {
+    let a = outside_anchor(side, out_dist);
+    let (_, along) = reserve_axes(side);
+    let off = (k as f64 - (n.max(1) as f64 - 1.0) / 2.0) * RESERVE_GAP;
+    (a.0 + along.0 * off, a.1 + along.1 * off)
+}
+
 /// Сторона-владелец клетки Дома (вход или слот) среди активных, иначе `None`.
 fn home_side(state: &GameState, coord: (usize, usize)) -> Option<Side> {
     state.active.iter().copied().find(|&s| {
@@ -510,10 +533,29 @@ fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
         let (x, y) = prison_slot_point(&g, k, n);
         return (x, y, true);
     }
+    // Резерв — видимый ряд снаружи доски у Дома (4 фикс. слота = индекс среди своих).
+    if ch.pos == Position::Reserve {
+        let k = (0..i)
+            .filter(|&j| state.checkers[j].owner == ch.owner)
+            .count();
+        let (x, y) = outside_point(ch.owner, RESERVE_OUT, k, 4);
+        return (x, y, true);
+    }
+    // Плен — отдельный ряд дальше резерва (центрирован по числу пленённых).
+    if matches!(ch.pos, Position::Captured { .. }) {
+        let is_cap = |p: Position| matches!(p, Position::Captured { .. });
+        let n = state
+            .checkers
+            .iter()
+            .filter(|c| c.owner == ch.owner && is_cap(c.pos))
+            .count();
+        let k = (0..i)
+            .filter(|&j| state.checkers[j].owner == ch.owner && is_cap(state.checkers[j].pos))
+            .count();
+        let (x, y) = outside_point(ch.owner, CAPTURED_OUT, k, n);
+        return (x, y, true);
+    }
     let (base, visible) = match ch.pos {
-        Position::Reserve | Position::Captured { .. } => {
-            (center_pt(margin_coord(ch.owner.entry())), false)
-        }
         Position::Moon { side, field } => (moon_field_point(side, field), true),
         _ => {
             // На клетке (в т.ч. при проходе сквозь клетку Тюрьмы) — по центру клетки.
@@ -641,28 +683,6 @@ fn die_pips(v: u8) -> Vec<(i32, i32)> {
         4 => vec![(lo, lo), (hi, lo), (lo, hi), (hi, hi)],
         5 => vec![(lo, lo), (hi, lo), (mid, mid), (lo, hi), (hi, hi)],
         _ => vec![(lo, lo), (hi, lo), (lo, mid), (hi, mid), (lo, hi), (hi, hi)],
-    }
-}
-
-/// Лоток плена «казематом»: тёмная решётчатая коробка с пленёнными фишками
-/// (нейтральный цвет — в отличие от красной Тюрьмы на доске).
-fn captured_cage(side: Side, n: usize) -> impl IntoView {
-    let col = side_color(side);
-    let slots = i32::try_from(n.max(1)).unwrap_or(1);
-    let h = 22;
-    let w = 8 + 16 * slots;
-    let dots = (0..i32::try_from(n).unwrap_or(0))
-        .map(|k| view! { <circle cx=12 + 16 * k cy=11 r=6 fill=col /> })
-        .collect_view();
-    let bars = (0..=slots)
-        .map(|k| view! { <line x1=4 + 16 * k y1=4 x2=4 + 16 * k y2=h - 4 class="cc-bar" /> })
-        .collect_view();
-    view! {
-        <svg class="cage-chip" viewBox=format!("0 0 {w} {h}")>
-            <rect x=2 y=2 width=w - 4 height=h - 4 rx=4 class="cc-body" />
-            {dots}
-            {bars}
-        </svg>
     }
 }
 
@@ -932,70 +952,6 @@ fn App() -> impl IntoView {
     // Старт партии: заставка-пауза, потом первый ход.
     kickoff();
 
-    // Лотки сторон (резерв + плен-каземат) — построчно, слева от доски.
-    let render_trays = move || {
-        let g = game.get();
-        let pre = prefix.get();
-        let ps = after_prefix(&g, &pre);
-        let active = roll.get().is_some() && g.winner().is_none() && g.state.to_move == human;
-        let cands = if active {
-            step_opts(&turns.get(), &pre)
-        } else {
-            Vec::new()
-        };
-        let cur = sel.get();
-        let to_move = g.state.to_move;
-        let cur_roll = roll.get();
-        let spinning = rolling.get();
-        g.state.active.clone().into_iter().map(|side| {
-            // Класс лотка и кликабельность для выбранного типа (резерв/плен).
-            let state_of = |kind: Sel| {
-                let is_human = side == human;
-                let is_src = is_human && cands.iter().any(|&m| move_source(&ps, m) == kind);
-                let is_dst = is_human && matches!(cur, Some(s) if cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind));
-                let is_sel = cur == Some(kind);
-                let cls = if is_sel { "chip sel" }
-                    else if is_dst { "chip dst" }
-                    else if is_src { "chip src" }
-                    else { "chip" };
-                (cls, is_src || is_dst || is_sel)
-            };
-            let res_n = count_pos(&ps, side, true);
-            let (res_cls, res_click) = state_of(Sel::Reserve);
-            // Резерв — только точки (число фишек видно по ним).
-            let dots = (0..res_n).map(|_| view! {
-                <span class="dot" style=format!("background:{}", side_color(side)) />
-            }).collect_view();
-            let cap_n = count_pos(&ps, side, false);
-            let (cap_cls, cap_click) = state_of(Sel::Captured);
-            // Кости — на строке ходящей стороны: во время броска кубики кувыркаются
-            // в 3D (die3d), затем показывается остановившийся результат (die_face).
-            let dice = (side == to_move).then_some(cur_roll).flatten().map(|r| {
-                let [a, b] = r.values();
-                if spinning {
-                    let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
-                    view! { <span class=cls>{die3d(a)} {die3d(b)}</span> }.into_any()
-                } else {
-                    let cls = if r.is_double() { "dice double" } else { "dice" };
-                    view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }.into_any()
-                }
-            });
-            view! {
-                <div class="tray-row" class:active=side == to_move>
-                    <b style=format!("color:{}", side_color(side))>{side.letter().to_string()}</b>
-                    <span class=res_cls on:click=move |_| if res_click { click(Sel::Reserve) }>
-                        "резерв " {dots}
-                    </span>
-                    // Плен — каземат (нейтрального цвета) с пленёнными фишками.
-                    <span class=cap_cls on:click=move |_| if cap_click { click(Sel::Captured) }>
-                        {captured_cage(side, cap_n)}
-                    </span>
-                    {dice}
-                </div>
-            }
-        }).collect_view()
-    };
-
     view! {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
@@ -1016,22 +972,21 @@ fn App() -> impl IntoView {
                 }}
             </div>
 
-            <div class="main">
-            <div class="trays">{render_trays}</div>
             <div class="board-area">
-            // Кадрируем viewBox по содержимому: пустые поля BOARD_MARGIN по краям
-            // (нужные движку/TUI) обрезаем, оставляя лишь тонкий зазор 0.5.
+            <div class="board-wrap">
+            // viewBox с запасом RESERVE_PAD по краям: снаружи доски, напротив каждого
+            // Дома, размещены резерв, плен и (у ходящей стороны) кости.
             <svg class="board" viewBox=format!(
                 "{o} {o} {s} {s}",
-                o = BOARD_MARGIN as f64 - 0.5,
-                s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 1.0,
+                o = BOARD_MARGIN as f64 - RESERVE_PAD,
+                s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD,
             )>
                 {move || static_board(&game.get().state)}
 
                 <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
                     <circle
-                        r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. }) { 0.3 } else { 0.36 }
-                        class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. }) {
+                        r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
+                        class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) {
                             "piece captive"
                         } else {
                             "piece"
@@ -1099,9 +1054,12 @@ fn App() -> impl IntoView {
                     };
 
                     let mut nodes: Vec<AnyView> = Vec::new();
+                    let ring_pt = |cx: f64, cy: f64, cls: &'static str| {
+                        view! { <circle cx=cx cy=cy r=0.47 fill="none" class=cls /> }.into_any()
+                    };
                     let ring = |coord: (usize, usize), cls: &'static str| {
                         let (cx, cy) = pt_of(coord);
-                        view! { <circle cx=cx cy=cy r=0.47 fill="none" class=cls /> }.into_any()
+                        ring_pt(cx, cy, cls)
                     };
                     if let Some(rc) = sel_cell {
                         nodes.push(ring(rc, "hl-sel"));
@@ -1124,9 +1082,57 @@ fn App() -> impl IntoView {
                             <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
                         }.into_any());
                     }
+                    // Выносные зоны человека (резерв и плен снаружи Дома) — как
+                    // источник/цель/выбор: подсветка + клик в их центре.
+                    let mut zone = |kind: Sel, out_dist: f64| {
+                        let is_src = cands.iter().any(|&m| move_source(&ps, m) == kind);
+                        let is_dst = cur.is_some_and(|s| {
+                            cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind)
+                        });
+                        let is_sel = cur == Some(kind);
+                        let (zx, zy) = outside_anchor(human, out_dist);
+                        if is_sel {
+                            nodes.push(ring_pt(zx, zy, "hl-sel"));
+                        } else if is_dst {
+                            nodes.push(ring_pt(zx, zy, "hl-dst"));
+                        } else if is_src && cur.is_none() {
+                            nodes.push(ring_pt(zx, zy, "hl-src"));
+                        }
+                        if is_sel || is_dst || (is_src && cur.is_none()) {
+                            nodes.push(view! {
+                                <circle cx=zx cy=zy r=1.1 class="hit" on:click=move |_| click(kind) />
+                            }.into_any());
+                        }
+                    };
+                    zone(Sel::Reserve, RESERVE_OUT);
+                    zone(Sel::Captured, CAPTURED_OUT);
                     nodes
                 }}
             </svg>
+            // Кости — HTML-оверлей над доской, у Дома ходящей стороны (дальше плена).
+            {move || {
+                let g = game.get();
+                let to_move = g.state.to_move;
+                let spinning = rolling.get();
+                roll.get().map(|r| {
+                    let (ax, ay) = outside_anchor(to_move, DICE_OUT);
+                    let vb_o = BOARD_MARGIN as f64 - RESERVE_PAD;
+                    let vb_s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD;
+                    let fx = (ax - vb_o) / vb_s * 100.0;
+                    let fy = (ay - vb_o) / vb_s * 100.0;
+                    let [a, b] = r.values();
+                    let inner = if spinning {
+                        let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
+                        view! { <span class=cls>{die3d(a)} {die3d(b)}</span> }.into_any()
+                    } else {
+                        let cls = if r.is_double() { "dice double" } else { "dice" };
+                        view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }.into_any()
+                    };
+                    view! {
+                        <div class="board-dice" style=format!("left:{fx:.2}%;top:{fy:.2}%")>{inner}</div>
+                    }
+                })
+            }}
             </div>
             </div>
         </div>
