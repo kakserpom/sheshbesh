@@ -1338,7 +1338,7 @@ fn App() -> impl IntoView {
                         </div>
                     })}
                     <button class="primary" on:click=start_game>"Начать игру"</button>
-                    <button on:click=open_dev>"🛠 Режим разработчика"</button>
+                    <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
                 </div>
             })}
 
@@ -1409,7 +1409,7 @@ fn App() -> impl IntoView {
                 <span class="herald">{move || herald.get()}</span>
             </div>
             <div class="controls">
-                <button class="icon-btn" title="Настройки" on:click=to_settings>"⚙"</button>
+                <button class="icon-btn" title="Закончить игру" on:click=to_settings>"⏹"</button>
                 <button class="icon-btn" class:on=move || paused.get()
                     title=move || if paused.get() { "Продолжить" } else { "Пауза" }
                     on:click=move |_| paused.update(|p| *p = !*p)>
