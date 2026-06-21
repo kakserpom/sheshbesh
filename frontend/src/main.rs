@@ -396,9 +396,9 @@ const DEMOS: &[(Demo, &str)] = &[
     (Demo::Moon(MoonField::One), "16 фишек на Луне — поле 1"),
     (Demo::Moon(MoonField::Three), "16 фишек на Луне — поле 3"),
     (Demo::Moon(MoonField::Six), "16 фишек на Луне — поле 6"),
-    (Demo::Cell, "16 фишек на одной клетке"),
+    (Demo::Cell, "16 фишек на углу"),
     (Demo::Prison, "16 фишек в одной Тюрьме"),
-    (Demo::Captured, "16 фишек в плену"),
+    (Demo::Captured, "12 фишек в плену (макс)"),
     (Demo::Homes, "Дома заполнены"),
 ];
 
@@ -424,17 +424,26 @@ fn demo_game(demo: Demo) -> GameState {
             field,
         }),
         Demo::Cell => {
-            // Все 16 на одной абсолютной клетке: у каждой стороны свой прогресс.
-            let cell = PerimeterIdx::new(30);
+            // Все 16 на одном углу (углы и Тюрьма — единственные клетки с разными
+            // фишками): у каждой стороны свой прогресс до этой абсолютной клетки.
+            let corner = Side::A.start_corner();
             demo_state(move |side, _| Position::OnTrack {
-                progress: side.progress_of(cell),
+                progress: side.progress_of(corner),
             })
         }
         Demo::Prison => {
             let cell = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
             demo_state(move |_, _| Position::Prison { cell })
         }
-        Demo::Captured => demo_state(|_, _| Position::Captured { captor: Side::A }),
+        // Свою фишку в плен не берут: A держит максимум — по 4 от B/C/D (12), а её
+        // собственные 4 фишки остаются в резерве.
+        Demo::Captured => demo_state(|side, _| {
+            if side == Side::A {
+                Position::Reserve
+            } else {
+                Position::Captured { captor: Side::A }
+            }
+        }),
         Demo::Homes => demo_state(|_, k| Position::Home { depth: k as u8 }),
     }
 }
@@ -674,6 +683,89 @@ fn prison_slot(state: &GameState, owner: Side) -> (usize, usize) {
     (k, n)
 }
 
+/// Шаг разноса разноцветных фишек на угловой клетке (наружу от центра доски).
+const CORNER_GAP: f64 = 0.6;
+
+/// Абсолютная клетка-угол, на которой стоит фишка (`None`, если не на углу).
+/// Угол — единственная (кроме Тюрьмы) клетка, где уживаются разные фишки.
+fn checker_corner(owner: Side, pos: Position) -> Option<PerimeterIdx> {
+    if let Position::OnTrack { progress } = pos {
+        let abs = owner.entry().advance(progress as usize);
+        if cell_kind(abs) == CellKind::Corner {
+            return Some(abs);
+        }
+    }
+    None
+}
+
+/// Активные стороны, у которых есть фишка на угловой клетке `abs` (в их порядке).
+fn corner_sides(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
+    state
+        .active
+        .iter()
+        .copied()
+        .filter(|&s| {
+            state
+                .checkers
+                .iter()
+                .any(|c| c.owner == s && checker_corner(c.owner, c.pos) == Some(abs))
+        })
+        .collect()
+}
+
+/// Точка слота `k` фишки на угловой клетке (как в Тюрьме, но разнос — наружу от
+/// центра доски): `k == 0` — на самой клетке, дальше — наружу. Одноцветные
+/// совпадают в один кружок (рисуются со счётчиком).
+fn corner_slot_point(coord: (usize, usize), k: usize) -> (f64, f64) {
+    let c = BOARD_DIM as f64 / 2.0;
+    let p = center_pt(coord);
+    let d = (p.0 - c, p.1 - c);
+    let len = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-3);
+    let off = k as f64 * CORNER_GAP;
+    (p.0 + d.0 / len * off, p.1 + d.1 / len * off)
+}
+
+/// Бейджи-счётчики одноцветных стопок (Тюрьма и углы): точка слота и число (>1).
+/// Одноцветные фишки накладываются в один кружок, поверх которого рисуется цифра.
+fn stack_counts(state: &GameState) -> Vec<((f64, f64), usize)> {
+    let mut out = Vec::new();
+    // Тюрьмы: одноцветные пленники в каземате.
+    for pg in prison_geoms() {
+        for &side in &state.active {
+            let cnt = state
+                .checkers
+                .iter()
+                .filter(|c| {
+                    c.owner == side
+                        && matches!(c.pos, Position::Prison { .. })
+                        && checker_cell(c.owner, c.pos) == Some(pg.coord)
+                })
+                .count();
+            if cnt > 1 {
+                let (k, n) = prison_slot(state, side);
+                out.push((prison_slot_point(&pg, k, n), cnt));
+            }
+        }
+    }
+    // Углы: одноцветные фишки на одной угловой клетке.
+    for &abs in &[0usize, 18, 36, 54] {
+        let abs = PerimeterIdx::new(abs);
+        let coord = margin_coord(abs);
+        let sides = corner_sides(state, abs);
+        for (k, &side) in sides.iter().enumerate() {
+            let cnt = state
+                .checkers
+                .iter()
+                .filter(|c| c.owner == side && checker_corner(c.owner, c.pos) == Some(abs))
+                .count();
+            if cnt > 1 {
+                out.push((corner_slot_point(coord, k), cnt));
+            }
+        }
+    }
+    out
+}
+
 // Зоны снаружи доски напротив клетки входа Дома (выносы наружу, в клетках):
 // резерв ближе всего, плен дальше, бросок костей — ещё дальше.
 const RESERVE_OUT: f64 = 1.0;
@@ -762,6 +854,15 @@ fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
         let n = state.checkers.iter().filter(|c| held_by(c.pos)).count();
         let k = (0..i).filter(|&j| held_by(state.checkers[j].pos)).count();
         let (x, y) = outside_point(captor, CAPTURED_OUT, k, n);
+        return (x, y, true);
+    }
+    // Угол — единственная (кроме Тюрьмы) клетка с разными фишками: рисуем как в
+    // Тюрьме (одноцветные — в один кружок со счётчиком), но разносим цвета НАРУЖУ.
+    if let Some(abs) = checker_corner(ch.owner, ch.pos) {
+        let coord = checker_cell(ch.owner, ch.pos).expect("corner cell");
+        let sides = corner_sides(state, abs);
+        let k = sides.iter().position(|&s| s == ch.owner).unwrap_or(0);
+        let (x, y) = corner_slot_point(coord, k);
         return (x, y, true);
     }
     let (base, visible) = match ch.pos {
@@ -1376,28 +1477,9 @@ fn App() -> impl IntoView {
                             opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
                         />
                     </For>
-                    {move || {
-                        let g = game.get();
-                        let s = &g.state;
-                        let mut nodes: Vec<AnyView> = Vec::new();
-                        for pg in prison_geoms() {
-                            for &side in &s.active {
-                                let cnt = s.checkers.iter().filter(|c| {
-                                    c.owner == side
-                                        && matches!(c.pos, Position::Prison { .. })
-                                        && checker_cell(c.owner, c.pos) == Some(pg.coord)
-                                }).count();
-                                if cnt > 1 {
-                                    let (k, n) = prison_slot(s, side);
-                                    let (x, y) = prison_slot_point(&pg, k, n);
-                                    nodes.push(view! {
-                                        <text x=x y=y class="cage-count">{cnt.to_string()}</text>
-                                    }.into_any());
-                                }
-                            }
-                        }
-                        nodes
-                    }}
+                    {move || stack_counts(&game.get().state).into_iter().map(|((x, y), cnt)| view! {
+                        <text x=x y=y class="cage-count">{cnt.to_string()}</text>
+                    }).collect_view()}
                 </svg>
                 </div>
                 </div>
@@ -1455,29 +1537,10 @@ fn App() -> impl IntoView {
                     />
                 </For>
 
-                // Счётчик одноцветных пленников в каземате (>1 — цифра внутри кружка).
-                {move || {
-                    let g = game.get();
-                    let s = &g.state;
-                    let mut nodes: Vec<AnyView> = Vec::new();
-                    for pg in prison_geoms() {
-                        for &side in &s.active {
-                            let cnt = s.checkers.iter().filter(|c| {
-                                c.owner == side
-                                    && matches!(c.pos, Position::Prison { .. })
-                                    && checker_cell(c.owner, c.pos) == Some(pg.coord)
-                            }).count();
-                            if cnt > 1 {
-                                let (k, n) = prison_slot(s, side);
-                                let (x, y) = prison_slot_point(&pg, k, n);
-                                nodes.push(view! {
-                                    <text x=x y=y class="cage-count">{cnt.to_string()}</text>
-                                }.into_any());
-                            }
-                        }
-                    }
-                    nodes
-                }}
+                // Счётчики одноцветных стопок (Тюрьма и углы): цифра внутри кружка.
+                {move || stack_counts(&game.get().state).into_iter().map(|((x, y), cnt)| view! {
+                    <text x=x y=y class="cage-count">{cnt.to_string()}</text>
+                }).collect_view()}
 
                 {move || {
                     let g = game.get();
