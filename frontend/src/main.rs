@@ -135,41 +135,55 @@ fn apply_with_frames(
     roll: DiceRoll,
     humans: &[Side],
 ) -> GameState {
-    // Шагаем по клеткам. Стартовый «индекс дорожки» (0..PERIMETER — периметр,
-    // PERIMETER..+HOME — клетки Дома вглубь): обычный ход / проход сквозь Тюрьму
-    // (от клетки Тюрьмы) / продвижение вглубь Дома (от своей клетки Дома).
+    // Промежуточные клетки пути (без конечной — её даёт `apply`), чтобы фишка
+    // «шагала», а не перепрыгивала.
     let owner = state.checkers[mv.checker].owner;
-    let start = match state.checkers[mv.checker].pos {
-        Position::OnTrack { progress } => Some(progress),
-        Position::Prison { cell } if mv.kind == MoveKind::PrisonPass => {
-            Some(owner.progress_of(cell))
-        }
-        Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => {
-            Some(PERIMETER as u16 + u16::from(depth))
-        }
-        _ => None,
-    };
-    if let Some(sp) = start {
-        for step in 1..mv.die {
-            let idx = sp + u16::from(step);
-            // Промежуточная клетка: периметр или клетка Дома (а не «второй круг»).
-            let pos = if (idx as usize) < PERIMETER {
-                Position::OnTrack { progress: idx }
+    let perim = PERIMETER as u16;
+    let mids: Vec<Position> = match state.checkers[mv.checker].pos {
+        Position::OnTrack { progress } => {
+            let target = progress + u16::from(mv.die);
+            if target < perim {
+                // Обычный шаг по периметру.
+                (progress + 1..target)
+                    .map(|i| Position::OnTrack { progress: i })
+                    .collect()
             } else {
-                Position::Home {
-                    depth: (idx - PERIMETER as u16) as u8,
-                }
-            };
-            let mut mid = state.clone();
-            mid.checkers[mv.checker].pos = pos;
-            frames.push(Frame {
-                state: mid,
-                roll: Some(roll),
-                hold: HOLD_STEP_MS,
-                rolling: false,
-                note: None,
-            });
+                // Заход в Дом: периметр → клетка ВХОДА в Дом (ворота) → клетки Дома
+                // вглубь. Без «второго круга» по периметру.
+                let depth = (target - perim) as u8;
+                let mut v: Vec<Position> = (progress + 1..perim)
+                    .map(|i| Position::OnTrack { progress: i })
+                    .collect();
+                v.push(Position::OnTrack { progress: 0 }); // ворота = клетка входа
+                v.extend((0..depth).map(|d| Position::Home { depth: d }));
+                v
+            }
         }
+        // Продвижение вглубь Дома — по клеткам Дома.
+        Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => (depth + 1..depth + mv.die)
+            .map(|d| Position::Home { depth: d })
+            .collect(),
+        // Проход сквозь Тюрьму — от клетки Тюрьмы по периметру.
+        Position::Prison { cell } if mv.kind == MoveKind::PrisonPass => {
+            let sp = owner.progress_of(cell);
+            (1..mv.die)
+                .map(|s| Position::OnTrack {
+                    progress: sp + u16::from(s),
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    for pos in mids {
+        let mut mid = state.clone();
+        mid.checkers[mv.checker].pos = pos;
+        frames.push(Frame {
+            state: mid,
+            roll: Some(roll),
+            hold: HOLD_STEP_MS,
+            rolling: false,
+            note: None,
+        });
     }
     let after = apply(&state, mv);
     let note = move_note(&state, &after, mv, humans);
