@@ -25,8 +25,6 @@ const HOLD_ROLL_MS: u32 = 1100;
 const HOLD_NOMOVE_MS: u32 = 1800;
 /// Пауза на один шаг фишки по клетке, мс.
 const HOLD_STEP_MS: u32 = 760;
-/// Время, чтобы выбранная человеком часть хода «доехала» (CSS-переход), мс.
-const SLIDE_MS: u32 = 480;
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 fn seed() -> u64 {
@@ -249,14 +247,6 @@ fn fresh(dice: StoredValue<RandomDice>) -> Game {
     let mut game = None;
     dice.update_value(|d| game = Some(Game::start(vec![Side::A, Side::A.opposite()], d)));
     game.expect("game started")
-}
-
-fn after_prefix(game: &Game, prefix: &[Move]) -> GameState {
-    let mut s = game.state.clone();
-    for &m in prefix {
-        s = apply(&s, m);
-    }
-    s
 }
 
 /// Уникальные ходы текущего шага среди полных ходов с префиксом `prefix`.
@@ -765,6 +755,9 @@ fn App() -> impl IntoView {
     let turns = RwSignal::new(Vec::<Vec<Move>>::new());
     let prefix = RwSignal::new(Vec::<Move>::new());
     let sel = RwSignal::new(None::<Sel>);
+    // Состояние на начало текущего хода человека (нужно для доигровки конца хода:
+    // вынужденного ответа выкупа и передачи очереди), пока доска уже продвинута.
+    let turn_start = StoredValue::new(game.get_untracked().state.clone());
     // Идёт ли сейчас проигрывание анимации хода (блокирует ввод и авто-бросок).
     // Стартует как `true`: даём паузу-заставку перед первым ходом (см. `kickoff`).
     let animating = RwSignal::new(true);
@@ -843,6 +836,7 @@ fn App() -> impl IntoView {
             let mut r = None;
             dice.update_value(|d| r = Some(d.roll()));
             let r = r.expect("roll");
+            turn_start.set_value(g.state.clone());
             let t = legal_turns(&g.state, r);
             let no_move = t.first().is_none_or(Vec::is_empty);
             let [a, b] = r.values();
@@ -870,40 +864,29 @@ fn App() -> impl IntoView {
         }
     });
 
-    let commit = move |seq: Vec<Move>| {
+    // Доигровка конца хода человека: уже применённые ходы (`played`) дают `after`;
+    // отсюда доигрываем вынужденный ответ выкупа, передаём очередь и ходим ИИ.
+    let finish = move |mut frames: Vec<Frame>, after: GameState, played: Vec<Move>| {
         let r = roll.get_untracked().expect("roll");
-        // Последняя выбранная часть хода «доезжает» (через `disp`/CSS), а затем
-        // доигрываем конец хода: вынужденный ответ при выкупе, передача очереди и ИИ.
-        prefix.set(seq.clone());
-        sel.set(None);
-        animating.set(true);
-        spawn_local(async move {
-            TimeoutFuture::new(SLIDE_MS).await;
-            let original = game.get_untracked();
-            let posthuman = after_prefix(&original, &seq);
-            let mut g = original.clone();
-            let outcome = g.commit_turn(r, seq, |_, _, _| 0);
-            // Кадры доигровки: вынужденные ходы захватчика (от состояния после
-            // ходов человека), затем ходы ИИ до следующего хода человека.
-            let mut frames = Vec::new();
-            let mut scratch = posthuman.clone();
-            for &fm in &outcome.forced {
-                scratch = apply_with_frames(&mut frames, scratch, fm, r, human);
-            }
-            ai_frames(&mut g, dice, human, &mut frames);
-            frames.push(Frame {
-                state: g.state.clone(),
-                roll: None,
-                hold: HOLD_STEP_MS,
-                rolling: false,
-                note: end_note(&g, human),
-            });
-            // Бесшовно фиксируем позицию после ходов человека и доигрываем остальное.
-            game.set(Game::new(posthuman));
-            prefix.set(Vec::new());
-            turns.set(Vec::new());
-            play(frames);
+        let mut fg = Game::new(turn_start.get_value());
+        let outcome = fg.commit_turn(r, played, |_, _, _| 0);
+        let mut scratch = after;
+        for &fm in &outcome.forced {
+            scratch = apply_with_frames(&mut frames, scratch, fm, r, human);
+        }
+        let _ = scratch;
+        ai_frames(&mut fg, dice, human, &mut frames);
+        frames.push(Frame {
+            state: fg.state.clone(),
+            roll: None,
+            hold: HOLD_STEP_MS,
+            rolling: false,
+            note: end_note(&fg, human),
         });
+        turns.set(Vec::new());
+        prefix.set(Vec::new());
+        sel.set(None);
+        play(frames);
     };
 
     let click = move |target: Sel| {
@@ -915,8 +898,9 @@ fn App() -> impl IntoView {
         {
             return;
         }
+        let r = roll.get_untracked().expect("roll");
+        let ps = g.state.clone(); // доска уже продвинута применёнными частями хода
         let pre = prefix.get_untracked();
-        let ps = after_prefix(&g, &pre);
         let cands = step_opts(&turns.get_untracked(), &pre);
         match sel.get_untracked() {
             None => {
@@ -933,19 +917,23 @@ fn App() -> impl IntoView {
                     let mut np = pre.clone();
                     np.push(m);
                     let total = turns.get_untracked().first().map_or(0, Vec::len);
+                    // Выбранную часть хода проигрываем сразу — пошагово, по клеткам.
+                    let mut frames = Vec::new();
+                    let after = apply_with_frames(&mut frames, ps.clone(), m, r, human);
                     if np.len() >= total {
-                        commit(np);
+                        finish(frames, after, np);
                     } else {
-                        // Сохраняем фокус на той же фишке, если ею можно ходить
-                        // дальше — чтобы не выбирать её повторно для второго хода.
-                        let ps2 = after_prefix(&g, &np);
-                        let next_src =
-                            sel_of(ps2.checkers[m.checker].owner, ps2.checkers[m.checker].pos);
+                        // Сохраняем фокус на той же фишке, если ею можно ходить дальше.
+                        let next_src = sel_of(
+                            after.checkers[m.checker].owner,
+                            after.checkers[m.checker].pos,
+                        );
                         let keep = step_opts(&turns.get_untracked(), &np)
                             .iter()
-                            .any(|&mv| move_source(&ps2, mv) == next_src);
+                            .any(|&mv| move_source(&after, mv) == next_src);
                         prefix.set(np);
                         sel.set(keep.then_some(next_src));
+                        play(frames);
                     }
                 } else if cands.iter().any(|&m| move_source(&ps, m) == target) {
                     sel.set(Some(target));
@@ -979,10 +967,6 @@ fn App() -> impl IntoView {
     // Старт партии: заставка-пауза, потом первый ход.
     kickoff();
 
-    // Отображаемое состояние = после применённого префикса хода человека: выбранные
-    // части хода сразу «доезжают» (фишки сдвигаются), а не висят пустыми кружками.
-    let disp = move || after_prefix(&game.get(), &prefix.get());
-
     view! {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
@@ -998,7 +982,9 @@ fn App() -> impl IntoView {
                         && g.state.to_move == human
                         && turns.get().first().is_none_or(Vec::is_empty);
                     no_moves.then(|| view! {
-                        <button on:click=move |_| commit(Vec::new())>"Нет ходов — пропустить"</button>
+                        <button on:click=move |_| finish(Vec::new(), game.get_untracked().state.clone(), Vec::new())>
+                            "Нет ходов — пропустить"
+                        </button>
                     })
                 }}
             </div>
@@ -1016,16 +1002,16 @@ fn App() -> impl IntoView {
 
                 <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
                     <circle
-                        r=move || if matches!(disp().checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
-                        class=move || if matches!(disp().checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) {
+                        r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
+                        class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) {
                             "piece captive"
                         } else {
                             "piece"
                         }
-                        fill=move || side_color(disp().checkers[i].owner)
-                        cx=move || checker_xy(&disp(), i).0
-                        cy=move || checker_xy(&disp(), i).1
-                        opacity=move || if checker_xy(&disp(), i).2 { 1.0 } else { 0.0 }
+                        fill=move || side_color(game.get().state.checkers[i].owner)
+                        cx=move || checker_xy(&game.get().state, i).0
+                        cy=move || checker_xy(&game.get().state, i).1
+                        opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
                     />
                 </For>
 
@@ -1056,8 +1042,9 @@ fn App() -> impl IntoView {
                 {move || {
                     let g = game.get();
                     let pre = prefix.get();
-                    let ps = after_prefix(&g, &pre);
-                    let active = roll.get().is_some()
+                    let ps = g.state.clone(); // доска уже продвинута применёнными частями
+                    let active = !animating.get()
+                        && roll.get().is_some()
                         && g.winner().is_none()
                         && g.state.to_move == human;
                     let cands = if active { step_opts(&turns.get(), &pre) } else { Vec::new() };
