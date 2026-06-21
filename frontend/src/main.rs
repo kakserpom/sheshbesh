@@ -214,17 +214,60 @@ fn commit_frames<F>(
     let outcome = game.commit_turn(roll, played, forced);
     // Анимируем в порядке применения (`applied`): ход игрока, а сразу за выкупом —
     // обязательный ответ захватчика (его фишка — не текущей ходящей стороны).
+    let applied = &outcome.applied;
     let mut scratch = pre;
-    for mv in &outcome.applied {
+    let mut i = 0;
+    while i < applied.len() {
+        let mv = applied[i];
+        // Вход в Тюрьму, за которым этим же ходом сразу следует проход дальше, —
+        // это не заточение, а проход насквозь: шагаем сквозь клетку Тюрьмы, не
+        // показывая каземат и не объявляя «угодила в Тюрьму».
+        let through = mv.kind == MoveKind::EnterPrison
+            && applied
+                .get(i + 1)
+                .is_some_and(|n| n.kind == MoveKind::PrisonPass && n.checker == mv.checker);
+        if through {
+            scratch = step_through_prison(frames, scratch, mv, roll);
+            i += 1;
+            continue;
+        }
         let forced_resp = scratch.checkers[mv.checker].owner != side;
-        scratch = apply_with_frames(frames, scratch, *mv, roll, humans);
+        scratch = apply_with_frames(frames, scratch, mv, roll, humans);
         if forced_resp && let Some(last) = frames.last_mut() {
             last.note = Some(format!(
                 "{}: обязательный ход на 6 после выкупа.",
                 side_name(scratch.checkers[mv.checker].owner, humans)
             ));
         }
+        i += 1;
     }
+}
+
+/// Анимация шага в Тюрьму, когда за ним сразу следует проход дальше: фишка идёт
+/// сквозь клетку Тюрьмы как сквозь обычную (без каземата и реплики), но логически
+/// возвращаем настоящее состояние (Тюрьма) — для следующего хода `PrisonPass`.
+fn step_through_prison(
+    frames: &mut Vec<Frame>,
+    state: GameState,
+    mv: Move,
+    roll: DiceRoll,
+) -> GameState {
+    if let Position::OnTrack { progress: sp } = state.checkers[mv.checker].pos {
+        for step in 1..=mv.die {
+            let mut mid = state.clone();
+            mid.checkers[mv.checker].pos = Position::OnTrack {
+                progress: sp + u16::from(step),
+            };
+            frames.push(Frame {
+                state: mid,
+                roll: Some(roll),
+                hold: HOLD_STEP_MS,
+                rolling: false,
+                note: None,
+            });
+        }
+    }
+    apply(&state, mv)
 }
 
 fn fresh(dice: StoredValue<RandomDice>, active: Vec<Side>) -> Game {
