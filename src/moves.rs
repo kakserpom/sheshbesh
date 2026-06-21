@@ -66,13 +66,18 @@ struct Resolved {
     kind: MoveKind,
 }
 
-/// Индексы фишек соперников, стоящих на клетке периметра `cell`.
+/// Индексы фишек соперников, стоящих на клетке периметра `cell`. Союзники (в
+/// командном режиме) не считаются соперниками — их фишки не едят.
 fn enemies_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> Vec<usize> {
     state
         .checkers
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.owner != owner && c.pos.perimeter_cell(c.owner) == Some(cell))
+        .filter(|(_, c)| {
+            c.owner != owner
+                && !state.are_allied(owner, c.owner)
+                && c.pos.perimeter_cell(c.owner) == Some(cell)
+        })
         .map(|(i, _)| i)
         .collect()
 }
@@ -759,6 +764,37 @@ mod tests {
         assert_eq!(after.checkers[0].pos, Position::OnTrack { progress: 3 });
         assert_eq!(
             after.checkers[1].pos,
+            Position::Captured { captor: Side::A }
+        );
+    }
+
+    #[test]
+    fn allies_do_not_capture_each_other() {
+        // Командный режим 2×2: A и C — союзники. A приходит на клетку с фишкой C —
+        // съедания нет, обе фишки сосуществуют.
+        let mut s = GameState::new(Side::ALL.to_vec(), Side::A).with_teams(true);
+        s.checkers.clear();
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress: 0 },
+        });
+        let target = PerimeterIdx::new(12);
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::OnTrack {
+                progress: Side::C.progress_of(target),
+            },
+        });
+        let mv = moves_for_die(&s, 3);
+        let after = apply(&s, mv[0]);
+        assert_eq!(after.checkers[0].pos, Position::OnTrack { progress: 3 });
+        // Фишка союзника C осталась на месте (не пленена).
+        assert!(matches!(after.checkers[1].pos, Position::OnTrack { .. }));
+        // А вне командного режима тот же расклад — съедание (контроль).
+        let plain = s.with_teams(false);
+        let after2 = apply(&plain, moves_for_die(&plain, 3)[0]);
+        assert_eq!(
+            after2.checkers[1].pos,
             Position::Captured { captor: Side::A }
         );
     }

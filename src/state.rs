@@ -91,6 +91,9 @@ pub struct GameState {
     pub checkers: Vec<Checker>,
     /// Чей ход.
     pub to_move: Side,
+    /// Командный режим 2×2 (только при 4 активных сторонах): противоположные
+    /// стороны — союзники (A+C против B+D). Союзники **не едят** фишки друг друга.
+    pub teams: bool,
 }
 
 impl GameState {
@@ -120,7 +123,21 @@ impl GameState {
             active,
             checkers,
             to_move: first,
+            teams: false,
         }
+    }
+
+    /// Включает командный режим 2×2 (см. `teams`). Builder-стиль для краткости.
+    #[must_use]
+    pub fn with_teams(mut self, teams: bool) -> GameState {
+        self.teams = teams;
+        self
+    }
+
+    /// Союзники ли стороны `a` и `b`: только в командном режиме при 4 активных
+    /// сторонах, для **противоположных** сторон (A+C, B+D). Сторона себе не союзник.
+    pub fn are_allied(&self, a: Side, b: Side) -> bool {
+        self.teams && self.active.len() == 4 && a != b && a.index() % 2 == b.index() % 2
     }
 
     /// Фишки, стоящие на указанной клетке периметра (на дорожке или в Тюрьме).

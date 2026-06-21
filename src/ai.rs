@@ -131,9 +131,14 @@ fn threats_against(state: &GameState, victim: Side, attacker: Side) -> i32 {
     total
 }
 
-/// Стороны-соперники для `side`.
+/// Стороны-соперники для `side` (союзники в командном режиме исключены — они не
+/// едят друг друга, поэтому не создают угроз и не оцениваются как враги).
 fn opponents_of(state: &GameState, side: Side) -> impl Iterator<Item = Side> + '_ {
-    state.active.iter().copied().filter(move |&s| s != side)
+    state
+        .active
+        .iter()
+        .copied()
+        .filter(move |&s| s != side && !state.are_allied(side, s))
 }
 
 /// Риск быть съеденным: суммарная угроза моим фишкам со стороны всех соперников.

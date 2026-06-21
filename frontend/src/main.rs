@@ -360,10 +360,12 @@ fn step_through_prison(
     apply(&state, mv)
 }
 
-fn fresh(dice: StoredValue<RandomDice>, active: Vec<Side>) -> Game {
+fn fresh(dice: StoredValue<RandomDice>, active: Vec<Side>, teams: bool) -> Game {
     let mut game = None;
     dice.update_value(|d| game = Some(Game::start(active.clone(), d)));
-    game.expect("game started")
+    let mut game = game.expect("game started");
+    game.state.teams = teams && game.state.active.len() == 4;
+    game
 }
 
 /// Активные стороны для `n` игроков: 2 — противоположные, 3 — A/B/C, 4 — все.
@@ -883,7 +885,7 @@ fn App() -> impl IntoView {
     let finished = RwSignal::new(Vec::<Side>::new());
     // Пауза: блокирует автоход ИИ и авто-бросок; анимация замирает между кадрами.
     let paused = RwSignal::new(false);
-    let game = RwSignal::new(fresh(dice, active_for(2)));
+    let game = RwSignal::new(fresh(dice, active_for(2), false));
     let roll = RwSignal::new(None::<DiceRoll>);
     let turns = RwSignal::new(Vec::<Vec<Move>>::new());
     let prefix = RwSignal::new(Vec::<Move>::new());
@@ -1131,7 +1133,7 @@ fn App() -> impl IntoView {
         prefix.set(Vec::new());
         sel.set(None);
         finished.set(Vec::new());
-        let g = fresh(dice, active);
+        let g = fresh(dice, active, teams.get_untracked());
         let hs = humans.get_untracked();
         herald.set(format!(
             "Игра началась! Ходит {}.",
