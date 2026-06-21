@@ -759,57 +759,74 @@ fn moon_slot_point(side: Side, field: MoonField, k: usize) -> (f64, f64) {
 /// Все три поля Луны (по порядку прохождения).
 const MOON_FIELDS: [MoonField; 3] = [MoonField::One, MoonField::Three, MoonField::Six];
 
-/// Бейджи-счётчики одноцветных стопок (Тюрьма и углы): точка слота и число (>1).
-/// Одноцветные фишки накладываются в один кружок, поверх которого рисуется цифра.
-fn stack_counts(state: &GameState) -> Vec<((f64, f64), usize)> {
+/// Бейдж-счётчик одноцветной стопки: стабильный ключ (индекс первой фишки группы —
+/// чтобы цифра анимировалась вместе с кружком), точка слота и число.
+#[derive(Clone, Copy)]
+struct Badge {
+    key: usize,
+    pt: (f64, f64),
+    count: usize,
+}
+
+/// Первый индекс и число фишек, удовлетворяющих предикату.
+fn first_and_count(state: &GameState, pred: impl Fn(&Checker) -> bool) -> (Option<usize>, usize) {
+    let mut first = None;
+    let mut count = 0;
+    for (i, c) in state.checkers.iter().enumerate() {
+        if pred(c) {
+            count += 1;
+            first.get_or_insert(i);
+        }
+    }
+    (first, count)
+}
+
+/// Бейджи-счётчики одноцветных стопок (Тюрьма, углы, Луна): одноцветные фишки
+/// накладываются в один кружок, поверх которого рисуется цифра (>1). Ключ бейджа —
+/// индекс первой фишки группы, чтобы при анимации цифра «ехала» вместе с кружком,
+/// а не телепортировалась (keyed `<For>` + CSS-переход `transform`).
+fn stack_counts(state: &GameState) -> Vec<Badge> {
     let mut out = Vec::new();
+    let mut push = |first: Option<usize>, pt, count| {
+        if count > 1 {
+            out.push(Badge {
+                key: first.expect("группа непуста"),
+                pt,
+                count,
+            });
+        }
+    };
     // Тюрьмы: одноцветные пленники в каземате.
     for pg in prison_geoms() {
         for &side in &state.active {
-            let cnt = state
-                .checkers
-                .iter()
-                .filter(|c| {
-                    c.owner == side
-                        && matches!(c.pos, Position::Prison { .. })
-                        && checker_cell(c.owner, c.pos) == Some(pg.coord)
-                })
-                .count();
-            if cnt > 1 {
-                let (k, n) = prison_slot(state, side);
-                out.push((prison_slot_point(&pg, k, n), cnt));
-            }
+            let (first, count) = first_and_count(state, |c| {
+                c.owner == side
+                    && matches!(c.pos, Position::Prison { .. })
+                    && checker_cell(c.owner, c.pos) == Some(pg.coord)
+            });
+            let (k, n) = prison_slot(state, side);
+            push(first, prison_slot_point(&pg, k, n), count);
         }
     }
     // Углы: одноцветные фишки на одной угловой клетке.
     for &abs in &[0usize, 18, 36, 54] {
         let abs = PerimeterIdx::new(abs);
         let coord = margin_coord(abs);
-        let sides = corner_sides(state, abs);
-        for (k, &side) in sides.iter().enumerate() {
-            let cnt = state
-                .checkers
-                .iter()
-                .filter(|c| c.owner == side && checker_corner(c.owner, c.pos) == Some(abs))
-                .count();
-            if cnt > 1 {
-                out.push((corner_slot_point(coord, k), cnt));
-            }
+        for (k, &side) in corner_sides(state, abs).iter().enumerate() {
+            let (first, count) = first_and_count(state, |c| {
+                c.owner == side && checker_corner(c.owner, c.pos) == Some(abs)
+            });
+            push(first, corner_slot_point(coord, k), count);
         }
     }
     // Поля Луны: одноцветные фишки на одном поле.
     for side in Side::ALL {
         for field in MOON_FIELDS {
-            let sides = moon_sides(state, side, field);
-            for (k, &owner) in sides.iter().enumerate() {
-                let cnt = state
-                    .checkers
-                    .iter()
-                    .filter(|c| c.owner == owner && c.pos == Position::Moon { side, field })
-                    .count();
-                if cnt > 1 {
-                    out.push((moon_slot_point(side, field, k), cnt));
-                }
+            for (k, &owner) in moon_sides(state, side, field).iter().enumerate() {
+                let (first, count) = first_and_count(state, |c| {
+                    c.owner == owner && c.pos == Position::Moon { side, field }
+                });
+                push(first, moon_slot_point(side, field, k), count);
             }
         }
     }
@@ -1528,9 +1545,12 @@ fn App() -> impl IntoView {
                             opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
                         />
                     </For>
-                    {move || stack_counts(&game.get().state).into_iter().map(|((x, y), cnt)| view! {
-                        <text x=x y=y class="cage-count">{cnt.to_string()}</text>
-                    }).collect_view()}
+                    <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
+                        <text class="cage-count"
+                            style=format!("transform:translate({:.3}px,{:.3}px)", b.pt.0, b.pt.1)>
+                            {b.count.to_string()}
+                        </text>
+                    </For>
                 </svg>
                 </div>
                 </div>
@@ -1588,10 +1608,14 @@ fn App() -> impl IntoView {
                     />
                 </For>
 
-                // Счётчики одноцветных стопок (Тюрьма и углы): цифра внутри кружка.
-                {move || stack_counts(&game.get().state).into_iter().map(|((x, y), cnt)| view! {
-                    <text x=x y=y class="cage-count">{cnt.to_string()}</text>
-                }).collect_view()}
+                // Счётчики одноцветных стопок (Тюрьма, углы, Луна) — keyed, чтобы
+                // цифра ехала вместе с кружком (CSS-переход `transform`), а не прыгала.
+                <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
+                    <text class="cage-count"
+                        style=format!("transform:translate({:.3}px,{:.3}px)", b.pt.0, b.pt.1)>
+                        {b.count.to_string()}
+                    </text>
+                </For>
 
                 {move || {
                     let g = game.get();
