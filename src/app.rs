@@ -260,6 +260,7 @@ fn kind_label(kind: MoveKind) -> &'static str {
         MoveKind::PrisonRelease => "из Тюрьмы",
         MoveKind::PrisonPass => "мимо Тюрьмы",
         MoveKind::EnterHome => "в Дом",
+        MoveKind::HomeAdvance => "вглубь Дома",
         MoveKind::Ransom => "выкуп",
     }
 }

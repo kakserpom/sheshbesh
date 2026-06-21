@@ -40,6 +40,9 @@ pub enum MoveKind {
     PrisonPass,
     /// Заход в Дом (ровно, по 1 фишке в клетку).
     EnterHome,
+    /// Продвижение вглубь Дома (фишка уже в Доме идёт на более глубокую клетку,
+    /// освобождая место; перепрыгивать занятые клетки нельзя).
+    HomeAdvance,
     /// Выкуп своей пленной фишки (по «6»): она уходит в резерв. Влечёт
     /// обязательный ответный ход захватчика на 6 (обрабатывается в туровом цикле).
     Ransom,
@@ -174,11 +177,17 @@ fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
                     kind,
                 })
             } else {
-                // Заход в Дом: ровно, по 1 фишке в клетку, без перебора. Клетки Дома —
-                // отдельные ячейки (не «коридор»), поэтому правило прохода к ним не
-                // применяется; важен лишь свободный путь по периметру (проверен выше).
+                // Заход в Дом: ровно по броску, по 1 фишке в клетку, без перебора
+                // (target за пределами Дома → нелегально, и второго круга нет).
+                // Дом — «коридор» вглубь: **нельзя перепрыгивать** занятые клетки
+                // Дома, поэтому все клетки от входа (глубина 0) до целевой должны
+                // быть свободны.
                 let depth = (target as usize) - PERIMETER;
-                if depth < HOME_DEPTH && !home_depth_taken(state, owner, depth as u8) {
+                let home_path_clear = (0..depth).all(|d| !home_depth_taken(state, owner, d as u8));
+                if depth < HOME_DEPTH
+                    && !home_depth_taken(state, owner, depth as u8)
+                    && home_path_clear
+                {
                     Some(Resolved {
                         new_pos: Position::Home { depth: depth as u8 },
                         captures: vec![],
@@ -234,7 +243,23 @@ fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
                 kind: MoveKind::Ransom,
             })
         }
-        Position::Home { .. } => None,
+        Position::Home { depth } => {
+            // Фишка в Доме может идти ГЛУБЖЕ (освобождая мелкие клетки для входа
+            // других), но не за пределы Дома (перебор) и не перепрыгивая занятые.
+            let nd = depth as u16 + die as u16;
+            if nd >= HOME_DEPTH as u16 {
+                return None;
+            }
+            let new_depth = nd as u8;
+            if (depth + 1..=new_depth).any(|d| home_depth_taken(state, owner, d)) {
+                return None;
+            }
+            Some(Resolved {
+                new_pos: Position::Home { depth: new_depth },
+                captures: vec![],
+                kind: MoveKind::HomeAdvance,
+            })
+        }
     }
 }
 
@@ -638,7 +663,8 @@ mod tests {
         let s = state_a(&[Position::Reserve, Position::OnTrack { progress: 0 }]);
         let mv = moves_for_die(&s, 6);
         assert!(
-            !mv.iter().any(|m| m.checker == 0 && m.kind == MoveKind::Enter),
+            !mv.iter()
+                .any(|m| m.checker == 0 && m.kind == MoveKind::Enter),
             "нельзя вводить на свою фишку"
         );
     }
@@ -670,6 +696,45 @@ mod tests {
             after.checkers[1].pos,
             Position::Captured { captor: Side::A }
         ));
+    }
+
+    #[test]
+    fn home_entry_no_jump_over_occupied() {
+        // Своя фишка в Доме на глубине 0 → заход на глубину 2 (через занятую 0) нельзя.
+        let s = state_a(&[
+            Position::OnTrack { progress: 70 },
+            Position::Home { depth: 0 },
+        ]);
+        assert!(
+            !moves_for_die(&s, 4)
+                .iter()
+                .any(|m| m.checker == 0 && m.kind == MoveKind::EnterHome),
+            "нельзя перепрыгивать занятую клетку Дома"
+        );
+        // Если путь по Дому свободен — заход на глубину 2 разрешён.
+        let s2 = state_a(&[Position::OnTrack { progress: 70 }]);
+        assert!(
+            moves_for_die(&s2, 4)
+                .iter()
+                .any(|m| m.checker == 0 && m.kind == MoveKind::EnterHome)
+        );
+    }
+
+    #[test]
+    fn home_advance_deeper_and_no_jump() {
+        // Фишка в Доме на глубине 0 может идти глубже (освобождая вход).
+        let s = state_a(&[Position::Home { depth: 0 }]);
+        let after = apply(&s, moves_for_die(&s, 2)[0]);
+        assert_eq!(after.checkers[0].pos, Position::Home { depth: 2 });
+        // Но не за пределы Дома (перебор) и не перепрыгивая занятую клетку.
+        let s2 = state_a(&[Position::Home { depth: 0 }, Position::Home { depth: 1 }]);
+        assert!(
+            !moves_for_die(&s2, 3)
+                .iter()
+                .any(|m| m.checker == 0 && m.kind == MoveKind::HomeAdvance),
+            "нельзя перепрыгнуть занятую клетку Дома"
+        );
+        assert!(moves_for_die(&s, 5).iter().all(|m| m.checker != 0)); // depth 0+5 > 3 — перебор
     }
 
     #[test]

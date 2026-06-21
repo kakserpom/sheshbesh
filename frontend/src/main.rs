@@ -98,6 +98,7 @@ fn move_note(before: &GameState, after: &GameState, mv: Move, humans: &[Side]) -
         MoveKind::EnterPrison => "фишка угодила в Тюрьму!",
         MoveKind::PrisonRelease => "выход из Тюрьмы.",
         MoveKind::EnterHome => "заход фишки в Дом!",
+        MoveKind::HomeAdvance => "фишка идёт вглубь Дома.",
         MoveKind::PrisonPass => "фишка минует Тюрьму.",
         MoveKind::Step | MoveKind::Ransom => return None,
     };
@@ -134,21 +135,33 @@ fn apply_with_frames(
     roll: DiceRoll,
     humans: &[Side],
 ) -> GameState {
-    // Шагаем по клеткам, если фишка идёт по дорожке — обычным ходом или проходя
-    // сквозь Тюрьму (тогда стартовый прогресс берём от клетки Тюрьмы).
+    // Шагаем по клеткам. Стартовый «индекс дорожки» (0..PERIMETER — периметр,
+    // PERIMETER..+HOME — клетки Дома вглубь): обычный ход / проход сквозь Тюрьму
+    // (от клетки Тюрьмы) / продвижение вглубь Дома (от своей клетки Дома).
+    let owner = state.checkers[mv.checker].owner;
     let start = match state.checkers[mv.checker].pos {
         Position::OnTrack { progress } => Some(progress),
         Position::Prison { cell } if mv.kind == MoveKind::PrisonPass => {
-            Some(state.checkers[mv.checker].owner.progress_of(cell))
+            Some(owner.progress_of(cell))
+        }
+        Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => {
+            Some(PERIMETER as u16 + u16::from(depth))
         }
         _ => None,
     };
     if let Some(sp) = start {
         for step in 1..mv.die {
-            let mut mid = state.clone();
-            mid.checkers[mv.checker].pos = Position::OnTrack {
-                progress: sp + u16::from(step),
+            let idx = sp + u16::from(step);
+            // Промежуточная клетка: периметр или клетка Дома (а не «второй круг»).
+            let pos = if (idx as usize) < PERIMETER {
+                Position::OnTrack { progress: idx }
+            } else {
+                Position::Home {
+                    depth: (idx - PERIMETER as u16) as u8,
+                }
             };
+            let mut mid = state.clone();
+            mid.checkers[mv.checker].pos = pos;
             frames.push(Frame {
                 state: mid,
                 roll: Some(roll),
