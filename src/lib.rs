@@ -7,6 +7,7 @@
 pub mod ai;
 pub mod board;
 pub mod dice;
+pub mod encode;
 pub mod eval;
 pub mod moves;
 pub mod render;
@@ -24,6 +25,7 @@ pub mod tui;
 pub use ai::Heuristic;
 pub use board::{CellKind, PerimeterIdx, Side};
 pub use dice::{DiceRoll, Die};
+pub use encode::{FEATURES, encode, encode_into, rotate_state};
 pub use eval::{match_winrate, play_game_2p};
 pub use moves::{Move, MoveKind, apply, legal_moves, legal_turns, max_pips};
 pub use render::{
