@@ -118,12 +118,13 @@ fn roll_note(side: Side, human: Side, roll: DiceRoll, no_move: bool) -> String {
     s
 }
 
-/// Реплика в конце серии кадров: победа или ожидание хода человека.
-fn end_note(game: &Game, human: Side) -> String {
+/// Реплика в конце серии кадров: только победа. Для перехода к ходу человека реплики
+/// нет (`None`) — её сразу же сменит «Ваш ход — бросаем кости…».
+fn end_note(game: &Game, human: Side) -> Option<String> {
     match game.winner() {
-        Some(w) if w == human => "Вы победили! 🎉".to_string(),
-        Some(_) => "Соперник победил. Игра окончена.".to_string(),
-        None => "Ваш ход.".to_string(),
+        Some(w) if w == human => Some("Вы победили! 🎉".to_string()),
+        Some(_) => Some("Соперник победил. Игра окончена.".to_string()),
+        None => None,
     }
 }
 
@@ -814,7 +815,7 @@ fn App() -> impl IntoView {
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
-            note: Some(end_note(&g, human)),
+            note: end_note(&g, human),
         });
         play(frames);
     };
@@ -895,7 +896,7 @@ fn App() -> impl IntoView {
                 roll: None,
                 hold: HOLD_STEP_MS,
                 rolling: false,
-                note: Some(end_note(&g, human)),
+                note: end_note(&g, human),
             });
             // Бесшовно фиксируем позицию после ходов человека и доигрываем остальное.
             game.set(Game::new(posthuman));
