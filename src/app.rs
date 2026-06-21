@@ -685,12 +685,13 @@ mod tests {
     fn describe_turn_summarises_moves() {
         use crate::dice::{DiceRoll, Die};
         let state = GameState::new(vec![Side::A, Side::C], Side::A);
-        // Бросок (6,6): ввод двух фишек — оба хода по «6».
+        // Бросок (6,6): первый «6» вводит фишку, второй ею же ходит (на свою клетку
+        // ввода вторую не поставить) — в ходе есть ввод.
         let roll = DiceRoll::new(Die::new(6).unwrap(), Die::new(6).unwrap());
         let turns = legal_turns(&state, roll);
         let with_enter = turns
             .iter()
-            .find(|t| t.iter().all(|m| m.kind == MoveKind::Enter) && !t.is_empty())
+            .find(|t| t.iter().any(|m| m.kind == MoveKind::Enter))
             .expect("должен быть ход с вводом");
         let text = describe_turn(with_enter);
         assert!(text.contains("очк."));

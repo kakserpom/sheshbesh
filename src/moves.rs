@@ -117,7 +117,17 @@ fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
             if die != 6 {
                 return None;
             }
-            let captures = enemies_on(state, owner, owner.entry());
+            let entry = owner.entry();
+            // Нельзя ввести фишку, если на клетке ввода уже стоит СВОЯ фишка
+            // (две свои на точке ввода не ставятся). Чужую — можно съесть, вводя свою.
+            let own_on_entry = state
+                .checkers
+                .iter()
+                .any(|c| c.owner == owner && c.pos.perimeter_cell(owner) == Some(entry));
+            if own_on_entry {
+                return None;
+            }
+            let captures = enemies_on(state, owner, entry);
             Some(Resolved {
                 new_pos: Position::OnTrack { progress: 0 },
                 captures,
@@ -620,6 +630,46 @@ mod tests {
             finals.iter().any(|p| !matches!(p, Position::Prison { .. })
                 && *p != Position::OnTrack { progress: 13 })
         );
+    }
+
+    #[test]
+    fn cannot_enter_onto_own_checker() {
+        // Своя фишка стоит на клетке ввода (progress 0) — вторую из резерва не ввести.
+        let s = state_a(&[Position::Reserve, Position::OnTrack { progress: 0 }]);
+        let mv = moves_for_die(&s, 6);
+        assert!(
+            !mv.iter().any(|m| m.checker == 0 && m.kind == MoveKind::Enter),
+            "нельзя вводить на свою фишку"
+        );
+    }
+
+    #[test]
+    fn enter_eats_enemy_on_entry() {
+        // Чужая фишка на клетке ввода A → ввод разрешён и съедает её.
+        let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+        s.checkers.clear();
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::Reserve,
+        });
+        let entry = Side::A.entry();
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::OnTrack {
+                progress: Side::C.progress_of(entry),
+            },
+        });
+        let mv = moves_for_die(&s, 6);
+        let enter = *mv
+            .iter()
+            .find(|m| m.checker == 0 && m.kind == MoveKind::Enter)
+            .expect("ввод (со съеданием) разрешён");
+        let after = apply(&s, enter);
+        assert_eq!(after.checkers[0].pos, Position::OnTrack { progress: 0 });
+        assert!(matches!(
+            after.checkers[1].pos,
+            Position::Captured { captor: Side::A }
+        ));
     }
 
     #[test]
