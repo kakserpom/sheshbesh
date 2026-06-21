@@ -744,9 +744,16 @@ fn moon_sides(state: &GameState, side: Side, field: MoonField) -> Vec<Side> {
         .collect()
 }
 
-/// Точка слота `k` фишки на поле Луны: как на углу — разнос наружу от центра доски.
+/// Точка слота `k` фишки на поле Луны: разнос как на углу. Поля `1`/`6` (у концов
+/// дуги) разносятся наружу от центра, а поле `3` (на вершине дуги, у центра) — к
+/// центру: иначе стопка налезала бы на сторону Дома.
 fn moon_slot_point(side: Side, field: MoonField, k: usize) -> (f64, f64) {
-    outward_slot(moon_field_point(side, field), k, MOON_GAP)
+    let gap = if field == MoonField::Three {
+        -MOON_GAP
+    } else {
+        MOON_GAP
+    };
+    outward_slot(moon_field_point(side, field), k, gap)
 }
 
 /// Все три поля Луны (по порядку прохождения).
