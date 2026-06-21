@@ -24,6 +24,38 @@ fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
+/// Афтерстейты стороны `p` (позиции, которые она создала своим ходом) по порядку.
+fn afterstates_of(traj: &[(GameState, Side)], p: Side) -> Vec<&GameState> {
+    traj.iter()
+        .filter(|(_, m)| *m == p)
+        .map(|(s, _)| s)
+        .collect()
+}
+
+/// Обучаемая методом TD(λ) функция ценности.
+pub trait TdModel: Value {
+    /// TD(λ)-обновление по траектории одной партии (афтерстейты + их авторы) и
+    /// победителю: для каждой стороны бутстрап к её следующему афтерстейту, в конце —
+    /// терминал `z = 1` победителю / `0` проигравшему (γ = 1).
+    fn td_update(&mut self, traj: &[(GameState, Side)], winner: Side, alpha: f32, lambda: f32);
+}
+
+/// Мини-ГПСЧ `SplitMix64` для инициализации весов (детерминирован от зерна).
+struct SplitMix(u64);
+impl SplitMix {
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    /// Случайное число в `[-1, 1)`.
+    fn unit(&mut self) -> f32 {
+        (self.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0
+    }
+}
+
 /// Линейная функция ценности над признаками `encode` (сигмоида на выходе).
 #[derive(Clone)]
 pub struct LinearValue {
@@ -75,15 +107,21 @@ impl LinearValue {
         }
         s
     }
+}
 
-    /// TD(λ)-обновление по траектории одной партии (афтерстейты + их авторы).
+impl Value for LinearValue {
+    fn value(&self, state: &GameState, side: Side) -> f32 {
+        let mut buf = [0.0f32; FEATURES];
+        encode_into(state, side, &mut buf);
+        sigmoid(self.raw(&buf))
+    }
+}
+
+impl TdModel for LinearValue {
+    #[allow(clippy::needless_range_loop)] // индексация по признакам нагляднее
     fn td_update(&mut self, traj: &[(GameState, Side)], winner: Side, alpha: f32, lambda: f32) {
         for p in [Side::A, Side::C] {
-            let states: Vec<&GameState> = traj
-                .iter()
-                .filter(|(_, m)| *m == p)
-                .map(|(s, _)| s)
-                .collect();
+            let states = afterstates_of(traj, p);
             if states.is_empty() {
                 continue;
             }
@@ -112,11 +150,115 @@ impl LinearValue {
     }
 }
 
-impl Value for LinearValue {
+/// Однослойный перцептрон (MLP) как функция ценности: `sigmoid(b2 + w2·h)`, где
+/// `h = sigmoid(b1 + w1·φ)`. В отличие от линейной модели улавливает нелинейные
+/// взаимодействия признаков (контакт/угрозы — произведения занятостей клеток).
+#[derive(Clone)]
+pub struct MlpValue {
+    hidden: usize,
+    w1: Vec<f32>, // hidden × FEATURES, построчно: [j*FEATURES + k]
+    b1: Vec<f32>, // hidden
+    w2: Vec<f32>, // hidden
+    b2: f32,
+}
+
+impl MlpValue {
+    /// Случайная инициализация `hidden` скрытых нейронов (масштаб ~`1/sqrt(fan_in)`).
+    pub fn new(hidden: usize, seed: u64) -> MlpValue {
+        let mut rng = SplitMix(seed ^ 0x1234_5678_9ABC_DEF0);
+        let r1 = 1.0 / (FEATURES as f32).sqrt();
+        let r2 = 1.0 / (hidden as f32).sqrt();
+        MlpValue {
+            hidden,
+            w1: (0..hidden * FEATURES).map(|_| rng.unit() * r1).collect(),
+            b1: vec![0.0; hidden],
+            w2: (0..hidden).map(|_| rng.unit() * r2).collect(),
+            b2: 0.0,
+        }
+    }
+
+    /// Прямой проход: заполняет активации `h` (длина `hidden`) и возвращает ценность.
+    #[allow(clippy::needless_range_loop)]
+    fn forward(&self, phi: &[f32], h: &mut [f32]) -> f32 {
+        for j in 0..self.hidden {
+            let row = &self.w1[j * FEATURES..(j + 1) * FEATURES];
+            let mut z = self.b1[j];
+            for (wjk, xk) in row.iter().zip(phi) {
+                z += wjk * xk;
+            }
+            h[j] = sigmoid(z);
+        }
+        let mut z2 = self.b2;
+        for j in 0..self.hidden {
+            z2 += self.w2[j] * h[j];
+        }
+        sigmoid(z2)
+    }
+
+    /// Плоский вектор всех весов (w1, b1, w2, b2) — для сохранения/экспорта в GUI.
+    pub fn to_floats(&self) -> Vec<f32> {
+        let mut v = Vec::with_capacity(self.w1.len() + 2 * self.hidden + 1);
+        v.extend_from_slice(&self.w1);
+        v.extend_from_slice(&self.b1);
+        v.extend_from_slice(&self.w2);
+        v.push(self.b2);
+        v
+    }
+}
+
+impl Value for MlpValue {
     fn value(&self, state: &GameState, side: Side) -> f32 {
         let mut buf = [0.0f32; FEATURES];
         encode_into(state, side, &mut buf);
-        sigmoid(self.raw(&buf))
+        let mut h = vec![0.0f32; self.hidden];
+        self.forward(&buf, &mut h)
+    }
+}
+
+impl TdModel for MlpValue {
+    #[allow(clippy::needless_range_loop)] // индексация по нейронам/признакам нагляднее
+    fn td_update(&mut self, traj: &[(GameState, Side)], winner: Side, alpha: f32, lambda: f32) {
+        for p in [Side::A, Side::C] {
+            let states = afterstates_of(traj, p);
+            if states.is_empty() {
+                continue;
+            }
+            let z = f32::from(winner == p);
+            // Следы приемлемости на каждый параметр.
+            let mut e_w1 = vec![0.0f32; self.w1.len()];
+            let mut e_b1 = vec![0.0f32; self.hidden];
+            let mut e_w2 = vec![0.0f32; self.hidden];
+            let mut e_b2 = 0.0f32;
+            let mut phi = [0.0f32; FEATURES];
+            let mut h = vec![0.0f32; self.hidden];
+            for t in 0..states.len() {
+                encode_into(states[t], p, &mut phi);
+                let v = self.forward(&phi, &mut h);
+                let v_next = if t + 1 < states.len() {
+                    self.value(states[t + 1], p)
+                } else {
+                    z
+                };
+                let delta = v_next - v;
+                let d = v * (1.0 - v); // dV/d(z2)
+                // Скрытый слой и веса выхода.
+                for j in 0..self.hidden {
+                    let hd = d * self.w2[j] * h[j] * (1.0 - h[j]); // dV/d(z1_j)
+                    e_w2[j] = lambda * e_w2[j] + d * h[j];
+                    self.w2[j] += alpha * delta * e_w2[j];
+                    e_b1[j] = lambda * e_b1[j] + hd;
+                    self.b1[j] += alpha * delta * e_b1[j];
+                    let base = j * FEATURES;
+                    for k in 0..FEATURES {
+                        let idx = base + k;
+                        e_w1[idx] = lambda * e_w1[idx] + hd * phi[k];
+                        self.w1[idx] += alpha * delta * e_w1[idx];
+                    }
+                }
+                e_b2 = lambda * e_b2 + d;
+                self.b2 += alpha * delta * e_b2;
+            }
+        }
     }
 }
 
@@ -154,8 +296,8 @@ impl Default for TdConfig {
 
 /// Self-play партия текущей моделью (2 игрока, A против C, жадно по ценности).
 /// Возвращает траекторию афтерстейтов (позиция, кто ходил) и победителя.
-fn play_and_record(
-    model: &LinearValue,
+fn play_and_record<V: Value>(
+    model: &V,
     dice: &mut impl DiceSource,
     max_turns: usize,
 ) -> (Vec<(GameState, Side)>, Option<Side>) {
@@ -178,9 +320,8 @@ fn play_and_record(
     (traj, game.winner())
 }
 
-/// Обучает линейную ценность TD(λ) в self-play и возвращает модель.
-pub fn train(cfg: &TdConfig) -> LinearValue {
-    let mut model = LinearValue::zeros();
+/// Обучает произвольную `TdModel` методом TD(λ) в self-play и возвращает её.
+pub fn train_with<M: TdModel>(mut model: M, cfg: &TdConfig) -> M {
     let mut dice = RandomDice::from_seed(cfg.seed);
     for g in 0..cfg.games {
         let (traj, winner) = play_and_record(&model, &mut dice, cfg.max_turns);
@@ -190,6 +331,16 @@ pub fn train(cfg: &TdConfig) -> LinearValue {
         }
     }
     model
+}
+
+/// Обучает линейную ценность TD(λ) в self-play.
+pub fn train(cfg: &TdConfig) -> LinearValue {
+    train_with(LinearValue::zeros(), cfg)
+}
+
+/// Обучает MLP-ценность с `hidden` скрытыми нейронами TD(λ) в self-play.
+pub fn train_mlp(hidden: usize, cfg: &TdConfig) -> MlpValue {
+    train_with(MlpValue::new(hidden, cfg.seed), cfg)
 }
 
 #[cfg(test)]
@@ -242,6 +393,41 @@ mod tests {
         assert!(
             vh > h,
             "обученная модель должна обыгрывать Heuristic: {vh} к {h}"
+        );
+    }
+
+    #[test]
+    fn untrained_mlp_value_is_finite_and_centered() {
+        // Случайная инициализация → ценность конечна и около 0.5 (без NaN/насыщения).
+        let m = MlpValue::new(40, 1);
+        let s = GameState::new(vec![Side::A, Side::C], Side::A);
+        let v = m.value(&s, Side::A);
+        assert!(v.is_finite() && v > 0.2 && v < 0.8, "v={v}");
+    }
+
+    // Запускать вручную (лучше с --release):
+    //   cargo test --release -p sheshbesh trained_mlp -- --ignored --nocapture
+    #[test]
+    #[ignore = "медленно: self-play обучение MLP"]
+    fn trained_mlp_beats_heuristic() {
+        // h=20, α=0.05 — лучшая из найденных конфигураций MLP (~58–60% vs Heuristic).
+        let model = train_mlp(
+            20,
+            &TdConfig {
+                games: 5000,
+                alpha: 0.05,
+                alpha_decay: 0.0005,
+                ..Default::default()
+            },
+        );
+        let (vh, h) = match_winrate(&mut ValueAgent(&model), &mut Heuristic, 400, 4242, 40_000);
+        println!(
+            "MLP vs Heuristic: {vh}:{h} ({:.1}%)",
+            100.0 * f64::from(vh as u32) / f64::from((vh + h).max(1) as u32)
+        );
+        assert!(
+            vh > h,
+            "обученный MLP должен обыгрывать Heuristic: {vh} к {h}"
         );
     }
 }

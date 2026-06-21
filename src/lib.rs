@@ -28,7 +28,7 @@ pub use board::{CellKind, PerimeterIdx, Side};
 pub use dice::{DiceRoll, Die};
 pub use encode::{FEATURES, encode, encode_into, rotate_state};
 pub use eval::{match_winrate, play_game_2p};
-pub use learn::{LinearValue, TdConfig, train};
+pub use learn::{LinearValue, MlpValue, TdConfig, TdModel, train, train_mlp, train_with};
 pub use moves::{Move, MoveKind, apply, legal_moves, legal_turns, max_pips};
 pub use render::{
     BOARD_DIM, BOARD_MARGIN, Glyph, board_glyphs, checker_cell, margin_coord, render,
