@@ -15,14 +15,16 @@ use sheshbesh::{
 };
 use wasm_bindgen_futures::spawn_local;
 
+/// Пауза-заставка перед первым ходом партии (мс) — чтобы старт не мелькал.
+const INTRO_MS: u32 = 1800;
 /// Пауза кадра броска: 3D-кувырок длится до ~2.2с (см. `die3d`) + запас, мс.
 const ROLL_ANIM_MS: u32 = 2400;
 /// Пауза на кадр «результат броска» — кости остановились (мс).
-const HOLD_ROLL_MS: u32 = 1000;
+const HOLD_ROLL_MS: u32 = 1100;
 /// Пауза, когда ходов нет: дольше показываем бросок, прежде чем отдать ход.
-const HOLD_NOMOVE_MS: u32 = 1700;
+const HOLD_NOMOVE_MS: u32 = 1800;
 /// Пауза на один шаг фишки по клетке, мс.
-const HOLD_STEP_MS: u32 = 650;
+const HOLD_STEP_MS: u32 = 760;
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 fn seed() -> u64 {
@@ -514,8 +516,10 @@ fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
         }
         Position::Moon { side, field } => (moon_field_point(side, field), true),
         _ => {
+            // На клетке (в т.ч. при проходе сквозь клетку Тюрьмы) — по центру клетки.
+            // В каземат попадают только настоящие пленники (обработаны выше).
             let coord = checker_cell(ch.owner, ch.pos).expect("on-board cell");
-            (prison_cage(coord).unwrap_or_else(|| center_pt(coord)), true)
+            (center_pt(coord), true)
         }
     };
     let key = slot_key(ch.pos, ch.owner);
@@ -739,7 +743,8 @@ fn App() -> impl IntoView {
     let prefix = RwSignal::new(Vec::<Move>::new());
     let sel = RwSignal::new(None::<Sel>);
     // Идёт ли сейчас проигрывание анимации хода (блокирует ввод и авто-бросок).
-    let animating = RwSignal::new(false);
+    // Стартует как `true`: даём паузу-заставку перед первым ходом (см. `kickoff`).
+    let animating = RwSignal::new(true);
     // Крутятся ли сейчас кости (анимация броска).
     let rolling = RwSignal::new(false);
     // Текст ведущего-комментатора над доской.
@@ -790,6 +795,17 @@ fn App() -> impl IntoView {
             note: Some(end_note(&g, human)),
         });
         play(frames);
+    };
+
+    // Старт партии: держим паузу-заставку (видно «Игра началась»), затем включаем
+    // первый ход — авто-бросок человека (через снятие `animating`) или ход ИИ.
+    let kickoff = move || {
+        animating.set(true);
+        spawn_local(async move {
+            TimeoutFuture::new(INTRO_MS).await;
+            animating.set(false);
+            run_ai();
+        });
     };
 
     // Авто-бросок в начале хода человека (но не во время анимации).
@@ -909,12 +925,12 @@ fn App() -> impl IntoView {
             }
         ));
         game.set(g);
-        // Если по розыгрышу первый ход достался ИИ — проиграть его сразу.
-        run_ai();
+        // Пауза-заставка, затем первый ход (бросок человека или ход ИИ).
+        kickoff();
     };
 
-    // На старте партии первый ход может принадлежать ИИ — анимируем его.
-    run_ai();
+    // Старт партии: заставка-пауза, потом первый ход.
+    kickoff();
 
     // Лотки сторон (резерв + плен-каземат) — построчно, слева от доски.
     let render_trays = move || {
