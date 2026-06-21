@@ -1409,9 +1409,11 @@ fn App() -> impl IntoView {
                 <span class="herald">{move || herald.get()}</span>
             </div>
             <div class="controls">
-                <button on:click=to_settings>"Настройки"</button>
-                <button class:on=move || paused.get() on:click=move |_| paused.update(|p| *p = !*p)>
-                    {move || if paused.get() { "▶ Продолжить" } else { "⏸ Пауза" }}
+                <button class="icon-btn" title="Настройки" on:click=to_settings>"⚙"</button>
+                <button class="icon-btn" class:on=move || paused.get()
+                    title=move || if paused.get() { "Продолжить" } else { "Пауза" }
+                    on:click=move |_| paused.update(|p| *p = !*p)>
+                    {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
                 {move || {
                     let g = game.get();
