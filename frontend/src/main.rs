@@ -25,6 +25,8 @@ const HOLD_ROLL_MS: u32 = 1100;
 const HOLD_NOMOVE_MS: u32 = 1800;
 /// Пауза на один шаг фишки по клетке, мс.
 const HOLD_STEP_MS: u32 = 760;
+/// Время, чтобы выбранная человеком часть хода «доехала» (CSS-переход), мс.
+const SLIDE_MS: u32 = 480;
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 fn seed() -> u64 {
@@ -869,22 +871,38 @@ fn App() -> impl IntoView {
 
     let commit = move |seq: Vec<Move>| {
         let r = roll.get_untracked().expect("roll");
-        // Ход человека анимируется так же пошагово, затем продолжает ИИ.
-        let mut g = game.get_untracked();
-        let mut frames = Vec::new();
-        commit_frames(&mut frames, &mut g, r, seq, human, false, |_, _, _| 0);
-        ai_frames(&mut g, dice, human, &mut frames);
-        frames.push(Frame {
-            state: g.state.clone(),
-            roll: None,
-            hold: HOLD_STEP_MS,
-            rolling: false,
-            note: Some(end_note(&g, human)),
-        });
-        turns.set(Vec::new());
-        prefix.set(Vec::new());
+        // Последняя выбранная часть хода «доезжает» (через `disp`/CSS), а затем
+        // доигрываем конец хода: вынужденный ответ при выкупе, передача очереди и ИИ.
+        prefix.set(seq.clone());
         sel.set(None);
-        play(frames);
+        animating.set(true);
+        spawn_local(async move {
+            TimeoutFuture::new(SLIDE_MS).await;
+            let original = game.get_untracked();
+            let posthuman = after_prefix(&original, &seq);
+            let mut g = original.clone();
+            let outcome = g.commit_turn(r, seq, |_, _, _| 0);
+            // Кадры доигровки: вынужденные ходы захватчика (от состояния после
+            // ходов человека), затем ходы ИИ до следующего хода человека.
+            let mut frames = Vec::new();
+            let mut scratch = posthuman.clone();
+            for &fm in &outcome.forced {
+                scratch = apply_with_frames(&mut frames, scratch, fm, r, human);
+            }
+            ai_frames(&mut g, dice, human, &mut frames);
+            frames.push(Frame {
+                state: g.state.clone(),
+                roll: None,
+                hold: HOLD_STEP_MS,
+                rolling: false,
+                note: Some(end_note(&g, human)),
+            });
+            // Бесшовно фиксируем позицию после ходов человека и доигрываем остальное.
+            game.set(Game::new(posthuman));
+            prefix.set(Vec::new());
+            turns.set(Vec::new());
+            play(frames);
+        });
     };
 
     let click = move |target: Sel| {
@@ -952,6 +970,10 @@ fn App() -> impl IntoView {
     // Старт партии: заставка-пауза, потом первый ход.
     kickoff();
 
+    // Отображаемое состояние = после применённого префикса хода человека: выбранные
+    // части хода сразу «доезжают» (фишки сдвигаются), а не висят пустыми кружками.
+    let disp = move || after_prefix(&game.get(), &prefix.get());
+
     view! {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
@@ -985,16 +1007,16 @@ fn App() -> impl IntoView {
 
                 <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
                     <circle
-                        r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
-                        class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) {
+                        r=move || if matches!(disp().checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
+                        class=move || if matches!(disp().checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) {
                             "piece captive"
                         } else {
                             "piece"
                         }
-                        fill=move || side_color(game.get().state.checkers[i].owner)
-                        cx=move || checker_xy(&game.get().state, i).0
-                        cy=move || checker_xy(&game.get().state, i).1
-                        opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
+                        fill=move || side_color(disp().checkers[i].owner)
+                        cx=move || checker_xy(&disp(), i).0
+                        cy=move || checker_xy(&disp(), i).1
+                        opacity=move || if checker_xy(&disp(), i).2 { 1.0 } else { 0.0 }
                     />
                 </For>
 
