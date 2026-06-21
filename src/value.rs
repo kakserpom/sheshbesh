@@ -19,6 +19,14 @@ pub trait Value {
     fn value(&self, state: &GameState, side: Side) -> f32;
 }
 
+/// Ссылку на `Value` тоже можно использовать как `Value` (играть моделью, не отдавая
+/// её во владение — например, текущими весами во время обучения).
+impl<V: Value + ?Sized> Value for &V {
+    fn value(&self, state: &GameState, side: Side) -> f32 {
+        (**self).value(state, side)
+    }
+}
+
 /// Применяет последовательность ходов к копии состояния (без вынужденных ответных
 /// ходов соперника — для оценки афтерстейта этого достаточно).
 pub fn apply_sequence(state: &GameState, seq: &[Move]) -> GameState {
