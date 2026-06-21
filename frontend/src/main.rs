@@ -220,31 +220,6 @@ fn commit_frames<F>(
     }
 }
 
-/// Дополняет `frames` ходами компьютерных сторон (с дублями и выкупами) от текущего
-/// состояния `game` до хода игрока-человека. Продвигает `game`.
-fn ai_frames(
-    game: &mut Game,
-    dice: StoredValue<RandomDice>,
-    humans: &[Side],
-    frames: &mut Vec<Frame>,
-) {
-    let mut guard = 0;
-    while game.winner().is_none() && !humans.contains(&game.state.to_move) && guard < 4000 {
-        guard += 1;
-        let mut roll = None;
-        dice.update_value(|d| roll = Some(d.roll()));
-        let roll = roll.expect("roll");
-        let turns = legal_turns(&game.state, roll);
-        let idx = Heuristic
-            .choose_turn(&game.state, &turns)
-            .min(turns.len() - 1);
-        let played = turns[idx].clone();
-        commit_frames(frames, game, roll, played, humans, true, |s, c, o| {
-            Heuristic.choose_forced(s, c, o)
-        });
-    }
-}
-
 fn fresh(dice: StoredValue<RandomDice>, active: Vec<Side>) -> Game {
     let mut game = None;
     dice.update_value(|d| game = Some(Game::start(active.clone(), d)));
@@ -545,18 +520,13 @@ fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
         let (x, y) = outside_point(ch.owner, RESERVE_OUT, k, 4);
         return (x, y, true);
     }
-    // Плен — отдельный ряд дальше резерва (центрирован по числу пленённых).
-    if matches!(ch.pos, Position::Captured { .. }) {
-        let is_cap = |p: Position| matches!(p, Position::Captured { .. });
-        let n = state
-            .checkers
-            .iter()
-            .filter(|c| c.owner == ch.owner && is_cap(c.pos))
-            .count();
-        let k = (0..i)
-            .filter(|&j| state.checkers[j].owner == ch.owner && is_cap(state.checkers[j].pos))
-            .count();
-        let (x, y) = outside_point(ch.owner, CAPTURED_OUT, k, n);
+    // Плен — у Дома ЗАХВАТЧИКА (его «трофеи»), цвет фишки — владельца. Ряд дальше
+    // резерва, центрирован по числу пленённых этим захватчиком.
+    if let Position::Captured { captor } = ch.pos {
+        let held_by = |p: Position| matches!(p, Position::Captured { captor: c } if c == captor);
+        let n = state.checkers.iter().filter(|c| held_by(c.pos)).count();
+        let k = (0..i).filter(|&j| held_by(state.checkers[j].pos)).count();
+        let (x, y) = outside_point(captor, CAPTURED_OUT, k, n);
         return (x, y, true);
     }
     let (base, visible) = match ch.pos {
@@ -764,6 +734,8 @@ fn App() -> impl IntoView {
     let players = RwSignal::new(2usize);
     let humans = RwSignal::new(vec![Side::A]);
     let started = RwSignal::new(false);
+    // Пауза: блокирует автоход ИИ и авто-бросок; анимация замирает между кадрами.
+    let paused = RwSignal::new(false);
     let game = RwSignal::new(fresh(dice, active_for(2)));
     let roll = RwSignal::new(None::<DiceRoll>);
     let turns = RwSignal::new(Vec::<Vec<Move>>::new());
@@ -780,6 +752,7 @@ fn App() -> impl IntoView {
     let herald = RwSignal::new(String::new());
 
     // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
+    // На паузе замирает между кадрами (опрос `paused`).
     let play = move |frames: Vec<Frame>| {
         if frames.is_empty() {
             return;
@@ -787,6 +760,9 @@ fn App() -> impl IntoView {
         animating.set(true);
         spawn_local(async move {
             for frame in frames {
+                while paused.get_untracked() {
+                    TimeoutFuture::new(150).await;
+                }
                 // Показываем кадр, затем держим его свою паузу (бросок — дольше шага).
                 game.update(|g| g.state = frame.state);
                 roll.set(frame.roll);
@@ -801,33 +777,48 @@ fn App() -> impl IntoView {
         });
     };
 
-    // Если ход за компьютерной стороной — собрать кадры и проиграть их пошагово.
-    let run_ai = move || {
-        let mut g = game.get_untracked();
+    // Автоход компьютерных сторон: по одному ходу за срабатывание Effect. Цепочка
+    // ходов «сама себя» продолжает через сигнал `animating` (после анимации хода он
+    // снимается → Effect срабатывает снова). Пауза/победа/ход человека её прерывают.
+    Effect::new(move |_| {
+        let g = game.get();
         let hs = humans.get_untracked();
-        if g.winner().is_some() || hs.contains(&g.state.to_move) {
+        if !started.get()
+            || animating.get()
+            || paused.get()
+            || g.winner().is_some()
+            || hs.contains(&g.state.to_move)
+        {
             return;
         }
+        let mut gg = g.clone();
+        let mut roll_v = None;
+        dice.update_value(|d| roll_v = Some(d.roll()));
+        let r = roll_v.expect("roll");
+        let t = legal_turns(&gg.state, r);
+        let idx = Heuristic.choose_turn(&gg.state, &t).min(t.len() - 1);
+        let played = t[idx].clone();
         let mut frames = Vec::new();
-        ai_frames(&mut g, dice, &hs, &mut frames);
+        commit_frames(&mut frames, &mut gg, r, played, &hs, true, |s, c, o| {
+            Heuristic.choose_forced(s, c, o)
+        });
         frames.push(Frame {
-            state: g.state.clone(),
+            state: gg.state.clone(),
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
-            note: end_note(&g, &hs),
+            note: end_note(&gg, &hs),
         });
         play(frames);
-    };
+    });
 
-    // Старт партии: держим паузу-заставку (видно «Игра началась»), затем включаем
-    // первый ход — авто-бросок человека (через снятие `animating`) или ход ИИ.
+    // Старт партии: держим паузу-заставку (видно «Игра началась»), затем снимаем
+    // блокировку — дальше ход подхватят Effect'ы (авто-бросок человека / ход ИИ).
     let kickoff = move || {
         animating.set(true);
         spawn_local(async move {
             TimeoutFuture::new(INTRO_MS).await;
             animating.set(false);
-            run_ai();
         });
     };
 
@@ -835,9 +826,11 @@ fn App() -> impl IntoView {
     Effect::new(move |_| {
         let g = game.get();
         let busy = animating.get();
+        let pause = paused.get();
         let hs = humans.get_untracked();
         if started.get()
             && !busy
+            && !pause
             && g.winner().is_none()
             && hs.contains(&g.state.to_move)
             && roll.get_untracked().is_none()
@@ -874,8 +867,9 @@ fn App() -> impl IntoView {
         }
     });
 
-    // Доигровка конца хода человека: уже применённые ходы (`played`) дают `after`;
-    // отсюда доигрываем вынужденный ответ выкупа, передаём очередь и ходим ИИ.
+    // Доигровка хода человека: применённые ходы (`played`) дают `after`; отсюда
+    // доигрываем вынужденный ответ выкупа и фиксируем передачу очереди. Дальнейшие
+    // ходы компьютера подхватит Effect автоматического хода.
     let finish = move |mut frames: Vec<Frame>, after: GameState, played: Vec<Move>| {
         let r = roll.get_untracked().expect("roll");
         let hs = humans.get_untracked();
@@ -886,7 +880,6 @@ fn App() -> impl IntoView {
             scratch = apply_with_frames(&mut frames, scratch, fm, r, &hs);
         }
         let _ = scratch;
-        ai_frames(&mut fg, dice, &hs, &mut frames);
         frames.push(Frame {
             state: fg.state.clone(),
             roll: None,
@@ -904,6 +897,7 @@ fn App() -> impl IntoView {
         let g = game.get_untracked();
         let hs = humans.get_untracked();
         if animating.get_untracked()
+            || paused.get_untracked()
             || g.winner().is_some()
             || !hs.contains(&g.state.to_move)
             || roll.get_untracked().is_none()
@@ -1030,6 +1024,9 @@ fn App() -> impl IntoView {
             </div>
             <div class="controls">
                 <button on:click=to_settings>"Настройки"</button>
+                <button class:on=move || paused.get() on:click=move |_| paused.update(|p| *p = !*p)>
+                    {move || if paused.get() { "▶ Продолжить" } else { "⏸ Пауза" }}
+                </button>
                 {move || {
                     let g = game.get();
                     let no_moves = roll.get().is_some()
@@ -1156,15 +1153,14 @@ fn App() -> impl IntoView {
                             <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
                         }.into_any());
                     }
-                    // Выносные зоны человека (резерв и плен снаружи Дома) — как
-                    // источник/цель/выбор: подсветка + клик в их центре.
-                    let mut zone = |kind: Sel, out_dist: f64| {
+                    // Выносные зоны хода (резерв у своего Дома, плен — у Дома
+                    // захватчика): подсветка + клик в их центре.
+                    let mut zone = |kind: Sel, zx: f64, zy: f64| {
                         let is_src = cands.iter().any(|&m| move_source(&ps, m) == kind);
                         let is_dst = cur.is_some_and(|s| {
                             cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind)
                         });
                         let is_sel = cur == Some(kind);
-                        let (zx, zy) = outside_anchor(mover, out_dist);
                         if is_sel {
                             nodes.push(ring_pt(zx, zy, "hl-sel"));
                         } else if is_dst {
@@ -1178,8 +1174,22 @@ fn App() -> impl IntoView {
                             }.into_any());
                         }
                     };
-                    zone(Sel::Reserve, RESERVE_OUT);
-                    zone(Sel::Captured, CAPTURED_OUT);
+                    let (rx, ry) = outside_anchor(mover, RESERVE_OUT);
+                    zone(Sel::Reserve, rx, ry);
+                    // Пленные хода — у Домов захватчиков; зона на каждом таком Доме.
+                    let mut captors: Vec<Side> = Vec::new();
+                    for c in &ps.checkers {
+                        if c.owner == mover
+                            && let Position::Captured { captor } = c.pos
+                            && !captors.contains(&captor)
+                        {
+                            captors.push(captor);
+                        }
+                    }
+                    for captor in captors {
+                        let (cx2, cy2) = outside_anchor(captor, CAPTURED_OUT);
+                        zone(Sel::Captured, cx2, cy2);
+                    }
                     nodes
                 }}
             </svg>
