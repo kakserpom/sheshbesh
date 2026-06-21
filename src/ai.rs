@@ -6,9 +6,10 @@
 //! достаточно, чтобы агент шёл к Дому, ел чужие фишки и не подставлялся зря.
 
 use crate::board::{CellKind, LOCAL_MOON_EXIT, PERIMETER, Side, cell_kind};
-use crate::moves::{Move, apply, occupied};
+use crate::moves::{Move, occupied};
 use crate::state::{GameState, MoonField, Position};
 use crate::turn::Agent;
+use crate::value::{Value, best_forced, best_turn};
 
 /// Ценность одной фишки с точки зрения её владельца (больше — ближе к цели).
 fn checker_value(owner: Side, pos: Position) -> i32 {
@@ -173,41 +174,23 @@ fn evaluate(state: &GameState, me: Side) -> i32 {
         + threat_value(state, me) * THREAT_BONUS_NUM / THREAT_BONUS_DEN
 }
 
-/// Применяет последовательность ходов к копии состояния (без вынужденных ответных
-/// ходов соперника — для оценки этого достаточно).
-fn apply_sequence(state: &GameState, seq: &[Move]) -> GameState {
-    let mut s = state.clone();
-    for &mv in seq {
-        s = apply(&s, mv);
-    }
-    s
-}
-
-/// Индекс максимума по ключу (первый при равенстве).
-fn argmax_by<T>(items: &[T], mut key: impl FnMut(&T) -> i32) -> usize {
-    let mut best = 0;
-    let mut best_key = i32::MIN;
-    for (i, item) in items.iter().enumerate() {
-        let k = key(item);
-        if k > best_key {
-            best_key = k;
-            best = i;
-        }
-    }
-    best
-}
-
 /// Эвристический агент: берёт ход с лучшей оценкой позиции.
 pub struct Heuristic;
 
+/// Эвристика как функция ценности: ручная оценка `evaluate`.
+impl Value for Heuristic {
+    fn value(&self, state: &GameState, side: Side) -> f32 {
+        evaluate(state, side) as f32
+    }
+}
+
 impl Agent for Heuristic {
     fn choose_turn(&mut self, state: &GameState, turns: &[Vec<Move>]) -> usize {
-        let me = state.to_move;
-        argmax_by(turns, |seq| evaluate(&apply_sequence(state, seq), me))
+        best_turn(self, state, turns)
     }
 
     fn choose_forced(&mut self, state: &GameState, captor: Side, moves: &[Move]) -> usize {
-        argmax_by(moves, |&mv| evaluate(&apply(state, mv), captor))
+        best_forced(self, state, captor, moves)
     }
 }
 
