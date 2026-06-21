@@ -98,6 +98,7 @@ fn move_note(before: &GameState, after: &GameState, mv: Move, humans: &[Side]) -
         MoveKind::EnterPrison => "фишка угодила в Тюрьму!",
         MoveKind::PrisonRelease => "выход из Тюрьмы.",
         MoveKind::EnterHome => "заход фишки в Дом!",
+        MoveKind::PrisonPass => "фишка минует Тюрьму.",
         MoveKind::Step | MoveKind::Ransom => return None,
     };
     Some(format!("{name}: {event}"))
@@ -133,7 +134,16 @@ fn apply_with_frames(
     roll: DiceRoll,
     humans: &[Side],
 ) -> GameState {
-    if let Position::OnTrack { progress: sp } = state.checkers[mv.checker].pos {
+    // Шагаем по клеткам, если фишка идёт по дорожке — обычным ходом или проходя
+    // сквозь Тюрьму (тогда стартовый прогресс берём от клетки Тюрьмы).
+    let start = match state.checkers[mv.checker].pos {
+        Position::OnTrack { progress } => Some(progress),
+        Position::Prison { cell } if mv.kind == MoveKind::PrisonPass => {
+            Some(state.checkers[mv.checker].owner.progress_of(cell))
+        }
+        _ => None,
+    };
+    if let Some(sp) = start {
         for step in 1..mv.die {
             let mut mid = state.clone();
             mid.checkers[mv.checker].pos = Position::OnTrack {
@@ -202,20 +212,21 @@ fn commit_frames<F>(
     }
     let pre = game.state.clone();
     let outcome = game.commit_turn(roll, played, forced);
+    // Сначала анимируем ходы игрока, затем — обязательные ответы захватчиков (как
+    // и применяет `commit_turn`): иначе ответ соперника мог бы «сломать» следующий
+    // ход игрока.
     let mut scratch = pre;
-    let mut forced_moves = outcome.forced.iter();
     for mv in &outcome.played {
-        let ransom = mv.kind == MoveKind::Ransom;
         scratch = apply_with_frames(frames, scratch, *mv, roll, humans);
-        if ransom && let Some(&fm) = forced_moves.next() {
-            let captor = scratch.checkers[fm.checker].owner;
-            scratch = apply_with_frames(frames, scratch, fm, roll, humans);
-            if let Some(last) = frames.last_mut() {
-                last.note = Some(format!(
-                    "{}: обязательный ход на 6 после выкупа.",
-                    side_name(captor, humans)
-                ));
-            }
+    }
+    for &fm in &outcome.forced {
+        let captor = scratch.checkers[fm.checker].owner;
+        scratch = apply_with_frames(frames, scratch, fm, roll, humans);
+        if let Some(last) = frames.last_mut() {
+            last.note = Some(format!(
+                "{}: обязательный ход на 6 после выкупа.",
+                side_name(captor, humans)
+            ));
         }
     }
 }

@@ -144,9 +144,10 @@ pub fn checker_cell(owner: Side, pos: Position) -> Option<(usize, usize)> {
             pos.perimeter_cell(owner).map(margin_coord)
         }
         Position::Home { depth } => Some(inward_cell(owner.entry(), depth as usize + 1)),
-        Position::Moon { side, field } => {
-            Some(inward_cell(side.local_to_perimeter(LOCAL_MOON), moon_rank(field)))
-        }
+        Position::Moon { side, field } => Some(inward_cell(
+            side.local_to_perimeter(LOCAL_MOON),
+            moon_rank(field),
+        )),
         Position::Reserve | Position::Captured { .. } => None,
     }
 }
