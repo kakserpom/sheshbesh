@@ -833,6 +833,25 @@ fn stack_counts(state: &GameState) -> Vec<Badge> {
     out
 }
 
+/// Реактивный бейдж-счётчик стопки с ключом `key`. Позиция и число читаются из
+/// **текущего** состояния (а не из снимка `<For>`), поэтому при движении фишек
+/// цифра едет вместе с кружком (CSS-переход `transform`), а не остаётся на месте.
+fn badge_view(game: RwSignal<Game>, key: usize) -> impl IntoView {
+    let cur = move || {
+        stack_counts(&game.get().state)
+            .into_iter()
+            .find(|b| b.key == key)
+    };
+    view! {
+        <text class="cage-count"
+            style=move || cur().map_or(String::new(), |b| {
+                format!("transform:translate({:.3}px,{:.3}px)", b.pt.0, b.pt.1)
+            })>
+            {move || cur().map_or(String::new(), |b| b.count.to_string())}
+        </text>
+    }
+}
+
 // Зоны снаружи доски напротив клетки входа Дома (выносы наружу, в клетках):
 // резерв ближе всего, плен дальше, бросок костей — ещё дальше.
 const RESERVE_OUT: f64 = 1.0;
@@ -1546,10 +1565,7 @@ fn App() -> impl IntoView {
                         />
                     </For>
                     <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
-                        <text class="cage-count"
-                            style=format!("transform:translate({:.3}px,{:.3}px)", b.pt.0, b.pt.1)>
-                            {b.count.to_string()}
-                        </text>
+                        {badge_view(game, b.key)}
                     </For>
                 </svg>
                 </div>
@@ -1611,10 +1627,7 @@ fn App() -> impl IntoView {
                 // Счётчики одноцветных стопок (Тюрьма, углы, Луна) — keyed, чтобы
                 // цифра ехала вместе с кружком (CSS-переход `transform`), а не прыгала.
                 <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
-                    <text class="cage-count"
-                        style=format!("transform:translate({:.3}px,{:.3}px)", b.pt.0, b.pt.1)>
-                        {b.count.to_string()}
-                    </text>
+                    {badge_view(game, b.key)}
                 </For>
 
                 {move || {
