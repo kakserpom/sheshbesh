@@ -78,6 +78,10 @@ fn side_name(side: Side, humans: &[Side]) -> String {
 fn move_note(before: &GameState, after: &GameState, mv: Move, humans: &[Side]) -> Option<String> {
     let owner = before.checkers[mv.checker].owner;
     let name = side_name(owner, humans);
+    // Финиш: этим ходом сторона завела ВСЕ фишки в Дом.
+    if !before.has_won(owner) && after.has_won(owner) {
+        return Some(format!("{name}: все фишки в Доме — финиш!"));
+    }
     if mv.kind == MoveKind::Ransom {
         return Some(format!("{name}: выкуп пленной фишки."));
     }
@@ -118,11 +122,70 @@ fn roll_note(side: Side, humans: &[Side], roll: DiceRoll, no_move: bool) -> Stri
     s
 }
 
-/// Реплика в конце серии кадров: только победа. Для перехода к ходу игрока реплики
-/// нет (`None`) — её сразу же сменит сообщение о его броске.
-fn end_note(game: &Game, humans: &[Side]) -> Option<String> {
-    game.winner()
-        .map(|w| format!("{} победил! Игра окончена.", side_name(w, humans)))
+/// Команда стороны при игре 2×2 (противоположные стороны — союзники): 0 = A/C, 1 = B/D.
+fn team_of(s: Side) -> usize {
+    s.index() % 2
+}
+
+/// Окончена ли партия с учётом режима (считается напрямую из состояния): 2×2 — когда
+/// обе стороны команды финишировали; каждый-сам-за-себя — когда остался один не
+/// финишировавший (FFA до `n-1` финишей).
+fn game_over(state: &GameState, teams: bool) -> bool {
+    if teams && state.active.len() == 4 {
+        (0..2).any(|t| {
+            let mut members = state.active.iter().filter(|&&s| team_of(s) == t).peekable();
+            members.peek().is_some() && members.all(|&s| state.has_won(s))
+        })
+    } else {
+        state.active.iter().filter(|&&s| state.has_won(s)).count()
+            >= state.active.len().saturating_sub(1)
+    }
+}
+
+/// Итоговая реплика партии (если окончена): победившая команда либо места по порядку
+/// финиша (`finished` — порядок финиша). До конца партии — `None`.
+fn result_msg(
+    state: &GameState,
+    finished: &[Side],
+    teams: bool,
+    humans: &[Side],
+) -> Option<String> {
+    if !game_over(state, teams) {
+        return None;
+    }
+    if teams && state.active.len() == 4 {
+        let t = (0..2).find(|&t| {
+            state
+                .active
+                .iter()
+                .filter(|&&s| team_of(s) == t)
+                .all(|&s| state.has_won(s))
+        })?;
+        let ms: Vec<String> = state
+            .active
+            .iter()
+            .filter(|&&s| team_of(s) == t)
+            .map(|s| s.letter().to_string())
+            .collect();
+        Some(format!("Команда {} победила! Игра окончена.", ms.join("+")))
+    } else {
+        let mut order = finished.to_vec();
+        for &s in &state.active {
+            if !order.contains(&s) {
+                order.push(s);
+            }
+        }
+        let places: Vec<String> = order
+            .iter()
+            .enumerate()
+            .map(|(i, s)| format!("{}) {}", i + 1, side_name(*s, humans)))
+            .collect();
+        Some(format!(
+            "Победил {}! Места: {}.",
+            side_name(order[0], humans),
+            places.join(", ")
+        ))
+    }
 }
 
 /// Применяет ход `mv` к `state`, попутно добавляя кадры. Если фишка идёт по дорожке,
@@ -646,17 +709,21 @@ fn static_board(state: &GameState) -> Vec<AnyView> {
             CellKind::Corner => nodes.push(cell_rect(coord, "corner").into_any()),
             CellKind::Moon => nodes.push(cell_rect(coord, "moon-end").into_any()),
             CellKind::Prison => nodes.push(cell_rect(coord, "prison").into_any()),
-            CellKind::HomeEntrance => {
-                let stroke = home_side(state, coord).map_or("#f59e0b", side_color);
-                let (r, c) = coord;
-                nodes.push(
-                    view! {
-                        <rect x=c as f64 + 0.08 y=r as f64 + 0.08 width=0.84 height=0.84 rx=0.14
-                            class="home-gate" stroke=stroke />
-                    }
-                    .into_any(),
-                );
-            }
+            CellKind::HomeEntrance => match home_side(state, coord) {
+                // Клетка входа в Дом активной стороны — в её цвете.
+                Some(side) => {
+                    let (r, c) = coord;
+                    nodes.push(
+                        view! {
+                            <rect x=c as f64 + 0.08 y=r as f64 + 0.08 width=0.84 height=0.84 rx=0.14
+                                class="home-gate" stroke=side_color(side) />
+                        }
+                        .into_any(),
+                    );
+                }
+                // Дом неактивной стороны — обычная клетка (без золотой рамки).
+                None => nodes.push(cell_rect(coord, "track").into_any()),
+            },
             CellKind::Plain if p.local() == LOCAL_MOON_EXIT => {
                 nodes.push(cell_rect(coord, "moon-end").into_any());
             }
@@ -807,10 +874,13 @@ fn die3d(v: u8) -> impl IntoView {
 #[component]
 fn App() -> impl IntoView {
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
-    // Настройки: число игроков и какие стороны управляются человеком.
+    // Настройки: число игроков, типы сторон и (для 4) командный режим 2×2.
     let players = RwSignal::new(2usize);
     let humans = RwSignal::new(vec![Side::A]);
+    let teams = RwSignal::new(false);
     let started = RwSignal::new(false);
+    // Стороны, финишировавшие (все фишки в Доме) — в порядке финиша.
+    let finished = RwSignal::new(Vec::<Side>::new());
     // Пауза: блокирует автоход ИИ и авто-бросок; анимация замирает между кадрами.
     let paused = RwSignal::new(false);
     let game = RwSignal::new(fresh(dice, active_for(2)));
@@ -827,6 +897,31 @@ fn App() -> impl IntoView {
     let rolling = RwSignal::new(false);
     // Текст ведущего-комментатора над доской.
     let herald = RwSignal::new(String::new());
+
+    // Следим за финишами: запоминаем порядок финиша, а по окончании партии (с учётом
+    // режима) выводим итоговую реплику.
+    Effect::new(move |_| {
+        let g = game.get();
+        let mut newly = Vec::new();
+        finished.with_untracked(|f| {
+            for &s in &g.state.active {
+                if g.state.has_won(s) && !f.contains(&s) {
+                    newly.push(s);
+                }
+            }
+        });
+        if !newly.is_empty() {
+            finished.update(|f| f.extend(newly));
+        }
+        if let Some(msg) = result_msg(
+            &g.state,
+            &finished.get_untracked(),
+            teams.get_untracked(),
+            &humans.get_untracked(),
+        ) {
+            herald.set(msg);
+        }
+    });
 
     // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
     // На паузе замирает между кадрами (опрос `paused`).
@@ -863,7 +958,7 @@ fn App() -> impl IntoView {
         if !started.get()
             || animating.get()
             || paused.get()
-            || g.winner().is_some()
+            || game_over(&g.state, teams.get_untracked())
             || hs.contains(&g.state.to_move)
         {
             return;
@@ -884,7 +979,7 @@ fn App() -> impl IntoView {
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
-            note: end_note(&gg, &hs),
+            note: None,
         });
         play(frames);
     });
@@ -908,7 +1003,7 @@ fn App() -> impl IntoView {
         if started.get()
             && !busy
             && !pause
-            && g.winner().is_none()
+            && !game_over(&g.state, teams.get_untracked())
             && hs.contains(&g.state.to_move)
             && roll.get_untracked().is_none()
         {
@@ -962,7 +1057,7 @@ fn App() -> impl IntoView {
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
-            note: end_note(&fg, &hs),
+            note: None,
         });
         turns.set(Vec::new());
         prefix.set(Vec::new());
@@ -975,7 +1070,7 @@ fn App() -> impl IntoView {
         let hs = humans.get_untracked();
         if animating.get_untracked()
             || paused.get_untracked()
-            || g.winner().is_some()
+            || game_over(&g.state, teams.get_untracked())
             || !hs.contains(&g.state.to_move)
             || roll.get_untracked().is_none()
         {
@@ -1035,6 +1130,7 @@ fn App() -> impl IntoView {
         turns.set(Vec::new());
         prefix.set(Vec::new());
         sel.set(None);
+        finished.set(Vec::new());
         let g = fresh(dice, active);
         let hs = humans.get_untracked();
         herald.set(format!(
@@ -1090,6 +1186,18 @@ fn App() -> impl IntoView {
                             }
                         }).collect_view()
                     }}
+                    // Режим вчетвером: команды 2×2 (A+C vs B+D) или каждый сам за себя.
+                    {move || (players.get() == 4).then(|| view! {
+                        <div class="set-row">
+                            <span>"Режим:"</span>
+                            <button class:on=move || teams.get() on:click=move |_| teams.set(true)>
+                                "Команды 2×2"
+                            </button>
+                            <button class:on=move || !teams.get() on:click=move |_| teams.set(false)>
+                                "Каждый сам"
+                            </button>
+                        </div>
+                    })}
                     <button class="primary" on:click=start_game>"Начать игру"</button>
                 </div>
             })}
@@ -1107,7 +1215,7 @@ fn App() -> impl IntoView {
                 {move || {
                     let g = game.get();
                     let no_moves = roll.get().is_some()
-                        && g.winner().is_none()
+                        && !game_over(&g.state, teams.get())
                         && humans.get().contains(&g.state.to_move)
                         && turns.get().first().is_none_or(Vec::is_empty);
                     no_moves.then(|| view! {
@@ -1175,7 +1283,7 @@ fn App() -> impl IntoView {
                     let mover = g.state.to_move;
                     let active = !animating.get()
                         && roll.get().is_some()
-                        && g.winner().is_none()
+                        && !game_over(&g.state, teams.get())
                         && humans.get().contains(&mover);
                     let cands = if active { step_opts(&turns.get(), &pre) } else { Vec::new() };
                     let cur = sel.get();

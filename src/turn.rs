@@ -135,6 +135,19 @@ pub fn next_active_side(active: &[Side], current: Side) -> Side {
     current
 }
 
+/// Следующая активная сторона, ещё НЕ заведшая все фишки в Дом (финишировавшие
+/// стороны пропускаются — их очередь не наступает). Если все финишировали — `current`.
+pub fn next_unfinished_active(state: &GameState, current: Side) -> Side {
+    let mut s = current;
+    for _ in 0..Side::ALL.len() {
+        s = next_active_side(&state.active, s);
+        if !state.has_won(s) {
+            return s;
+        }
+    }
+    current
+}
+
 /// Итог одного броска в рамках хода игрока.
 #[derive(Clone, Debug)]
 pub struct TurnOutcome {
@@ -233,9 +246,11 @@ impl Game {
         }
         let played = applied_player;
 
-        let again = roll.is_double() && self.winner().is_none();
+        // Дубль даёт ещё ход — но только если сторона ещё не финишировала.
+        let again = roll.is_double() && !self.state.has_won(side);
         if !again {
-            self.state.to_move = next_active_side(&self.state.active, side);
+            // Очередь переходит к следующей НЕфинишировавшей стороне.
+            self.state.to_move = next_unfinished_active(&self.state, side);
         }
         TurnOutcome {
             side,
