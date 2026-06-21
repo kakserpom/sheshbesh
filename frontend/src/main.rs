@@ -11,9 +11,9 @@ use sheshbesh::board::{
     LOCAL_MOON, LOCAL_MOON_EXIT, LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR, PERIMETER, cell_kind,
 };
 use sheshbesh::{
-    Agent, BOARD_DIM, BOARD_MARGIN, CellKind, DiceRoll, DiceSource, Game, GameState, Heuristic,
-    MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side, apply, checker_cell,
-    legal_turns, margin_coord,
+    Agent, BOARD_DIM, BOARD_MARGIN, CellKind, Checker, DiceRoll, DiceSource, Die, Game, GameState,
+    Heuristic, MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side, apply,
+    checker_cell, legal_turns, margin_coord,
 };
 use wasm_bindgen_futures::spawn_local;
 
@@ -375,6 +375,99 @@ fn active_for(n: usize) -> Vec<Side> {
         3 => vec![Side::A, Side::B, Side::C],
         _ => Side::ALL.to_vec(),
     }
+}
+
+// --- Режим разработчика: демонстрационные состояния доски ---
+
+/// Сценарий-демо: предельные/наглядные расстановки для проверки отрисовки.
+#[derive(Clone, Copy, PartialEq)]
+enum Demo {
+    Reserve,
+    Moon(MoonField),
+    Cell,
+    Prison,
+    Captured,
+    Homes,
+}
+
+/// Список сценариев и их подписи для панели разработчика.
+const DEMOS: &[(Demo, &str)] = &[
+    (Demo::Reserve, "Резерв (старт)"),
+    (Demo::Moon(MoonField::One), "16 фишек на Луне — поле 1"),
+    (Demo::Moon(MoonField::Three), "16 фишек на Луне — поле 3"),
+    (Demo::Moon(MoonField::Six), "16 фишек на Луне — поле 6"),
+    (Demo::Cell, "16 фишек на одной клетке"),
+    (Demo::Prison, "16 фишек в одной Тюрьме"),
+    (Demo::Captured, "16 фишек в плену"),
+    (Demo::Homes, "Дома заполнены"),
+];
+
+/// Состояние со всеми четырьмя сторонами; позиция каждой фишки задаётся
+/// `place(side, k)`, где `k` — её индекс (0..4) среди фишек своей стороны.
+fn demo_state(place: impl Fn(Side, usize) -> Position) -> GameState {
+    let mut s = GameState::new(Side::ALL.to_vec(), Side::A);
+    let mut seen: Vec<Side> = Vec::new();
+    for ch in &mut s.checkers {
+        let k = seen.iter().filter(|&&o| o == ch.owner).count();
+        seen.push(ch.owner);
+        ch.pos = place(ch.owner, k);
+    }
+    s
+}
+
+/// Строит состояние для выбранного сценария-демо.
+fn demo_game(demo: Demo) -> GameState {
+    match demo {
+        Demo::Reserve => demo_state(|_, _| Position::Reserve),
+        Demo::Moon(field) => demo_state(move |_, _| Position::Moon {
+            side: Side::A,
+            field,
+        }),
+        Demo::Cell => {
+            // Все 16 на одной абсолютной клетке: у каждой стороны свой прогресс.
+            let cell = PerimeterIdx::new(30);
+            demo_state(move |side, _| Position::OnTrack {
+                progress: side.progress_of(cell),
+            })
+        }
+        Demo::Prison => {
+            let cell = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
+            demo_state(move |_, _| Position::Prison { cell })
+        }
+        Demo::Captured => demo_state(|_, _| Position::Captured { captor: Side::A }),
+        Demo::Homes => demo_state(|_, k| Position::Home { depth: k as u8 }),
+    }
+}
+
+/// Партия-заготовка для демо-анимации: фишка A на дорожке съедает фишку C впереди
+/// (остальные — в Домах, чтобы не мешать). Бросок «3 и 1» делает ход однозначным.
+fn demo_capture() -> Game {
+    let target = Side::A.entry().advance(3);
+    let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+    s.checkers.clear();
+    s.checkers.push(Checker {
+        owner: Side::A,
+        pos: Position::OnTrack { progress: 0 },
+    });
+    for d in 0..3 {
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::Home { depth: d },
+        });
+    }
+    s.checkers.push(Checker {
+        owner: Side::C,
+        pos: Position::OnTrack {
+            progress: Side::C.progress_of(target),
+        },
+    });
+    for d in 0..3 {
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::Home { depth: d },
+        });
+    }
+    Game::new(s)
 }
 
 /// Уникальные ходы текущего шага среди полных ходов с префиксом `prefix`.
@@ -881,6 +974,8 @@ fn App() -> impl IntoView {
     let humans = RwSignal::new(vec![Side::A]);
     let teams = RwSignal::new(false);
     let started = RwSignal::new(false);
+    // Режим разработчика: экран демонстрации состояний и анимаций (вне партии).
+    let dev = RwSignal::new(false);
     // Стороны, финишировавшие (все фишки в Доме) — в порядке финиша.
     let finished = RwSignal::new(Vec::<Side>::new());
     // Пауза: блокирует автоход ИИ и авто-бросок; анимация замирает между кадрами.
@@ -904,6 +999,10 @@ fn App() -> impl IntoView {
     // режима) выводим итоговую реплику.
     Effect::new(move |_| {
         let g = game.get();
+        // В режиме разработчика доска несёт демо-состояния — не считаем их финишами.
+        if dev.get_untracked() {
+            return;
+        }
         let mut newly = Vec::new();
         finished.with_untracked(|f| {
             for &s in &g.state.active {
@@ -1146,6 +1245,44 @@ fn App() -> impl IntoView {
     // Назад к настройкам (кнопка «Настройки»).
     let to_settings = move |_| started.set(false);
 
+    // Демо-анимация (режим разработчика): пошаговый ход со съеданием через тот же
+    // конвейер кадров, что и в партии (бросок, шаги по клеткам, реплики ведущего).
+    let anim_demo = move |_| {
+        if animating.get_untracked() {
+            return;
+        }
+        let mut gg = demo_capture();
+        let r = DiceRoll::new(Die::new(3).expect("3"), Die::new(1).expect("1"));
+        let t = legal_turns(&gg.state, r);
+        if t.is_empty() {
+            return;
+        }
+        let idx = Heuristic.choose_turn(&gg.state, &t).min(t.len() - 1);
+        let played = t[idx].clone();
+        game.set(Game::new(gg.state.clone()));
+        roll.set(None);
+        let mut frames = Vec::new();
+        commit_frames(&mut frames, &mut gg, r, played, &[], true, |s, c, o| {
+            Heuristic.choose_forced(s, c, o)
+        });
+        frames.push(Frame {
+            state: gg.state.clone(),
+            roll: None,
+            hold: HOLD_STEP_MS,
+            rolling: false,
+            note: Some("Демо завершено.".to_string()),
+        });
+        play(frames);
+    };
+
+    // Открыть/закрыть экран разработчика, показав состояние-заглушку.
+    let open_dev = move |_| {
+        game.set(Game::new(demo_game(Demo::Reserve)));
+        roll.set(None);
+        herald.set("Режим разработчика: выберите сценарий.".to_string());
+        dev.set(true);
+    };
+
     // Переключатель типа стороны (человек ↔ компьютер) в настройках.
     let toggle_human = move |side: Side| {
         humans.update(|h| {
@@ -1161,7 +1298,7 @@ fn App() -> impl IntoView {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
             // Экран настроек до старта партии: число игроков и тип каждой стороны.
-            {move || (!started.get()).then(|| view! {
+            {move || (!started.get() && !dev.get()).then(|| view! {
                 <div class="settings">
                     <div class="set-row">
                         <span>"Игроков:"</span>
@@ -1201,6 +1338,68 @@ fn App() -> impl IntoView {
                         </div>
                     })}
                     <button class="primary" on:click=start_game>"Начать игру"</button>
+                    <button on:click=open_dev>"🛠 Режим разработчика"</button>
+                </div>
+            })}
+
+            // Экран разработчика: панель сценариев + демо-анимация + read-only доска.
+            {move || dev.get().then(|| view! {
+                <div class="status">
+                    <span class="herald">{move || herald.get()}</span>
+                </div>
+                <div class="controls dev-controls">
+                    <button on:click=move |_| dev.set(false)>"← Настройки"</button>
+                    {DEMOS.iter().map(|&(d, label)| view! {
+                        <button on:click=move |_| {
+                            game.set(Game::new(demo_game(d)));
+                            roll.set(None);
+                            herald.set(label.to_string());
+                        }>{label}</button>
+                    }).collect_view()}
+                    <button on:click=anim_demo>"▶ Анимация: ход и съедание"</button>
+                </div>
+                <div class="board-area">
+                <div class="board-wrap">
+                <svg class="board" viewBox=format!(
+                    "{o} {o} {s} {s}",
+                    o = BOARD_MARGIN as f64 - RESERVE_PAD,
+                    s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD,
+                )>
+                    {move || static_board(&game.get().state)}
+                    <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
+                        <circle
+                            r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
+                            class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
+                            fill=move || side_color(game.get().state.checkers[i].owner)
+                            cx=move || checker_xy(&game.get().state, i).0
+                            cy=move || checker_xy(&game.get().state, i).1
+                            opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
+                        />
+                    </For>
+                    {move || {
+                        let g = game.get();
+                        let s = &g.state;
+                        let mut nodes: Vec<AnyView> = Vec::new();
+                        for pg in prison_geoms() {
+                            for &side in &s.active {
+                                let cnt = s.checkers.iter().filter(|c| {
+                                    c.owner == side
+                                        && matches!(c.pos, Position::Prison { .. })
+                                        && checker_cell(c.owner, c.pos) == Some(pg.coord)
+                                }).count();
+                                if cnt > 1 {
+                                    let (k, n) = prison_slot(s, side);
+                                    let (x, y) = prison_slot_point(&pg, k, n);
+                                    nodes.push(view! {
+                                        <text x=x y=y class="cage-count">{cnt.to_string()}</text>
+                                    }.into_any());
+                                }
+                            }
+                        }
+                        nodes
+                    }}
+                </svg>
+                </div>
                 </div>
             })}
 
