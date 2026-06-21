@@ -936,8 +936,16 @@ fn App() -> impl IntoView {
                     if np.len() >= total {
                         commit(np);
                     } else {
+                        // Сохраняем фокус на той же фишке, если ею можно ходить
+                        // дальше — чтобы не выбирать её повторно для второго хода.
+                        let ps2 = after_prefix(&g, &np);
+                        let next_src =
+                            sel_of(ps2.checkers[m.checker].owner, ps2.checkers[m.checker].pos);
+                        let keep = step_opts(&turns.get_untracked(), &np)
+                            .iter()
+                            .any(|&mv| move_source(&ps2, mv) == next_src);
                         prefix.set(np);
-                        sel.set(None);
+                        sel.set(keep.then_some(next_src));
                     }
                 } else if cands.iter().any(|&m| move_source(&ps, m) == target) {
                     sel.set(Some(target));
