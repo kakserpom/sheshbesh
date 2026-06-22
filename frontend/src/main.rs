@@ -1292,11 +1292,18 @@ fn lessons() -> Vec<Lesson> {
         Lesson {
             title: "Сход с Луны — выпало 6",
             text: "С поля «6» выброс 6 выводит фишку с Луны на доску — на клетку, симметричную входу \
-                   относительно Дома (подсвечена), заметно ближе к цели. Если бы там стояла чужая \
-                   фишка — она была бы съедена.",
+                   относительно Дома (подсвечена), заметно ближе к цели. Впереди стоит фишка \
+                   соперника — её мы сейчас и съедим.",
             die: Some(6),
             hl: vec![cell(Side::B, LOCAL_MOON_EXIT)],
-            state: at(Position::OnTrack { progress: moon_exit }),
+            state: {
+                let mut s = at(Position::OnTrack { progress: moon_exit });
+                // Фишка C впереди (на клетке прогресса 28), которую съедим на след. шаге.
+                s.checkers[4].pos = Position::OnTrack {
+                    progress: C.progress_of(A.entry().advance((moon_exit + 3) as usize)),
+                };
+                s
+            },
         },
         Lesson {
             title: "Съедание — выпало 3",
@@ -1346,50 +1353,73 @@ fn lessons() -> Vec<Lesson> {
     ]
 }
 
-/// Статичная (без анимации) отрисовка примера-доски для туториала, с подсветкой
-/// клеток `hl`.
-fn tutorial_board(state: &GameState, hl: &[(usize, usize)]) -> AnyView {
-    let mut nodes: Vec<AnyView> = static_board(state);
-    for i in 0..state.checkers.len() {
-        let (cx, cy, vis) = checker_xy(state, i);
-        if !vis {
-            continue;
+/// Подсветка клеток `hl` (пульсирующие кольца) — слой поверх доски в туториале.
+fn tutorial_highlights(hl: &[(usize, usize)]) -> Vec<AnyView> {
+    hl.iter()
+        .map(|&(r, c)| {
+            let (cx, cy) = center_pt((r, c));
+            view! { <circle cx=cx cy=cy r=0.52 fill="none" class="tutorial-hl" /> }.into_any()
+        })
+        .collect()
+}
+
+/// Промежуточные позиции демонстрационной фишки (A) при переходе `from`→`to` для
+/// пошаговой анимации (без конечной — её даёт финальный кадр). Простые переходы
+/// (ввод, освобождение, поля Луны, заход в Дом) идут без промежуточных кадров.
+fn tut_path(from: Position, to: Position) -> Vec<Position> {
+    let a = Side::A;
+    match (from, to) {
+        (Position::OnTrack { progress: f }, Position::OnTrack { progress: t }) if t > f => {
+            (f + 1..t).map(|p| Position::OnTrack { progress: p }).collect()
         }
-        let ch = state.checkers[i];
-        let small = matches!(
-            ch.pos,
-            Position::Prison { .. } | Position::Reserve | Position::Captured { .. }
-        );
-        let captive = matches!(ch.pos, Position::Prison { .. } | Position::Captured { .. });
-        nodes.push(
-            view! {
-                <circle cx=cx cy=cy r=if small { 0.3 } else { 0.36 }
-                    class=if captive { "piece captive" } else { "piece" }
-                    fill=side_color(ch.owner) />
-            }
-            .into_any(),
-        );
+        (Position::OnTrack { progress: f }, Position::Prison { cell }) => {
+            let pc = a.progress_of(cell);
+            let mut v: Vec<Position> = (f + 1..pc).map(|p| Position::OnTrack { progress: p }).collect();
+            v.push(Position::OnTrack { progress: pc }); // встаём на клетку Тюрьмы
+            v
+        }
+        (Position::OnTrack { progress: f }, Position::Moon { side, .. }) => {
+            let pm = a.progress_of(side.local_to_perimeter(LOCAL_MOON));
+            let mut v: Vec<Position> = (f + 1..pm).map(|p| Position::OnTrack { progress: p }).collect();
+            v.push(Position::OnTrack { progress: pm }); // встаём на клетку Луны
+            v
+        }
+        _ => vec![],
     }
-    for b in stack_counts(state) {
-        nodes.push(
-            view! { <text x=b.pt.0 y=b.pt.1 class="cage-count">{b.count.to_string()}</text> }
-                .into_any(),
-        );
+}
+
+/// Кадры перехода к шагу туториала: бросок кости (если есть) + пошаговое движение
+/// демонстрационной фишки от `from` к `to`.
+fn tutorial_frames(from: &GameState, to: &Lesson) -> Vec<Frame> {
+    let mut frames = Vec::new();
+    if to.die.is_some() {
+        frames.push(Frame {
+            state: from.clone(),
+            roll: None,
+            hold: ROLL_ANIM_MS,
+            rolling: true,
+            note: None,
+        });
     }
-    for &(r, c) in hl {
-        let (cx, cy) = center_pt((r, c));
-        nodes.push(
-            view! { <circle cx=cx cy=cy r=0.52 fill="none" class="tutorial-hl" /> }.into_any(),
-        );
+    for pos in tut_path(from.checkers[0].pos, to.state.checkers[0].pos) {
+        let mut mid = from.clone();
+        mid.checkers[0].pos = pos;
+        frames.push(Frame {
+            state: mid,
+            roll: None,
+            hold: HOLD_STEP_MS,
+            rolling: false,
+            note: None,
+        });
     }
-    view! {
-        <svg class="board" viewBox=format!(
-            "{o} {o} {s} {s}",
-            o = BOARD_MARGIN as f64 - RESERVE_PAD,
-            s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD,
-        )>{nodes}</svg>
-    }
-    .into_any()
+    frames.push(Frame {
+        state: to.state.clone(),
+        roll: None,
+        hold: HOLD_STEP_MS,
+        rolling: false,
+        note: None,
+    });
+    frames
 }
 
 #[component]
@@ -1411,6 +1441,8 @@ fn App() -> impl IntoView {
     let tutorial = RwSignal::new(false);
     let lesson_idx = RwSignal::new(0usize);
     let lessons_sv = StoredValue::new(lessons());
+    // Кость текущего шага туториала (значение задано заранее, без случайности).
+    let tut_die = RwSignal::new(None::<u8>);
     // Стороны, финишировавшие (все фишки в Доме) — в порядке финиша.
     let finished = RwSignal::new(Vec::<Side>::new());
     // Пауза: блокирует автоход ИИ и авто-бросок; анимация замирает между кадрами.
@@ -1434,8 +1466,8 @@ fn App() -> impl IntoView {
     // режима) выводим итоговую реплику.
     Effect::new(move |_| {
         let g = game.get();
-        // В режиме разработчика доска несёт демо-состояния — не считаем их финишами.
-        if dev.get_untracked() {
+        // В режиме разработчика и обучении доска несёт демо-состояния — не финиши.
+        if dev.get_untracked() || tutorial.get_untracked() {
             return;
         }
         let mut newly = Vec::new();
@@ -1808,7 +1840,15 @@ fn App() -> impl IntoView {
                     })}
                     <button class="primary" on:click=start_game>"Начать игру"</button>
                     <div class="set-row">
-                        <button on:click=move |_| { lesson_idx.set(0); tutorial.set(true); }>"🎓 Обучение"</button>
+                        <button on:click=move |_| {
+                            epoch.update_value(|e| *e += 1);
+                            animating.set(false);
+                            rolling.set(false);
+                            lesson_idx.set(0);
+                            tut_die.set(None);
+                            lessons_sv.with_value(|ls| game.set(Game::new(ls[0].state.clone())));
+                            tutorial.set(true);
+                        }>"🎓 Обучение"</button>
                         <button on:click=move |_| rules.set(true)>"📖 Правила"</button>
                         <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
                     </div>
@@ -1863,9 +1903,22 @@ fn App() -> impl IntoView {
                 </div>
             })}
 
-            // Экран обучения: пошаговые уроки с примерами на доске.
+            // Экран обучения: пошаговые уроки с анимацией. Доска и кубик — те же, что
+            // в игре (сигнал `game` + `play` + keyed-фишки со скольжением).
             {move || tutorial.get().then(|| {
                 let total = lessons_sv.with_value(Vec::len);
+                // Переход к шагу `idx` с анимацией движения и броска кости.
+                let go = move |idx: usize| {
+                    if animating.get_untracked() {
+                        return;
+                    }
+                    let from = game.get_untracked().state.clone();
+                    lesson_idx.set(idx);
+                    lessons_sv.with_value(|ls| {
+                        tut_die.set(ls[idx].die);
+                        play(tutorial_frames(&from, &ls[idx]));
+                    });
+                };
                 view! {
                     <div class="status">
                         <span class="herald">{move || {
@@ -1874,25 +1927,66 @@ fn App() -> impl IntoView {
                         }}</span>
                     </div>
                     <div class="controls">
-                        <button on:click=move |_| tutorial.set(false)>"← Настройки"</button>
-                        <button class="icon-btn" title="Назад"
-                            on:click=move |_| lesson_idx.update(|i| *i = i.saturating_sub(1))>"◀"</button>
-                        <button class="icon-btn" title="Далее"
-                            on:click=move |_| lesson_idx.update(|i| *i = (*i + 1).min(total - 1))>"▶"</button>
+                        <button on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"← Настройки"</button>
                     </div>
-                    // Заранее заданная (без случайности) кость этого шага.
-                    {move || lessons_sv.with_value(|ls| {
-                        ls[lesson_idx.get().min(total - 1)].die.map(|d| view! {
-                            <div class="tutorial-dice"><span class="dice">{die_face(d)}</span></div>
-                        })
-                    })}
                     <div class="board-area">
-                        <div class="board-wrap">
-                            {move || lessons_sv.with_value(|ls| {
-                                let l = &ls[lesson_idx.get().min(total - 1)];
-                                tutorial_board(&l.state, &l.hl)
-                            })}
-                        </div>
+                    <div class="board-wrap">
+                    <svg class="board" viewBox=format!(
+                        "{o} {o} {s} {s}",
+                        o = BOARD_MARGIN as f64 - RESERVE_PAD,
+                        s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD,
+                    )>
+                        {move || static_board(&game.get().state)}
+                        <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
+                            <circle
+                                r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
+                                class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
+                                fill=move || side_color(game.get().state.checkers[i].owner)
+                                cx=move || checker_xy(&game.get().state, i).0
+                                cy=move || checker_xy(&game.get().state, i).1
+                                opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
+                            />
+                        </For>
+                        <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
+                            {badge_view(game, b.key)}
+                        </For>
+                        // Подсветка нужных клеток текущего шага (не во время движения).
+                        {move || (!animating.get())
+                            .then(|| lessons_sv.with_value(|ls| tutorial_highlights(&ls[lesson_idx.get().min(total - 1)].hl)))}
+                    </svg>
+                    // Кубик у Дома демонстрационной стороны (A) — как в реальной игре.
+                    {move || tut_die.get().map(|d| {
+                        let (ax, ay) = outside_anchor(Side::A, DICE_OUT);
+                        let (out, _) = reserve_axes(Side::A);
+                        let vertical = out.0 != 0.0;
+                        let vb_o = BOARD_MARGIN as f64 - RESERVE_PAD;
+                        let vb_s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD;
+                        let fx = (ax - vb_o) / vb_s * 100.0;
+                        let fy = (ay - vb_o) / vb_s * 100.0;
+                        let inner = if rolling.get() {
+                            view! { <span class="dice rolling">{die3d(d)}</span> }.into_any()
+                        } else {
+                            view! { <span class="dice">{die_face(d)}</span> }.into_any()
+                        };
+                        view! { <div class="board-dice" class:vert=vertical style=format!("left:{fx:.2}%;top:{fy:.2}%")>{inner}</div> }
+                    })}
+                    // Навигация по шагам — стрелки по краям доски.
+                    <button class="nav-arrow left" title="Назад"
+                        on:click=move |_| {
+                            // Назад — мгновенно (без анимации и броска).
+                            epoch.update_value(|e| *e += 1);
+                            animating.set(false);
+                            rolling.set(false);
+                            let i = lesson_idx.get_untracked().saturating_sub(1);
+                            lesson_idx.set(i);
+                            lessons_sv.with_value(|ls| {
+                                tut_die.set(ls[i].die);
+                                game.set(Game::new(ls[i].state.clone()));
+                            });
+                        }>"◀"</button>
+                    <button class="nav-arrow right" title="Далее"
+                        on:click=move |_| go((lesson_idx.get_untracked() + 1).min(total - 1))>"▶"</button>
+                    </div>
                     </div>
                     <p class="lesson-text">{move || {
                         lessons_sv.with_value(|ls| ls[lesson_idx.get().min(total - 1)].text.to_string())
