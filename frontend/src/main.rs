@@ -1191,15 +1191,20 @@ fn die3d(v: u8) -> impl IntoView {
 
 // --- Обучение (туториал) ---
 
-/// Один шаг туториала: заголовок, пояснение, пример позиции, бросок двух костей
-/// (заранее заданный, без случайности; первое значение — то, которым делается ход)
-/// и подсвеченные клетки.
+/// Один шаг туториала = граница хода: позиция `before` в начале шага и заранее
+/// заданный (без случайности) бросок `roll` для хода из этой позиции в следующую.
+/// Ход вычисляет сам движок (`legal_turns`), поэтому он гарантированно легален и
+/// соблюдает правило максимального хода. `None` в `roll` — шаг-пояснение без хода.
 struct Lesson {
     title: &'static str,
     text: &'static str,
-    state: GameState,
-    roll: Option<(u8, u8)>,
-    hl: Vec<(usize, usize)>,
+    before: GameState,
+    roll: Option<DiceRoll>,
+}
+
+/// Пара значений → бросок двух костей.
+fn dr(a: u8, b: u8) -> DiceRoll {
+    DiceRoll::new(Die::new(a).expect("1..6"), Die::new(b).expect("1..6"))
 }
 
 /// Шаги туториала: **одна** фишка A проходит весь путь по заранее заданным броскам —
@@ -1207,186 +1212,104 @@ struct Lesson {
 /// (3) → Дом. На каждом шаге показана кость, которой сделан этот ход.
 fn lessons() -> Vec<Lesson> {
     use Side::{A, C};
-    // База: партия вдвоём (A против C). Демонстрационная фишка — `checkers[0]` (A).
-    let base = || GameState::new(vec![A, C], A);
-    let cell = |side: Side, local: u8| margin_coord(side.local_to_perimeter(local));
-    let prog = |p: u16| margin_coord(A.entry().advance(p as usize));
-    // Состояние, где у демонстрационной фишки задана позиция `pos`.
-    let at = |pos: Position| {
-        let mut s = base();
-        s.checkers[0].pos = pos;
+    // База-позиция: демо-фишка A (`checkers[0]`) в `a0`; остальные 3 фишки A — в Доме
+    // (инертны, ходит только демо-фишка); фишка-мишень C — на клетке прогресса 28 (её
+    // съедим), остальные C — в Доме. Ходы из таких позиций считает движок (legal_turns).
+    let base = |a0: Position| {
+        let mut s = GameState::new(vec![A, C], A);
+        s.checkers.clear();
+        s.checkers.push(Checker { owner: A, pos: a0 });
+        for d in 1..4u8 {
+            s.checkers.push(Checker {
+                owner: A,
+                pos: Position::Home { depth: d },
+            });
+        }
+        let c_cell = A.entry().advance(28); // абс. клетка прогресса 28 (мишень)
+        s.checkers.push(Checker {
+            owner: C,
+            pos: Position::OnTrack {
+                progress: C.progress_of(c_cell),
+            },
+        });
+        for d in 1..4u8 {
+            s.checkers.push(Checker {
+                owner: C,
+                pos: Position::Home { depth: d },
+            });
+        }
         s
     };
-    let prison_far = A.local_to_perimeter(LOCAL_PRISON_FAR); // 4-я клетка от угла, прогресс 5
-    let moon_exit = 25u16; // сход с Луны соседней стороны (B, локально 16)
+    let prison = A.local_to_perimeter(LOCAL_PRISON_FAR);
+    let moon = |field| Position::Moon {
+        side: Side::B,
+        field,
+    };
 
     vec![
         Lesson {
-            title: "Цель игры",
-            text: "У каждого игрока 4 фишки. Все начинают «в резерве» — снаружи доски у своего Дома. \
-                   Задача: обойти доску против часовой стрелки и завести все 4 фишки в свой Дом. Кто \
-                   первым соберёт Дом — победил. Сейчас одна фишка пройдёт весь путь — нажимайте «▶».",
-            roll: None,
-            hl: vec![],
-            state: base(),
+            title: "Цель и ввод",
+            text: "У каждого 4 фишки в резерве; цель — обойти доску против часовой и собрать все в \
+                   своём Доме. Выпало 6 и 5: по 6 фишка входит на точку входа, оставшейся 5 доходит \
+                   до Тюрьмы. Нажмите фишку, затем клетку — или ▶.",
+            before: base(Position::Reserve),
+            roll: Some(dr(6, 5)),
         },
         Lesson {
-            title: "Ввод фишки — выпало 6",
-            text: "Фишки вводятся в игру выбросом 6 (важно значение на ОДНОЙ кости, не сумма). Фишка \
-                   встаёт на точку входа (подсвечена). Поставить туда вторую свою фишку нельзя, а \
-                   чужую — можно съесть, вводя свою.",
-            roll: Some((6, 3)),
-            hl: vec![cell(A, 9)],
-            state: at(Position::OnTrack { progress: 0 }),
+            title: "Тюрьма",
+            text: "Тюрьма (4-я клетка от угла) держит фишку: выйти можно только выбросив 4 — она \
+                   выпала. Оставшейся 6 фишка идёт дальше и попадает на Луну. Сделайте ход.",
+            before: base(Position::Prison { cell: prison }),
+            roll: Some(dr(4, 6)),
         },
         Lesson {
-            title: "Тюрьма — выпало 5",
-            text: "Сходив на 5, фишка встала на 4-ю клетку от угла — Тюрьму (подсвечена) — и застряла. \
-                   Двигаться отсюда нельзя; единственный выход — выбросить 4. Тюрьмой удобно \
-                   блокировать чужие фишки.",
-            roll: Some((5, 2)),
-            hl: vec![cell(A, LOCAL_PRISON_FAR)],
-            state: at(Position::Prison { cell: prison_far }),
+            title: "Луна",
+            text: "Луна — короткий безопасный путь по полям 1·3·6 (съесть на ней нельзя). Выпало 1 — \
+                   переход с поля «1» на «3». Вторая кость (2) не играется: на Луне нужно точное \
+                   значение, а других фишек в игре нет. Сделайте ход.",
+            before: base(moon(MoonField::One)),
+            roll: Some(dr(1, 2)),
         },
         Lesson {
-            title: "Выход из Тюрьмы — выпало 4",
-            text: "Выбросив 4, фишка освобождается — но остаётся на той же клетке (никуда не \
-                   продвигается) и на выходе не ест. Зато теперь ею снова можно ходить.",
-            roll: Some((4, 1)),
-            hl: vec![cell(A, LOCAL_PRISON_FAR)],
-            state: at(Position::OnTrack { progress: 5 }),
+            title: "Дорожка Луны",
+            text: "Выпало 3 — переход с поля «3» на «6». Осталось выбросить 6, чтобы сойти с Луны. \
+                   Сделайте ход.",
+            before: base(moon(MoonField::Three)),
+            roll: Some(dr(3, 2)),
         },
         Lesson {
-            title: "Луна — выпало 6",
-            text: "Сходив на 6, фишка попала на Луну (2-я клетка от угла, подсвечена) и улетела на \
-                   внутреннюю дорожку — на поле «1». Луна — короткий и безопасный путь: на ней фишку \
-                   нельзя съесть.",
-            roll: Some((6, 2)),
-            hl: vec![cell(Side::B, LOCAL_MOON)],
-            state: at(Position::Moon {
-                side: Side::B,
-                field: MoonField::One,
-            }),
+            title: "Сход с Луны и съедание",
+            text: "Выпало 6 и 3: по 6 фишка сходит с Луны на доску, а оставшейся 3 встаёт на клетку с \
+                   фишкой соперника впереди и съедает её. На углах, Луне и в Тюрьме не едят. \
+                   Сделайте ход.",
+            before: base(moon(MoonField::Six)),
+            roll: Some(dr(6, 3)),
         },
         Lesson {
-            title: "Дорожка Луны: «1» → «3» — выпало 1",
-            text: "На поле «1» продвигает только выброс 1 — фишка переходит на поле «3». Дорожка Луны \
-                   проходится по порядку: 1 · 3 · 6.",
-            roll: Some((1, 5)),
-            hl: vec![],
-            state: at(Position::Moon {
-                side: Side::B,
-                field: MoonField::Three,
-            }),
-        },
-        Lesson {
-            title: "Дорожка Луны: «3» → «6» — выпало 3",
-            text: "С поля «3» нужен выброс 3 — фишка переходит на поле «6». Осталось выбросить 6, \
-                   чтобы сойти с Луны.",
-            roll: Some((3, 4)),
-            hl: vec![],
-            state: at(Position::Moon {
-                side: Side::B,
-                field: MoonField::Six,
-            }),
-        },
-        Lesson {
-            title: "Сход с Луны — выпало 6",
-            text: "С поля «6» выброс 6 выводит фишку с Луны на доску — на клетку, симметричную входу \
-                   относительно Дома (подсвечена), заметно ближе к цели. Впереди стоит фишка \
-                   соперника — её мы сейчас и съедим.",
-            roll: Some((6, 1)),
-            hl: vec![cell(Side::B, LOCAL_MOON_EXIT)],
-            state: {
-                let mut s = at(Position::OnTrack { progress: moon_exit });
-                // Фишка C впереди (на клетке прогресса 28), которую съедим на след. шаге.
-                s.checkers[4].pos = Position::OnTrack {
-                    progress: C.progress_of(A.entry().advance((moon_exit + 3) as usize)),
-                };
-                s
-            },
-        },
-        Lesson {
-            title: "Съедание — выпало 3",
-            text: "Встав на клетку с фишкой соперника, наша фишка съедает её: пленная уходит к нашему \
-                   Дому (с красной обводкой). На углах, Луне и в Тюрьме не едят.",
-            roll: Some((3, 5)),
-            hl: vec![prog(moon_exit + 3)],
-            state: {
-                let mut s = at(Position::OnTrack {
-                    progress: moon_exit + 3,
-                });
+            title: "Плен и выкуп",
+            text: "Съеденная фишка соперника — в плену у вашего Дома (с красной обводкой). Чтобы \
+                   вернуть свою пленную, её владелец выбрасывает 6 (выкуп) и обязывает соперника \
+                   сходить на 6, а затем ещё 6 — для повторного ввода. Дальше →.",
+            before: {
+                let mut s = base(Position::OnTrack { progress: 28 });
                 s.checkers[4].pos = Position::Captured { captor: A };
                 s
             },
-        },
-        Lesson {
-            title: "Выкуп пленных",
-            text: "Чтобы вернуть пленную фишку, её владелец выбрасывает 6 — и тогда соперник обязан \
-                   сразу сделать ответный ход на 6 клеток. Затем нужна ещё одна 6, чтобы ввести \
-                   выкупленную фишку обратно в игру. Отказать в выкупе нельзя.",
             roll: None,
-            hl: vec![],
-            state: {
-                let mut s = at(Position::OnTrack {
-                    progress: moon_exit + 3,
-                });
-                s.checkers[4].pos = Position::Captured { captor: A };
-                s
-            },
         },
         Lesson {
             title: "Дом и победа",
-            text: "Дойдя до Дома, фишка заходит в него ровно по броску — по одной в клетку; \
-                   перепрыгивать занятые клетки Дома нельзя (но можно идти глубже, освобождая место). \
-                   Чужие фишки в Дом не пускают. Заведите все 4 фишки в Дом — и вы выиграли!",
-            roll: None,
-            hl: vec![],
-            state: {
-                let mut s = base();
+            text: "Дойдя до Дома, фишка заходит ровно по броску — по одной в клетку; перепрыгивать \
+                   занятые клетки Дома нельзя (но можно идти глубже). Чужие фишки в Дом не пускают. \
+                   Заведите все 4 фишки в Дом — и вы выиграли!",
+            before: {
+                let mut s = base(Position::Home { depth: 0 });
                 s.checkers[0].pos = Position::Home { depth: 0 };
-                s.checkers[1].pos = Position::Home { depth: 1 };
-                s.checkers[2].pos = Position::Home { depth: 2 };
-                s.checkers[3].pos = Position::OnTrack { progress: 66 };
                 s
             },
+            roll: None,
         },
     ]
-}
-
-/// Подсветка клеток `hl` (пульсирующие кольца) — слой поверх доски в туториале.
-fn tutorial_highlights(hl: &[(usize, usize)]) -> Vec<AnyView> {
-    hl.iter()
-        .map(|&(r, c)| {
-            let (cx, cy) = center_pt((r, c));
-            view! { <circle cx=cx cy=cy r=0.52 fill="none" class="tutorial-hl" /> }.into_any()
-        })
-        .collect()
-}
-
-/// Промежуточные позиции демонстрационной фишки (A) при переходе `from`→`to` для
-/// пошаговой анимации (без конечной — её даёт финальный кадр). Простые переходы
-/// (ввод, освобождение, поля Луны, заход в Дом) идут без промежуточных кадров.
-fn tut_path(from: Position, to: Position) -> Vec<Position> {
-    let a = Side::A;
-    match (from, to) {
-        (Position::OnTrack { progress: f }, Position::OnTrack { progress: t }) if t > f => {
-            (f + 1..t).map(|p| Position::OnTrack { progress: p }).collect()
-        }
-        (Position::OnTrack { progress: f }, Position::Prison { cell }) => {
-            let pc = a.progress_of(cell);
-            let mut v: Vec<Position> = (f + 1..pc).map(|p| Position::OnTrack { progress: p }).collect();
-            v.push(Position::OnTrack { progress: pc }); // встаём на клетку Тюрьмы
-            v
-        }
-        (Position::OnTrack { progress: f }, Position::Moon { side, .. }) => {
-            let pm = a.progress_of(side.local_to_perimeter(LOCAL_MOON));
-            let mut v: Vec<Position> = (f + 1..pm).map(|p| Position::OnTrack { progress: p }).collect();
-            v.push(Position::OnTrack { progress: pm }); // встаём на клетку Луны
-            v
-        }
-        _ => vec![],
-    }
 }
 
 /// Клетка, на которую игроку нужно нажать, чтобы привести демонстрационную фишку в
@@ -1402,38 +1325,35 @@ fn target_cell(pos: Position) -> Option<(usize, usize)> {
     }
 }
 
-/// Кадры перехода к шагу туториала: бросок кости (если есть) + пошаговое движение
-/// демонстрационной фишки от `from` к `to`.
-fn tutorial_frames(from: &GameState, to: &Lesson) -> Vec<Frame> {
-    let mut frames = Vec::new();
-    if to.roll.is_some() {
-        frames.push(Frame {
-            state: from.clone(),
-            roll: None,
+/// Единственный легальный ход из позиции `before` при броске `roll` — его вычисляет
+/// движок (`legal_turns` уже соблюдает правило максимального хода). В позициях
+/// туториала ход однозначен, так что просто берём первый.
+fn chosen_turn(before: &GameState, roll: DiceRoll) -> Vec<Move> {
+    legal_turns(before, roll)
+        .into_iter()
+        .next()
+        .unwrap_or_default()
+}
+
+/// Кадры броска кости БЕЗ движения фишки: кубики кувыркаются (3D), затем застывают.
+/// Бросок происходит ДО хода игрока (как в реальной игре).
+fn roll_only_frames(state: &GameState, roll: DiceRoll) -> Vec<Frame> {
+    vec![
+        Frame {
+            state: state.clone(),
+            roll: Some(roll),
             hold: ROLL_ANIM_MS,
             rolling: true,
             note: None,
-        });
-    }
-    for pos in tut_path(from.checkers[0].pos, to.state.checkers[0].pos) {
-        let mut mid = from.clone();
-        mid.checkers[0].pos = pos;
-        frames.push(Frame {
-            state: mid,
-            roll: None,
-            hold: HOLD_STEP_MS,
+        },
+        Frame {
+            state: state.clone(),
+            roll: Some(roll),
+            hold: HOLD_ROLL_MS,
             rolling: false,
             note: None,
-        });
-    }
-    frames.push(Frame {
-        state: to.state.clone(),
-        roll: None,
-        hold: HOLD_STEP_MS,
-        rolling: false,
-        note: None,
-    });
-    frames
+        },
+    ]
 }
 
 #[component]
@@ -1455,8 +1375,6 @@ fn App() -> impl IntoView {
     let tutorial = RwSignal::new(false);
     let lesson_idx = RwSignal::new(0usize);
     let lessons_sv = StoredValue::new(lessons());
-    // Кость текущего шага туториала (значение задано заранее, без случайности).
-    let tut_roll = RwSignal::new(None::<(u8, u8)>);
     // Выбрана ли демонстрационная фишка (первый клик хода в туториале).
     let tut_sel = RwSignal::new(false);
     // Стороны, финишировавшие (все фишки в Доме) — в порядке финиша.
@@ -1504,15 +1422,6 @@ fn App() -> impl IntoView {
             &humans.get_untracked(),
         ) {
             herald.set(msg);
-        }
-    });
-
-    // В туториале на покое показываем кости, которыми сделан ХОД В текущий шаг
-    // (совпадает с заголовком «выпало N»). Во время анимации не трогаем.
-    Effect::new(move |_| {
-        let i = lesson_idx.get();
-        if tutorial.get() && !animating.get() {
-            lessons_sv.with_value(|ls| tut_roll.set(ls[i].roll));
         }
     });
 
@@ -1871,7 +1780,14 @@ fn App() -> impl IntoView {
                             rolling.set(false);
                             lesson_idx.set(0);
                             tut_sel.set(false);
-                            lessons_sv.with_value(|ls| { tut_roll.set(ls[0].roll); game.set(Game::new(ls[0].state.clone())); });
+                            lessons_sv.with_value(|ls| {
+                                game.set(Game::new(ls[0].before.clone()));
+                                // Первый бросок — до первого хода.
+                                match ls[0].roll {
+                                    Some(r) => play(roll_only_frames(&ls[0].before, r)),
+                                    None => roll.set(None),
+                                }
+                            });
                             tutorial.set(true);
                         }>"🎓 Обучение"</button>
                         <button on:click=move |_| rules.set(true)>"📖 Правила"</button>
@@ -1932,18 +1848,44 @@ fn App() -> impl IntoView {
             // в игре (сигнал `game` + `play` + keyed-фишки со скольжением).
             {move || tutorial.get().then(|| {
                 let total = lessons_sv.with_value(Vec::len);
-                // Переход к шагу `idx` с анимацией движения и броска кости.
-                let go = move |idx: usize| {
+                // Переход к следующему шагу: проигрываем легальный ход текущего шага
+                // (его считает движок), а затем сразу бросаем кости следующего шага —
+                // чтобы бросок был ДО следующего хода игрока.
+                let advance = move || {
                     if animating.get_untracked() {
                         return;
                     }
-                    let from = game.get_untracked().state.clone();
-                    tut_sel.set(false);
-                    lesson_idx.set(idx);
+                    let cur = lesson_idx.get_untracked();
                     lessons_sv.with_value(|ls| {
-                        // Кости хода В этот шаг — крутятся во время анимации.
-                        tut_roll.set(ls[idx].roll);
-                        play(tutorial_frames(&from, &ls[idx]));
+                        if cur + 1 >= ls.len() {
+                            return;
+                        }
+                        tut_sel.set(false);
+                        let next_before = ls[cur + 1].before.clone();
+                        let next_roll = ls[cur + 1].roll;
+                        match ls[cur].roll {
+                            Some(r) => {
+                                // Ход текущего шага (без анимации броска — он уже был).
+                                let mut gg = Game::new(ls[cur].before.clone());
+                                let mut frames = Vec::new();
+                                commit_frames(&mut frames, &mut gg, r, chosen_turn(&ls[cur].before, r), &[], false, |_, _, _| 0);
+                                match next_roll {
+                                    Some(nr) => frames.extend(roll_only_frames(&gg.state, nr)),
+                                    None => frames.push(Frame { state: gg.state.clone(), roll: None, hold: HOLD_STEP_MS, rolling: false, note: None }),
+                                }
+                                lesson_idx.set(cur + 1);
+                                play(frames);
+                            }
+                            None => {
+                                // Шаг-пояснение без хода — просто показываем следующий.
+                                lesson_idx.set(cur + 1);
+                                game.set(Game::new(next_before.clone()));
+                                match next_roll {
+                                    Some(nr) => play(roll_only_frames(&next_before, nr)),
+                                    None => roll.set(None),
+                                }
+                            }
+                        }
                     });
                 };
                 view! {
@@ -1977,17 +1919,16 @@ fn App() -> impl IntoView {
                         <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
                             {badge_view(game, b.key)}
                         </For>
-                        // Подсветка + интерактивный ход (не во время движения).
+                        // Интерактивный ход кликами (фишка → клетка), не во время движения.
                         {move || (!animating.get()).then(|| {
                             let cur = lesson_idx.get().min(total - 1);
                             lessons_sv.with_value(|ls| {
-                                let mut nodes = tutorial_highlights(&ls[cur].hl);
-                                // Ход к следующему шагу кликами: фишка → клетка.
+                                let mut nodes: Vec<AnyView> = Vec::new();
                                 if cur + 1 < ls.len()
-                                    && ls[cur + 1].roll.is_some()
-                                    && let Some(tgt) = target_cell(ls[cur + 1].state.checkers[0].pos)
+                                    && ls[cur].roll.is_some()
+                                    && let Some(tgt) = target_cell(ls[cur + 1].before.checkers[0].pos)
                                 {
-                                    let (sx, sy, _) = checker_xy(&ls[cur].state, 0);
+                                    let (sx, sy, _) = checker_xy(&ls[cur].before, 0);
                                     let (tx, ty) = center_pt(tgt);
                                     let sel = tut_sel.get();
                                     let src_cls = if sel { "hl-sel" } else { "hl-src" };
@@ -1995,15 +1936,17 @@ fn App() -> impl IntoView {
                                     nodes.push(view! { <circle cx=sx cy=sy r=0.5 class="hit" on:click=move |_| tut_sel.set(true) /> }.into_any());
                                     if sel {
                                         nodes.push(view! { <circle cx=tx cy=ty r=0.47 fill="none" class="hl-dst" /> }.into_any());
-                                        nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| go(cur + 1) /> }.into_any());
+                                        nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| advance() /> }.into_any());
                                     }
                                 }
                                 nodes
                             })
                         })}
                     </svg>
-                    // Две кости у Дома демонстрационной стороны (A) — как в реальной игре.
-                    {move || tut_roll.get().map(|(a, b)| {
+                    // Две кости у Дома демонстрационной стороны (A) — как в реальной игре
+                    // (через тот же сигнал `roll`, что и в партии).
+                    {move || roll.get().map(|r| {
+                        let [a, b] = r.values();
                         let (ax, ay) = outside_anchor(Side::A, DICE_OUT);
                         let (out, _) = reserve_axes(Side::A);
                         let vertical = out.0 != 0.0;
@@ -2021,18 +1964,20 @@ fn App() -> impl IntoView {
                     // Навигация по шагам — стрелки по краям доски.
                     <button class="nav-arrow left" title="Назад"
                         on:click=move |_| {
-                            // Назад — мгновенно (без анимации и броска).
+                            // Назад — мгновенно: ставим позицию и показываем её кости.
                             epoch.update_value(|e| *e += 1);
                             animating.set(false);
                             rolling.set(false);
                             tut_sel.set(false);
                             let i = lesson_idx.get_untracked().saturating_sub(1);
                             lesson_idx.set(i);
-                            // Кости предстоящего хода выставит Effect; ставим позицию.
-                            lessons_sv.with_value(|ls| game.set(Game::new(ls[i].state.clone())));
+                            lessons_sv.with_value(|ls| {
+                                game.set(Game::new(ls[i].before.clone()));
+                                roll.set(ls[i].roll);
+                            });
                         }>"◀"</button>
                     <button class="nav-arrow right" title="Далее"
-                        on:click=move |_| go((lesson_idx.get_untracked() + 1).min(total - 1))>"▶"</button>
+                        on:click=move |_| advance()>"▶"</button>
                     </div>
                     </div>
                     <p class="lesson-text">{move || {
@@ -2040,7 +1985,7 @@ fn App() -> impl IntoView {
                     }}</p>
                     {move || lessons_sv.with_value(|ls| {
                         let cur = lesson_idx.get().min(total - 1);
-                        (cur + 1 < ls.len() && ls[cur + 1].roll.is_some()).then(|| view! {
+                        ls[cur].roll.is_some().then(|| view! {
                             <p class="lesson-hint">"👆 Сделайте ход сами: нажмите на фишку, затем на подсвеченную клетку. Или жмите ▶."</p>
                         })
                     })}
