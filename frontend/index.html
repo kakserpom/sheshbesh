@@ -22,9 +22,12 @@
       padding: .4rem .6rem; width: 100%; max-width: 1100px;
     }
     h1 { font-weight: 600; margin: .2rem 0; font-size: 1.4rem; text-align: center; }
+    /* Единая верхняя полоса: кнопки управления + статус-ведущий в один ряд, чтобы
+       не красть высоту у доски. */
     .status {
-      display: flex; align-items: center; justify-content: center; gap: .7rem;
-      font-size: 1.15rem; margin: .4rem 0; min-height: 2.1rem; text-align: center;
+      display: flex; align-items: center; justify-content: center; gap: .6rem;
+      flex-wrap: wrap; font-size: 1.05rem; margin: .25rem 0; min-height: 2.2rem;
+      text-align: center;
     }
     .herald { font-weight: 500; }
     /* Экран настроек */
@@ -43,12 +46,12 @@
     .rules .lead { color: #94a3b8; font-style: italic; }
     .rules ul { margin: .2rem 0; padding-left: 1.2rem; }
     .rules li { margin: .25rem 0; }
-    .lesson-text { max-width: 40rem; margin: .6rem auto 1.5rem; line-height: 1.5; color: #cbd5e1; text-align: center; padding: 0 1rem; }
+    .lesson-text { max-width: 40rem; margin: .4rem auto .6rem; line-height: 1.45; color: #cbd5e1; text-align: center; padding: 0 1rem; }
     .nav-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 2.6rem; height: 2.6rem; border-radius: 50%; font-size: 1.3rem; opacity: .85; }
     .nav-arrow.left { left: .2rem; }
     .nav-arrow.right { right: .2rem; }
     .nav-arrow:hover { opacity: 1; }
-    .lesson-hint { text-align: center; color: #fcd34d; margin: -.6rem 0 1.2rem; font-size: .95rem; }
+    .lesson-hint { text-align: center; color: #fcd34d; margin: -.2rem 0 .5rem; font-size: .95rem; }
     .tutorial-hl { stroke: #facc15; stroke-width: .08; opacity: .9; }
     @keyframes hl-pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
     .tutorial-hl { animation: hl-pulse 1.4s ease-in-out infinite; }

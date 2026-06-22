@@ -1828,7 +1828,10 @@ fn App() -> impl IntoView {
 
     view! {
         <div class="wrap">
-            <h1>"Шеш-Беш"</h1>
+            // Заголовок — только на экране настроек; в партии/обучении он лишь крал бы
+            // высоту у доски.
+            {move || (!started.get() && !dev.get() && !rules.get() && !tutorial.get())
+                .then(|| view! { <h1>"Шеш-Беш"</h1> })}
             // Экран настроек до старта партии: число игроков и тип каждой стороны.
             {move || (!started.get() && !dev.get() && !rules.get() && !tutorial.get()).then(|| view! {
                 <div class="settings">
@@ -2070,13 +2073,11 @@ fn App() -> impl IntoView {
                 };
                 view! {
                     <div class="status">
+                        <button class="icon-btn" title="Настройки" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
                         <span class="herald">{move || {
                             let i = lesson_idx.get();
                             lessons_sv.with_value(|ls| format!("Шаг {}/{total}: {}", i + 1, ls[i].title))
                         }}</span>
-                    </div>
-                    <div class="controls">
-                        <button on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"← Настройки"</button>
                     </div>
                     <div class="board-area">
                     <div class="board-wrap">
@@ -2220,8 +2221,13 @@ fn App() -> impl IntoView {
                     <p class="lesson-text">{move || {
                         // Пока кости кувыркаются — нейтральная заглушка: текст урока
                         // называет выпавшие значения и спойлерил бы ещё не вставший бросок.
+                        // Кости противника (ход C) подписываем отдельно.
                         if rolling.get() {
-                            "🎲 Бросаем кости…".to_string()
+                            if game.get().state.to_move == Side::A {
+                                "🎲 Бросаем кости…".to_string()
+                            } else {
+                                "🎲 Противник бросает кости…".to_string()
+                            }
                         } else {
                             lessons_sv.with_value(|ls| ls[lesson_idx.get().min(total - 1)].text.to_string())
                         }
@@ -2294,15 +2300,13 @@ fn App() -> impl IntoView {
             // Игровой экран после старта.
             {move || started.get().then(|| view! {
             <div class="status">
-                <span class="herald" inner_html=move || herald.get()></span>
-            </div>
-            <div class="controls">
                 <button class="icon-btn" title="Закончить игру" on:click=to_settings>"⏹"</button>
                 <button class="icon-btn" class:on=move || paused.get()
                     title=move || if paused.get() { "Продолжить" } else { "Пауза" }
                     on:click=move |_| paused.update(|p| *p = !*p)>
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
+                <span class="herald" inner_html=move || herald.get()></span>
                 {move || {
                     let g = game.get();
                     let no_moves = roll.get().is_some()
