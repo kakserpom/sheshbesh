@@ -1022,50 +1022,60 @@ pub(crate) fn App() -> impl IntoView {
                         }
                     }
                     let sel_cell = match cur { Some(Sel::Cell(r, c)) => Some((r, c)), _ => None };
-                    let pt_of = |coord: (usize, usize)| {
-                        prison_cage(coord).unwrap_or_else(|| center_pt(coord))
+                    // Источник «в каземате» (настоящий пленник) рисуем рамкой вокруг
+                    // каземата; фишку на клетке/выходе (в т.ч. уже освобождённую) — кружком
+                    // в её НАСТОЯЩЕЙ точке (по центру клетки), а не в каземате.
+                    let caged = |rc: (usize, usize)| {
+                        cands.iter().any(|&m| {
+                            move_source(&ps, m) == Sel::Cell(rc.0, rc.1)
+                                && matches!(ps.checkers[m.checker].pos, Position::Prison { .. })
+                        })
                     };
 
                     let mut nodes: Vec<AnyView> = Vec::new();
                     let ring_pt = |cx: f64, cy: f64, cls: &'static str| {
                         view! { <circle cx=cx cy=cy r=0.47 fill="none" class=cls /> }.into_any()
                     };
-                    let ring = |coord: (usize, usize), cls: &'static str| {
-                        let (cx, cy) = pt_of(coord);
-                        ring_pt(cx, cy, cls)
+                    let cage_ring = |rc: (usize, usize), cls: &'static str| {
+                        let (x, y, w, h) = cage_rect(rc).expect("cage rect");
+                        view! { <rect x=x y=y width=w height=h rx=0.25 ry=0.25 fill="none" class=cls /> }.into_any()
+                    };
+                    let pt_hl = |rc: (usize, usize), cls: &'static str| {
+                        if caged(rc) {
+                            cage_ring(rc, cls)
+                        } else {
+                            let (cx, cy) = center_pt(rc);
+                            ring_pt(cx, cy, cls)
+                        }
                     };
                     if let Some(rc) = sel_cell {
-                        nodes.push(ring(rc, "hl-sel"));
+                        nodes.push(pt_hl(rc, "hl-sel"));
                     }
-                    // Цели рисуем на самой клетке (центр), а НЕ через `pt_of`: для входа в
-                    // Тюрьму это клетка периметра, а не каземат.
+                    // Цели — на самой клетке (центр): для входа в Тюрьму это клетка
+                    // периметра, а не каземат.
                     for &rc in &dsts {
                         let (cx, cy) = center_pt(rc);
                         nodes.push(ring_pt(cx, cy, "hl-dst"));
                     }
                     if cur.is_none() {
                         for &rc in &srcs {
-                            nodes.push(ring(rc, "hl-src"));
-                            // Пленную фишку можно освободить, кликнув и по самой клетке
-                            // Тюрьмы (не только по каземату) — подсветим её тоже.
-                            if prison_cage(rc).is_some() {
-                                let (cx, cy) = center_pt(rc);
-                                nodes.push(ring_pt(cx, cy, "hl-src"));
-                                nodes.push(view! {
-                                    <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(rc.0, rc.1)) />
-                                }.into_any());
-                            }
+                            nodes.push(pt_hl(rc, "hl-src"));
                         }
                     }
-                    // Кликабельные зоны: источники/выбранная — в точке фишки (каземат для
-                    // пленённых), цели — в центре клетки входа.
+                    // Кликабельные зоны: каземат — по рамке И по самой клетке Тюрьмы;
+                    // остальное — по центру клетки. Цели — по центру клетки.
                     let mut src_hits: Vec<(usize, usize)> = srcs.clone();
                     if let Some(rc) = sel_cell { src_hits.push(rc); }
-                    for (r, c) in src_hits {
-                        let (cx, cy) = pt_of((r, c));
+                    for rc in src_hits {
+                        let (cx, cy) = center_pt(rc);
                         nodes.push(view! {
-                            <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
+                            <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(rc.0, rc.1)) />
                         }.into_any());
+                        if caged(rc) && let Some((x, y, w, h)) = cage_rect(rc) {
+                            nodes.push(view! {
+                                <rect x=x y=y width=w height=h class="hit" on:click=move |_| click(Sel::Cell(rc.0, rc.1)) />
+                            }.into_any());
+                        }
                     }
                     for &(r, c) in &dsts {
                         let (cx, cy) = center_pt((r, c));

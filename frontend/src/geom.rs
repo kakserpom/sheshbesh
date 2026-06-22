@@ -188,8 +188,16 @@ pub(crate) fn prison_geom(coord: (usize, usize)) -> Option<PrisonGeom> {
     prison_geoms().into_iter().find(|p| p.coord == coord)
 }
 
-pub(crate) fn prison_cage(coord: (usize, usize)) -> Option<(f64, f64)> {
-    prison_geom(coord).map(|p| p.cage)
+/// Прямоугольник каземата `(x, y, ширина, высота)` для рамки-обводки (как у резерва).
+/// Длинная ось — вдоль стороны (`CAGE_HALF_LEN`), короткая — вглубь (`CAGE_HALF_DEPTH`).
+pub(crate) fn cage_rect(coord: (usize, usize)) -> Option<(f64, f64, f64, f64)> {
+    let g = prison_geom(coord)?;
+    let (hw, hh) = if g.vertical {
+        (CAGE_HALF_DEPTH, CAGE_HALF_LEN)
+    } else {
+        (CAGE_HALF_LEN, CAGE_HALF_DEPTH)
+    };
+    Some((g.cage.0 - hw, g.cage.1 - hh, 2.0 * hw, 2.0 * hh))
 }
 
 /// Точка слота `k` из `n` по длинной оси каземата (центрирована, симметрична).
