@@ -1036,7 +1036,7 @@ pub(crate) fn App() -> impl IntoView {
                     // стороны — длинная ось, поперёк — короткая.
                     let res_half = |side: Side| -> (f64, f64) {
                         let (_, along) = reserve_axes(side);
-                        let (long, short) = (1.5 * RESERVE_GAP + 0.5, 0.5);
+                        let (long, short) = (1.5 * RESERVE_GAP + 0.42, 0.42);
                         if along.0.abs() > along.1.abs() { (long, short) } else { (short, long) }
                     };
                     let mut zone = |kind: Sel, side: Side, out_dist: f64, boxed: bool| {
