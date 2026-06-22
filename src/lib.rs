@@ -27,7 +27,7 @@ pub use ai::Heuristic;
 pub use board::{CellKind, PerimeterIdx, Side};
 pub use dice::{DiceRoll, Die};
 pub use encode::{FEATURES, encode, encode_into, rotate_state};
-pub use eval::{match_winrate, play_game_2p};
+pub use eval::{match_winrate, play_game, play_game_2p, winrate_ffa, winrate_teams};
 pub use learn::{LinearValue, MlpValue, TdConfig, TdModel, train, train_mlp, train_with};
 pub use moves::{Move, MoveKind, apply, legal_moves, legal_turns, max_pips};
 pub use render::{
@@ -36,6 +36,6 @@ pub use render::{
 pub use state::{Checker, GameState, MoonField, Position};
 pub use turn::{
     Agent, DiceSource, FirstChoice, Game, RandomDice, ScriptedDice, TurnOutcome, determine_first,
-    next_active_side,
+    next_active_side, team_of, winners_of,
 };
 pub use value::{Value, ValueAgent, best_forced, best_turn};

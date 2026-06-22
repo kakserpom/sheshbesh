@@ -124,6 +124,39 @@ pub fn determine_first<D: DiceSource>(dice: &mut D, active: &[Side]) -> Side {
     }
 }
 
+/// Команда стороны при игре 2×2 (противоположные стороны — союзники): 0 = A/C, 1 = B/D.
+pub fn team_of(side: Side) -> usize {
+    side.index() % 2
+}
+
+/// Победители партии (стороны с `z = 1`), либо `None`, если партия не окончена.
+/// Командный режим (`state.teams` при 4 сторонах): победа, когда **обе** стороны
+/// команды завели фишки в Дом → возвращаются обе. Иначе (каждый сам за себя, вкл.
+/// 2 игрока): первая финишировавшая сторона.
+pub fn winners_of(state: &GameState) -> Option<Vec<Side>> {
+    if state.teams && state.active.len() == 4 {
+        for t in 0..2 {
+            let members: Vec<Side> = state
+                .active
+                .iter()
+                .copied()
+                .filter(|&s| team_of(s) == t)
+                .collect();
+            if !members.is_empty() && members.iter().all(|&s| state.has_won(s)) {
+                return Some(members);
+            }
+        }
+        None
+    } else {
+        state
+            .active
+            .iter()
+            .copied()
+            .find(|&s| state.has_won(s))
+            .map(|s| vec![s])
+    }
+}
+
 /// Следующая активная сторона в порядке против часовой стрелки (A→B→C→D).
 pub fn next_active_side(active: &[Side], current: Side) -> Side {
     for step in 1..=Side::ALL.len() {
@@ -193,6 +226,11 @@ impl Game {
             .iter()
             .copied()
             .find(|&s| self.state.has_won(s))
+    }
+
+    /// Победители партии с учётом режима (см. `winners_of`).
+    pub fn winners(&self) -> Option<Vec<Side>> {
+        winners_of(&self.state)
     }
 
     /// Применяет уже выбранную последовательность ходов и завершает ход.

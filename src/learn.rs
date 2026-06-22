@@ -5,13 +5,15 @@
 //! сторона `p` выиграет из позиции `s` (признаки `φ` — см. `encode`). Агент ходит
 //! жадно по ценности **афтерстейта** (`ValueAgent`).
 //!
-//! Обучение (2 игрока, zero-sum). Self-play текущими весами даёт траекторию
-//! афтерстейтов с пометкой, кто их создал. Для каждой стороны `p` берём её
-//! подпоследовательность афтерстейтов и применяем TD(λ) (backward-view, γ = 1):
-//! бутстрап к ценности **своего следующего** афтерстейта, а в конце — терминал
-//! `z = 1` победителю и `0` проигравшему. Так значение учится быть вероятностью
-//! победы. Все афтерстейты — «ход только что сделан, очередь соперника», поэтому
-//! очередь хода в признаки кодировать не нужно.
+//! Обучение. Self-play текущими весами (`TdConfig.active`/`teams` задают режим) даёт
+//! траекторию афтерстейтов с пометкой, кто их создал. Для **каждой** активной стороны
+//! `p` берём её подпоследовательность афтерстейтов и применяем TD(λ) (backward-view,
+//! γ = 1): бутстрап к ценности **своего следующего** афтерстейта, в конце — терминал
+//! `z = 1`, если `p` среди победителей (`winners_of`: первый финишировавший в FFA либо
+//! обе стороны команды-победителя), иначе `0`. Так значение учится быть вероятностью
+//! победы. Формулировка **per-player**, поэтому одинаково работает для 2 игроков
+//! (zero-sum), 3/4 (не zero-sum) и команд 2×2. Все афтерстейты — «ход только что
+//! сделан, очередь соперника», поэтому очередь хода в признаки кодировать не нужно.
 
 use crate::board::Side;
 use crate::encode::{FEATURES, encode_into};
@@ -34,10 +36,18 @@ fn afterstates_of(traj: &[(GameState, Side)], p: Side) -> Vec<&GameState> {
 
 /// Обучаемая методом TD(λ) функция ценности.
 pub trait TdModel: Value {
-    /// TD(λ)-обновление по траектории одной партии (афтерстейты + их авторы) и
-    /// победителю: для каждой стороны бутстрап к её следующему афтерстейту, в конце —
-    /// терминал `z = 1` победителю / `0` проигравшему (γ = 1).
-    fn td_update(&mut self, traj: &[(GameState, Side)], winner: Side, alpha: f32, lambda: f32);
+    /// TD(λ)-обновление по траектории одной партии (афтерстейты + их авторы). Для
+    /// каждой активной стороны бутстрап к её следующему афтерстейту, в конце —
+    /// терминал `z = 1`, если она в `winners` (победитель / команда-победитель), иначе
+    /// `0` (γ = 1). Подходит и для 2 игроков (zero-sum), и для 3/4 и команд.
+    fn td_update(
+        &mut self,
+        traj: &[(GameState, Side)],
+        winners: &[Side],
+        active: &[Side],
+        alpha: f32,
+        lambda: f32,
+    );
 }
 
 /// Мини-ГПСЧ `SplitMix64` для инициализации весов (детерминирован от зерна).
@@ -119,13 +129,20 @@ impl Value for LinearValue {
 
 impl TdModel for LinearValue {
     #[allow(clippy::needless_range_loop)] // индексация по признакам нагляднее
-    fn td_update(&mut self, traj: &[(GameState, Side)], winner: Side, alpha: f32, lambda: f32) {
-        for p in [Side::A, Side::C] {
+    fn td_update(
+        &mut self,
+        traj: &[(GameState, Side)],
+        winners: &[Side],
+        active: &[Side],
+        alpha: f32,
+        lambda: f32,
+    ) {
+        for &p in active {
             let states = afterstates_of(traj, p);
             if states.is_empty() {
                 continue;
             }
-            let z = f32::from(winner == p);
+            let z = f32::from(winners.contains(&p));
             let mut e = vec![0.0f32; FEATURES];
             let mut e_bias = 0.0f32;
             let mut buf = [0.0f32; FEATURES];
@@ -217,13 +234,20 @@ impl Value for MlpValue {
 
 impl TdModel for MlpValue {
     #[allow(clippy::needless_range_loop)] // индексация по нейронам/признакам нагляднее
-    fn td_update(&mut self, traj: &[(GameState, Side)], winner: Side, alpha: f32, lambda: f32) {
-        for p in [Side::A, Side::C] {
+    fn td_update(
+        &mut self,
+        traj: &[(GameState, Side)],
+        winners: &[Side],
+        active: &[Side],
+        alpha: f32,
+        lambda: f32,
+    ) {
+        for &p in active {
             let states = afterstates_of(traj, p);
             if states.is_empty() {
                 continue;
             }
-            let z = f32::from(winner == p);
+            let z = f32::from(winners.contains(&p));
             // Следы приемлемости на каждый параметр.
             let mut e_w1 = vec![0.0f32; self.w1.len()];
             let mut e_b1 = vec![0.0f32; self.hidden];
@@ -277,6 +301,10 @@ pub struct TdConfig {
     pub max_turns: usize,
     /// Зерно ГПСЧ костей.
     pub seed: u64,
+    /// Участники self-play (2 — противоположные; 3 — A/B/C; 4 — все).
+    pub active: Vec<Side>,
+    /// Командный режим 2×2 (только при 4 активных): союзники A+C против B+D.
+    pub teams: bool,
 }
 
 impl Default for TdConfig {
@@ -290,22 +318,28 @@ impl Default for TdConfig {
             lambda: 0.7,
             max_turns: 20_000,
             seed: 1,
+            active: vec![Side::A, Side::C],
+            teams: false,
         }
     }
 }
 
-/// Self-play партия текущей моделью (2 игрока, A против C, жадно по ценности).
-/// Возвращает траекторию афтерстейтов (позиция, кто ходил) и победителя.
+/// Self-play партия текущей моделью (любое число игроков, жадно по ценности).
+/// Возвращает траекторию афтерстейтов (позиция, кто ходил) и победителей (`z = 1`).
 fn play_and_record<V: Value>(
     model: &V,
+    active: &[Side],
+    teams: bool,
     dice: &mut impl DiceSource,
     max_turns: usize,
-) -> (Vec<(GameState, Side)>, Option<Side>) {
-    let mut game = Game::new(GameState::new(vec![Side::A, Side::C], Side::A));
+) -> (Vec<(GameState, Side)>, Vec<Side>) {
+    let mut state = GameState::new(active.to_vec(), active[0]);
+    state.teams = teams && active.len() == 4;
+    let mut game = Game::new(state);
     let mut traj = Vec::new();
     for _ in 0..max_turns {
-        if let Some(w) = game.winner() {
-            return (traj, Some(w));
+        if let Some(w) = game.winners() {
+            return (traj, w);
         }
         let mover = game.state.to_move;
         let roll = dice.roll();
@@ -317,17 +351,18 @@ fn play_and_record<V: Value>(
         });
         traj.push((game.state.clone(), mover));
     }
-    (traj, game.winner())
+    (traj, game.winners().unwrap_or_default())
 }
 
 /// Обучает произвольную `TdModel` методом TD(λ) в self-play и возвращает её.
 pub fn train_with<M: TdModel>(mut model: M, cfg: &TdConfig) -> M {
     let mut dice = RandomDice::from_seed(cfg.seed);
     for g in 0..cfg.games {
-        let (traj, winner) = play_and_record(&model, &mut dice, cfg.max_turns);
-        if let Some(w) = winner {
+        let (traj, winners) =
+            play_and_record(&model, &cfg.active, cfg.teams, &mut dice, cfg.max_turns);
+        if !winners.is_empty() {
             let alpha = cfg.alpha / (1.0 + cfg.alpha_decay * g as f32);
-            model.td_update(&traj, w, alpha, cfg.lambda);
+            model.td_update(&traj, &winners, &cfg.active, alpha, cfg.lambda);
         }
     }
     model
@@ -428,6 +463,47 @@ mod tests {
         assert!(
             vh > h,
             "обученный MLP должен обыгрывать Heuristic: {vh} к {h}"
+        );
+    }
+
+    // Фаза 5: обучение для 3/4 игроков и команд. Каждая модель должна обыгрывать
+    // эвристику — т.е. брать БОЛЬШЕ честной доли (1/n в FFA, 50% в командах).
+    // Запуск: cargo test --release -p sheshbesh trained_multi -- --ignored --nocapture
+    #[test]
+    #[ignore = "медленно: self-play обучение 3/4 игроков"]
+    fn trained_multiplayer_beats_share() {
+        use crate::eval::{winrate_ffa, winrate_teams};
+
+        // 3 игрока (каждый сам за себя): честная доля 33.3%.
+        let m3 = train(&TdConfig {
+            games: 10_000,
+            max_turns: 30_000,
+            active: vec![Side::A, Side::B, Side::C],
+            ..Default::default()
+        });
+        let (w3, g3) = winrate_ffa(&m3, &[Side::A, Side::B, Side::C], 600, 4242, 30_000);
+        println!(
+            "3p FFA: {w3}/{g3} ({:.1}%, fair 33.3%)",
+            100.0 * w3 as f64 / g3 as f64
+        );
+        assert!(3 * w3 > g3, "3p: модель должна брать больше 1/3: {w3}/{g3}");
+
+        // 4 игрока, командный режим 2×2: честная доля 50%.
+        let mt = train(&TdConfig {
+            games: 10_000,
+            max_turns: 30_000,
+            active: Side::ALL.to_vec(),
+            teams: true,
+            ..Default::default()
+        });
+        let (wt, gt) = winrate_teams(&mt, 600, 4242, 30_000);
+        println!(
+            "4p teams: {wt}/{gt} ({:.1}%, fair 50%)",
+            100.0 * wt as f64 / gt as f64
+        );
+        assert!(
+            2 * wt > gt,
+            "teams: команда модели должна брать больше 50%: {wt}/{gt}"
         );
     }
 }

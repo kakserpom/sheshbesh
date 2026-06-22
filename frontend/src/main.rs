@@ -17,12 +17,22 @@ use sheshbesh::{
 };
 use wasm_bindgen_futures::spawn_local;
 
-/// Веса обученной TD(λ)-ценности (LE f32), встроены в бинарь. См. `examples/export_model.rs`.
-static MODEL_BYTES: &[u8] = include_bytes!("model.bin");
+// Веса обученных TD(λ)-ценностей (LE f32) под каждый режим — компьютер ходит ими.
+// См. `examples/export_model.rs`.
+static MODEL_2P: &[u8] = include_bytes!("model.bin");
+static MODEL_3P: &[u8] = include_bytes!("model_3p.bin");
+static MODEL_4P: &[u8] = include_bytes!("model_4p.bin");
+static MODEL_4P_TEAMS: &[u8] = include_bytes!("model_4p_teams.bin");
 
-/// Загружает обученную линейную ценность из встроенных весов — ею ходит компьютер.
-fn ai_model() -> LinearValue {
-    let floats: Vec<f32> = MODEL_BYTES
+/// Линейная ценность из встроенных весов под число сторон и режим (команды 2×2).
+fn ai_model_for(active_len: usize, teams: bool) -> LinearValue {
+    let bytes = match (active_len, teams) {
+        (4, true) => MODEL_4P_TEAMS,
+        (4, false) => MODEL_4P,
+        (3, _) => MODEL_3P,
+        _ => MODEL_2P,
+    };
+    let floats: Vec<f32> = bytes
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
@@ -1182,8 +1192,6 @@ fn die3d(v: u8) -> impl IntoView {
 #[component]
 fn App() -> impl IntoView {
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
-    // Обученная TD(λ)-ценность: ею ходит компьютер (сильнее эвристики).
-    let ai = StoredValue::new(ai_model());
     // Поколение партии: растёт при старте/остановке игры. Любая запущенная анимация
     // (spawn_local) запоминает своё поколение и прекращается, когда оно устарело, —
     // иначе старая партия продолжала бы крутить кадры поверх новой.
@@ -1299,13 +1307,13 @@ fn App() -> impl IntoView {
         dice.update_value(|d| roll_v = Some(d.roll()));
         let r = roll_v.expect("roll");
         let t = legal_turns(&gg.state, r);
-        let idx = ai
-            .with_value(|m| best_turn(m, &gg.state, &t))
-            .min(t.len() - 1);
+        // Модель под текущий режим (число сторон + команды).
+        let m = ai_model_for(gg.state.active.len(), teams.get_untracked());
+        let idx = best_turn(&m, &gg.state, &t).min(t.len() - 1);
         let played = t[idx].clone();
         let mut frames = Vec::new();
         commit_frames(&mut frames, &mut gg, r, played, &hs, true, |s, c, o| {
-            ai.with_value(|m| best_forced(m, s, c, o))
+            best_forced(&m, s, c, o)
         });
         frames.push(Frame {
             state: gg.state.clone(),
