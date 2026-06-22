@@ -1312,19 +1312,6 @@ fn lessons() -> Vec<Lesson> {
     ]
 }
 
-/// Клетка, на которую игроку нужно нажать, чтобы привести демонстрационную фишку в
-/// позицию `pos` (для интерактивного хода в туториале). Для резерва/плена — `None`.
-fn target_cell(pos: Position) -> Option<(usize, usize)> {
-    let a = Side::A;
-    match pos {
-        Position::OnTrack { progress } => Some(margin_coord(a.entry().advance(progress as usize))),
-        Position::Prison { cell } => Some(margin_coord(cell)),
-        Position::Moon { side, .. } => Some(margin_coord(side.local_to_perimeter(LOCAL_MOON))),
-        Position::Home { depth } => checker_cell(a, Position::Home { depth }),
-        Position::Reserve | Position::Captured { .. } => None,
-    }
-}
-
 /// Единственный легальный ход из позиции `before` при броске `roll` — его вычисляет
 /// движок (`legal_turns` уже соблюдает правило максимального хода). В позициях
 /// туториала ход однозначен, так что просто берём первый.
@@ -1958,8 +1945,10 @@ fn App() -> impl IntoView {
                                         let src_cls = if sel { "hl-sel" } else { "hl-src" };
                                         nodes.push(view! { <circle cx=sx cy=sy r=0.47 fill="none" class=src_cls /> }.into_any());
                                         nodes.push(view! { <circle cx=sx cy=sy r=0.5 class="hit" on:click=move |_| tut_sel.set(true) /> }.into_any());
-                                        if sel && let Some(tgt) = target_cell(after.checkers[moved].pos) {
-                                            let (tx, ty) = center_pt(tgt);
+                                        if sel {
+                                            // Цель — туда, где фишка реально окажется после
+                                            // под-хода (для Луны это нужное поле, а не вход).
+                                            let (tx, ty, _) = checker_xy(&after, moved);
                                             nodes.push(view! { <circle cx=tx cy=ty r=0.47 fill="none" class="hl-dst" /> }.into_any());
                                             nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| play_submoves(1) /> }.into_any());
                                         }
