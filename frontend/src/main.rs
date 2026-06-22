@@ -1946,9 +1946,18 @@ fn App() -> impl IntoView {
                                         nodes.push(view! { <circle cx=sx cy=sy r=0.47 fill="none" class=src_cls /> }.into_any());
                                         nodes.push(view! { <circle cx=sx cy=sy r=0.5 class="hit" on:click=move |_| tut_sel.set(true) /> }.into_any());
                                         if sel {
-                                            // Цель — туда, где фишка реально окажется после
-                                            // под-хода (для Луны это нужное поле, а не вход).
-                                            let (tx, ty, _) = checker_xy(&after, moved);
+                                            // Цель: для входа на Луну — клетка-вход (на
+                                            // периметре), для остального — куда реально
+                                            // встанет фишка (поле дорожки/клетка/каземат).
+                                            let (tx, ty) = match (mv.kind, after.checkers[moved].pos) {
+                                                (MoveKind::EnterMoon, Position::Moon { side, .. }) => {
+                                                    center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON)))
+                                                }
+                                                _ => {
+                                                    let (x, y, _) = checker_xy(&after, moved);
+                                                    (x, y)
+                                                }
+                                            };
                                             nodes.push(view! { <circle cx=tx cy=ty r=0.47 fill="none" class="hl-dst" /> }.into_any());
                                             nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| play_submoves(1) /> }.into_any());
                                         }
