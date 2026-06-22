@@ -1207,6 +1207,9 @@ struct Lesson {
     /// Ход соперника (C), который автоматически проигрывается после хода игрока,
     /// прежде чем дойти до следующего шага — чтобы стороны ходили по очереди.
     opp: Option<OppTurn>,
+    /// Ход целиком проигрывается через `commit_turn`/`commit_frames` (с выкупом и
+    /// обязательным ответным ходом захватчика), а не покликовыми под-ходами.
+    commit: bool,
 }
 
 /// Авто-ход соперника между ходами игрока.
@@ -1285,20 +1288,44 @@ fn lessons() -> Vec<Lesson> {
             g.commit_turn(cr, cm.clone(), |_, _, _| 0);
             OppTurn { roll: cr, moves: cm }
         });
-        out.push(Lesson { title, text, before, roll: Some(a_roll), moves, opp });
+        out.push(Lesson { title, text, before, roll: Some(a_roll), moves, opp, commit: false });
     }
 
-    // Шаги-пояснения без хода.
+    // Шаг выкупа: соперник C выкупает свою пленную фишку (бросок 6 → Ransom), и тогда
+    // захватчик A обязан сходить на 6 (движок сам выбирает ход). Отдельная позиция: у A
+    // есть фишки, способные пройти 6 (на пути они на Луне/в Доме и не подошли бы).
+    let ransom_before = {
+        let mut s = GameState::new(vec![A, C], A);
+        s.checkers.clear();
+        s.checkers.push(Checker { owner: A, pos: Position::OnTrack { progress: 10 } });
+        s.checkers.push(Checker { owner: A, pos: Position::OnTrack { progress: 20 } });
+        for d in 1..3u8 {
+            s.checkers.push(Checker { owner: A, pos: Position::Home { depth: d } });
+        }
+        s.checkers.push(Checker { owner: C, pos: Position::Captured { captor: A } });
+        for d in 0..3u8 {
+            s.checkers.push(Checker { owner: C, pos: Position::Home { depth: d } });
+        }
+        s.to_move = C;
+        s
+    };
+    let ransom_roll = dr(6, 2);
+    let ransom_moves = legal_turns(&ransom_before, ransom_roll)
+        .into_iter()
+        .find(|t| t.iter().any(|m| m.kind == MoveKind::Ransom))
+        .unwrap_or_default();
     out.push(Lesson {
         title: "Плен и выкуп",
-        text: "Съеденная фишка соперника — в плену у нашего Дома. Чтобы вернуть свою пленную, её \
-               владелец выбрасывает 6 (выкуп) и обязывает соперника сходить на 6, затем ещё 6 — для \
-               повторного ввода. Дальше →.",
-        before: g.state.clone(),
-        roll: None,
-        moves: Vec::new(),
+        text: "Чтобы вернуть пленную фишку, её владелец выбрасывает 6 — она возвращается в резерв \
+               (выкуп). Тогда захватчик обязан сразу сходить на 6 клеток (если есть чем). Жмите ▶: \
+               соперник выбрасывает 6 и выкупает свою фишку, а наша фишка делает обязательный ход на 6.",
+        before: ransom_before,
+        roll: Some(ransom_roll),
+        moves: ransom_moves,
         opp: None,
+        commit: true,
     });
+
     let mut home = g.state.clone();
     home.checkers[0].pos = Position::Home { depth: 0 }; // финал: демо-фишка в Доме
     out.push(Lesson {
@@ -1310,6 +1337,7 @@ fn lessons() -> Vec<Lesson> {
         roll: None,
         moves: Vec::new(),
         opp: None,
+        commit: false,
     });
     out
 }
@@ -1851,10 +1879,14 @@ fn App() -> impl IntoView {
                             }
                             None => after.clone(),
                         };
+                        let _ = end_state;
                         if cur + 1 < ls.len() {
+                            // Бросок следующего шага — на ЕГО позиции `before` (она же = конец
+                            // хода для непрерывных шагов; для отдельных — переход к новой).
+                            let nb = ls[cur + 1].before.clone();
                             match ls[cur + 1].roll {
-                                Some(nr) => frames.extend(roll_only_frames(&end_state, nr)),
-                                None => frames.push(Frame { state: end_state, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None }),
+                                Some(nr) => frames.extend(roll_only_frames(&nb, nr)),
+                                None => frames.push(Frame { state: nb, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None }),
                             }
                             lesson_idx.set(cur + 1);
                         }
@@ -1869,6 +1901,19 @@ fn App() -> impl IntoView {
                     }
                     let cur = lesson_idx.get_untracked();
                     lessons_sv.with_value(|ls| {
+                        // Шаг-выкуп: весь ход (выкуп + обязательный ответ) через движок.
+                        if ls[cur].commit {
+                            if let Some(r) = ls[cur].roll {
+                                let mut gg = Game::new(ls[cur].before.clone());
+                                let mut frames = Vec::new();
+                                // roll_anim=false: бросок уже показан при входе в шаг.
+                                commit_frames(&mut frames, &mut gg, r, ls[cur].moves.clone(), &[], false, |_, _, _| 0);
+                                tut_sel.set(false);
+                                finish_step(&mut frames, &gg.state, cur);
+                                play(frames);
+                            }
+                            return;
+                        }
                         match ls[cur].roll {
                             Some(r) => {
                                 let chosen = &ls[cur].moves;
@@ -1940,7 +1985,7 @@ fn App() -> impl IntoView {
                             let cur = lesson_idx.get().min(total - 1);
                             lessons_sv.with_value(|ls| {
                                 let mut nodes: Vec<AnyView> = Vec::new();
-                                if ls[cur].roll.is_some() {
+                                if ls[cur].roll.is_some() && !ls[cur].commit {
                                     let chosen = &ls[cur].moves;
                                     let k = tut_played.get();
                                     if k < chosen.len() {
@@ -2023,7 +2068,7 @@ fn App() -> impl IntoView {
                     }}</p>
                     {move || lessons_sv.with_value(|ls| {
                         let cur = lesson_idx.get().min(total - 1);
-                        ls[cur].roll.is_some().then(|| view! {
+                        (ls[cur].roll.is_some() && !ls[cur].commit).then(|| view! {
                             <p class="lesson-hint">"👆 Сделайте ход сами: нажмите на фишку, затем на подсвеченную клетку. Или жмите ▶."</p>
                         })
                     })}
