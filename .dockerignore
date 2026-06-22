@@ -1,0 +1,8 @@
+.git
+target
+frontend/dist
+frontend/target
+src-tauri/target
+**/*.swp
+.idea
+.DS_Store
