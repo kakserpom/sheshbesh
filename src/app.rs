@@ -258,6 +258,7 @@ fn kind_label(kind: MoveKind) -> &'static str {
         MoveKind::MoonExit => "с Луны",
         MoveKind::EnterPrison => "в Тюрьму",
         MoveKind::PrisonRelease => "из Тюрьмы",
+        MoveKind::PrisonPass => "мимо Тюрьмы",
         MoveKind::EnterHome => "в Дом",
         MoveKind::HomeAdvance => "вглубь Дома",
         MoveKind::Ransom => "выкуп",

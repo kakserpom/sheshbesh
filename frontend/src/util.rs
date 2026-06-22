@@ -103,8 +103,8 @@ pub(crate) fn move_note(
         MoveKind::PrisonRelease => "выход из Тюрьмы.",
         MoveKind::EnterHome => "заход фишки в Дом!",
         MoveKind::HomeAdvance => "фишка идёт вглубь Дома.",
-        // Обычный шаг и выкуп отдельной репликой не сопровождаем (лишний шум).
-        MoveKind::Step | MoveKind::Ransom => return None,
+        // Проход сквозь Тюрьму, обычный шаг и выкуп репликой не сопровождаем (шум).
+        MoveKind::PrisonPass | MoveKind::Step | MoveKind::Ransom => return None,
     };
     Some(format!("{name}: {event}"))
 }
@@ -200,6 +200,7 @@ pub(crate) fn apply_with_frames(
 ) -> GameState {
     // Промежуточные клетки пути (без конечной — её даёт `apply`), чтобы фишка
     // «шагала», а не перепрыгивала.
+    let owner = state.checkers[mv.checker].owner;
     let perim = PERIMETER as u16;
     let mids: Vec<Position> = match state.checkers[mv.checker].pos {
         Position::OnTrack { progress } => {
@@ -232,6 +233,15 @@ pub(crate) fn apply_with_frames(
         Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => (depth + 1..depth + mv.die)
             .map(|d| Position::Home { depth: d })
             .collect(),
+        // Проход сквозь Тюрьму — от клетки Тюрьмы по периметру.
+        Position::Prison { cell } if mv.kind == MoveKind::PrisonPass => {
+            let sp = owner.progress_of(cell);
+            (1..mv.die)
+                .map(|s| Position::OnTrack {
+                    progress: sp + u16::from(s),
+                })
+                .collect()
+        }
         _ => Vec::new(),
     };
     for pos in mids {
@@ -345,6 +355,18 @@ pub(crate) fn commit_frames<F>(
     let mut i = 0;
     while i < applied.len() {
         let mv = applied[i];
+        // Вход в Тюрьму, за которым этим же ходом сразу следует проход дальше, —
+        // это не заточение, а проход насквозь: шагаем сквозь клетку Тюрьмы, не
+        // показывая каземат и не объявляя «угодила в Тюрьму».
+        let through = mv.kind == MoveKind::EnterPrison
+            && applied
+                .get(i + 1)
+                .is_some_and(|n| n.kind == MoveKind::PrisonPass && n.checker == mv.checker);
+        if through {
+            scratch = step_through_prison(frames, scratch, mv, roll);
+            i += 1;
+            continue;
+        }
         let forced_resp = scratch.checkers[mv.checker].owner != side;
         scratch = apply_with_frames(frames, scratch, mv, roll, humans);
         if forced_resp && let Some(last) = frames.last_mut() {
@@ -355,6 +377,34 @@ pub(crate) fn commit_frames<F>(
         }
         i += 1;
     }
+}
+
+/// Анимация шага в Тюрьму, когда за ним сразу следует проход дальше: фишка идёт
+/// сквозь клетку Тюрьмы как сквозь обычную (без каземата и реплики), но логически
+/// возвращаем настоящее состояние (Тюрьма) — для следующего хода `PrisonPass`.
+pub(crate) fn step_through_prison(
+    frames: &mut Vec<Frame>,
+    state: GameState,
+    mv: Move,
+    roll: DiceRoll,
+) -> GameState {
+    if let Position::OnTrack { progress: sp } = state.checkers[mv.checker].pos {
+        for step in 1..=mv.die {
+            let mut mid = state.clone();
+            mid.checkers[mv.checker].pos = Position::OnTrack {
+                progress: sp + u16::from(step),
+            };
+            frames.push(Frame {
+                state: mid,
+                roll: Some(roll),
+                hold: HOLD_STEP_MS,
+                rolling: false,
+                note: None,
+                pts: Vec::new(),
+            });
+        }
+    }
+    apply(&state, mv)
 }
 
 pub(crate) fn fresh(dice: StoredValue<RandomDice>, active: Vec<Side>, teams: bool) -> Game {
