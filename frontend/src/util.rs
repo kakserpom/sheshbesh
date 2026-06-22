@@ -5,10 +5,46 @@ use sheshbesh::{
     DiceRoll, Game, GameState, Move, MoveKind, Position, RandomDice, Side, TurnOutcome, apply,
 };
 
-/// Технический лог одного хода для воспроизведения багов (печатается в консоль только
-/// в отладочной сборке): сторона, бросок и ФАКТИЧЕСКИ применённые ходы (`applied` —
-/// включая ответы захватчика при выкупе). Вместе с залогированным seed этого хватает,
-/// чтобы воспроизвести партию.
+#[cfg(debug_assertions)]
+thread_local! {
+    /// Накопленный технический лог текущей партии (для кнопки «показать лог»).
+    static GAME_LOG: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Пишет строку в технический лог партии — в консоль и в накопитель (только отладка).
+#[cfg(debug_assertions)]
+pub(crate) fn dbg_log(line: &str) {
+    leptos::logging::log!("{line}");
+    GAME_LOG.with(|g| {
+        let mut s = g.borrow_mut();
+        s.push_str(line);
+        s.push('\n');
+    });
+}
+#[cfg(not(debug_assertions))]
+pub(crate) fn dbg_log(_line: &str) {}
+
+/// Очищает лог (в начале новой партии).
+#[cfg(debug_assertions)]
+pub(crate) fn dbg_log_reset() {
+    GAME_LOG.with(|g| g.borrow_mut().clear());
+}
+#[cfg(not(debug_assertions))]
+pub(crate) fn dbg_log_reset() {}
+
+/// Текущий накопленный лог партии (для отображения и копирования).
+#[cfg(debug_assertions)]
+pub(crate) fn dbg_log_dump() -> String {
+    GAME_LOG.with(|g| g.borrow().clone())
+}
+#[cfg(not(debug_assertions))]
+pub(crate) fn dbg_log_dump() -> String {
+    String::new()
+}
+
+/// Технический лог одного хода для воспроизведения багов (только в отладочной сборке):
+/// сторона, бросок и ФАКТИЧЕСКИ применённые ходы (`applied` — включая ответы захватчика
+/// при выкупе). Вместе с залогированным seed этого хватает, чтобы воспроизвести партию.
 pub(crate) fn dbg_log_turn(outcome: &TurnOutcome) {
     let [a, b] = outcome.roll.values();
     let moves: Vec<String> = outcome
@@ -16,7 +52,11 @@ pub(crate) fn dbg_log_turn(outcome: &TurnOutcome) {
         .iter()
         .map(|m| format!("{:?}(c{},d{})", m.kind, m.checker, m.die))
         .collect();
-    leptos::logging::log!("[GAMELOG] {:?} {a}-{b} | {}", outcome.side, moves.join(" "));
+    dbg_log(&format!(
+        "[GAMELOG] {:?} {a}-{b} | {}",
+        outcome.side,
+        moves.join(" ")
+    ));
 }
 
 /// Пауза-заставка перед первым ходом партии (мс) — чтобы старт не мелькал.

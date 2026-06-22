@@ -206,6 +206,14 @@
     .piece.captive { stroke: #cbd5e1; stroke-width: .09; }
     .cage-count { fill: #0b1220; font-size: .34px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; transition: transform .42s ease; }
     /* Подсветка ходов и кликабельные зоны */
+    /* Панель технического лога партии (отладка) */
+    .logbox { position: fixed; inset: 6% 4%; z-index: 50; display: flex; flex-direction: column;
+      gap: .4rem; background: #0f172a; border: 1px solid #334155; border-radius: .5rem; padding: .6rem; }
+    .logbox-head { display: flex; align-items: center; gap: .6rem; }
+    .logbox-head .lead { color: #94a3b8; font-size: .85rem; flex: 1; }
+    .logbox textarea { flex: 1; width: 100%; box-sizing: border-box; resize: none;
+      font-family: ui-monospace, monospace; font-size: .8rem; line-height: 1.35;
+      background: #020617; color: #e2e8f0; border: 1px solid #334155; border-radius: .3rem; padding: .4rem; }
     .hl-src { stroke: #f59e0b; stroke-width: .07; }
     .hl-dst { stroke: #22c55e; stroke-width: .09; }
     .hl-sel { stroke: #e2e8f0; stroke-width: .1; }

@@ -63,6 +63,8 @@ pub(crate) fn App() -> impl IntoView {
     let anim_pts = RwSignal::new(Vec::<(usize, f64, f64)>::new());
     // Текст ведущего-комментатора над доской.
     let herald = RwSignal::new(String::new());
+    // Показан ли технический лог партии (кнопка в отладочной сборке).
+    let show_log = RwSignal::new(false);
 
     // Следим за финишами: запоминаем порядок финиша, а по окончании партии (с учётом
     // режима) выводим итоговую реплику.
@@ -393,12 +395,11 @@ pub(crate) fn App() -> impl IntoView {
         finished.set(Vec::new());
         let hs = humans.get_untracked();
         // Технический лог партии (для воспроизведения багов) — только в отладке.
-        if cfg!(debug_assertions) {
-            leptos::logging::log!(
-                "[GAMELOG] === new game === seed={game_seed} players={} humans={hs:?} teams={teams_on}",
-                active.len()
-            );
-        }
+        dbg_log_reset();
+        dbg_log(&format!(
+            "[GAMELOG] === new game === seed={game_seed} players={} humans={hs:?} teams={teams_on}",
+            active.len()
+        ));
         let g = fresh(dice, active, teams_on);
         herald.set(format!(
             "Игра началась! Ходит {}.",
@@ -970,8 +971,29 @@ pub(crate) fn App() -> impl IntoView {
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
                 <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
+                // Технический лог партии — только в отладочной сборке.
+                {cfg!(debug_assertions).then(|| view! {
+                    <button class="icon-btn" title="Лог партии" on:click=move |_| show_log.set(true)>"📋"</button>
+                })}
                 <span class="herald" inner_html=move || herald.get()></span>
             </div>
+
+            // Панель технического лога: текст в textarea (клик — выделить всё, затем Ctrl+C).
+            {move || show_log.get().then(|| {
+                let log_ref = NodeRef::<leptos::html::Textarea>::new();
+                view! {
+                    <div class="logbox">
+                        <div class="logbox-head">
+                            <b>"Лог партии"</b>
+                            <span class="lead">"Клик по тексту — выделить всё, затем Ctrl/Cmd+C"</span>
+                            <button class="icon-btn" title="Закрыть" on:click=move |_| show_log.set(false)>"✕"</button>
+                        </div>
+                        <textarea node_ref=log_ref readonly
+                            on:click=move |_| { if let Some(t) = log_ref.get() { t.select(); } }
+                        >{dbg_log_dump()}</textarea>
+                    </div>
+                }
+            })}
 
             <div class="board-area">
             <div class="board-wrap">
