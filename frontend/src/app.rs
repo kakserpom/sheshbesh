@@ -141,6 +141,7 @@ pub(crate) fn App() -> impl IntoView {
         if !started.get()
             || animating.get()
             || paused.get()
+            || rules.get()
             || game_over(&g.state, teams.get_untracked())
             || hs.contains(&g.state.to_move)
         {
@@ -188,7 +189,7 @@ pub(crate) fn App() -> impl IntoView {
     Effect::new(move |_| {
         let g = game.get();
         let busy = animating.get();
-        let pause = paused.get();
+        let pause = paused.get() || rules.get();
         let hs = humans.get_untracked();
         if started.get()
             && !busy
@@ -914,7 +915,7 @@ pub(crate) fn App() -> impl IntoView {
             })}
 
             // Игровой экран после старта.
-            {move || started.get().then(|| view! {
+            {move || (started.get() && !rules.get()).then(|| view! {
             <div class="status">
                 <button class="icon-btn" title="Закончить игру" on:click=to_settings>"⏹"</button>
                 <button class="icon-btn" class:on=move || paused.get()
@@ -922,6 +923,7 @@ pub(crate) fn App() -> impl IntoView {
                     on:click=move |_| paused.update(|p| *p = !*p)>
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
+                <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
                 <span class="herald" inner_html=move || herald.get()></span>
             </div>
 
