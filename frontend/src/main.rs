@@ -1189,6 +1189,166 @@ fn die3d(v: u8) -> impl IntoView {
     }
 }
 
+// --- Обучение (туториал) ---
+
+/// Один шаг туториала: заголовок, пояснение, пример позиции и подсвеченные клетки.
+struct Lesson {
+    title: &'static str,
+    text: &'static str,
+    state: GameState,
+    hl: Vec<(usize, usize)>,
+}
+
+/// Шаги туториала (на примере партии вдвоём, A против C).
+fn lessons() -> Vec<Lesson> {
+    use Side::{A, C};
+    let base = || GameState::new(vec![A, C], A);
+    let cell = |side: Side, local: u8| margin_coord(side.local_to_perimeter(local));
+    let ahead = |side: Side, prog: usize| margin_coord(side.entry().advance(prog));
+
+    let mut out = Vec::new();
+
+    out.push(Lesson {
+        title: "Цель игры",
+        text: "У каждого игрока 4 фишки. Все начинают «в резерве» — снаружи доски у своего Дома. \
+               Задача: обойти доску против часовой стрелки и завести все 4 фишки в свой Дом. Кто \
+               первым соберёт Дом — победил.",
+        hl: vec![],
+        state: base(),
+    });
+
+    out.push(Lesson {
+        title: "Ввод фишки",
+        text: "Фишки вводятся в игру выбросом 6 (важно значение на ОДНОЙ кости, не сумма). Фишка \
+               встаёт на точку входа (подсвечена). Поставить туда вторую свою фишку нельзя, а \
+               чужую — можно съесть, вводя свою.",
+        hl: vec![cell(A, 9)],
+        state: base(),
+    });
+
+    out.push(Lesson {
+        title: "Движение",
+        text: "Фишки идут против часовой стрелки. Две кости можно отнести к двум фишкам (по \
+               значению на каждую) или объединить на одну. Перепрыгивать занятые клетки нельзя — \
+               кроме углов, через которые проходить можно. Дубль даёт ещё один ход.",
+        hl: vec![ahead(A, 1), ahead(A, 2)],
+        state: {
+            let mut s = base();
+            s.checkers[0].pos = Position::OnTrack { progress: 0 };
+            s
+        },
+    });
+
+    out.push(Lesson {
+        title: "Луна — короткий путь",
+        text: "2-я клетка от угла — Луна (подсвечена). Попав на неё, фишка улетает на внутреннюю \
+               дорожку из полей 1·3·6: с поля «1» дальше двигает выброс 1, с «3» — выброс 3, с «6» — \
+               выброс 6, и фишка возвращается на доску ближе к Дому. На Луне фишку нельзя съесть.",
+        hl: vec![cell(A, LOCAL_MOON)],
+        state: {
+            let mut s = base();
+            s.checkers[0].pos = Position::Moon {
+                side: A,
+                field: MoonField::One,
+            };
+            s
+        },
+    });
+
+    out.push(Lesson {
+        title: "Тюрьма",
+        text: "4-я клетка от угла — Тюрьма (подсвечена). Попав сюда, фишка застревает: выйти можно \
+               только выбросив 4, оставшись на месте. Тюрьмой удобно блокировать чужие фишки. Если \
+               фишка попала на Тюрьму этим же ходом и есть вторая кость — ею можно пройти мимо.",
+        hl: vec![cell(A, LOCAL_PRISON_NEAR)],
+        state: {
+            let mut s = base();
+            s.checkers[0].pos = Position::Prison {
+                cell: A.local_to_perimeter(LOCAL_PRISON_NEAR),
+            };
+            s
+        },
+    });
+
+    out.push(Lesson {
+        title: "Съедание и выкуп",
+        text: "Встав на клетку с чужой фишкой, вы её съедаете — она уходит в плен (показана у вашего \
+               Дома с красной обводкой). На углах, Луне и в Тюрьме не едят. Чтобы вернуть свою \
+               пленную фишку, нужно выбросить 6 (выкуп), а затем ещё одну 6 для повторного ввода.",
+        hl: vec![],
+        state: {
+            let mut s = base();
+            s.checkers[0].pos = Position::OnTrack { progress: 5 };
+            s.checkers[4].pos = Position::Captured { captor: A };
+            s
+        },
+    });
+
+    out.push(Lesson {
+        title: "Дом и победа",
+        text: "Дойдя до Дома, фишка заходит в него ровно по броску — по одной в клетку, \
+               перепрыгивать занятые клетки Дома нельзя (но можно идти глубже, освобождая место). \
+               Чужие фишки в Дом попасть не могут. Заведите все 4 фишки в Дом — и вы выиграли!",
+        hl: vec![],
+        state: {
+            let mut s = base();
+            for d in 0u8..3 {
+                s.checkers[d as usize].pos = Position::Home { depth: d };
+            }
+            s.checkers[3].pos = Position::OnTrack { progress: 64 };
+            s
+        },
+    });
+
+    out
+}
+
+/// Статичная (без анимации) отрисовка примера-доски для туториала, с подсветкой
+/// клеток `hl`.
+fn tutorial_board(state: &GameState, hl: &[(usize, usize)]) -> AnyView {
+    let mut nodes: Vec<AnyView> = static_board(state);
+    for i in 0..state.checkers.len() {
+        let (cx, cy, vis) = checker_xy(state, i);
+        if !vis {
+            continue;
+        }
+        let ch = state.checkers[i];
+        let small = matches!(
+            ch.pos,
+            Position::Prison { .. } | Position::Reserve | Position::Captured { .. }
+        );
+        let captive = matches!(ch.pos, Position::Prison { .. } | Position::Captured { .. });
+        nodes.push(
+            view! {
+                <circle cx=cx cy=cy r=if small { 0.3 } else { 0.36 }
+                    class=if captive { "piece captive" } else { "piece" }
+                    fill=side_color(ch.owner) />
+            }
+            .into_any(),
+        );
+    }
+    for b in stack_counts(state) {
+        nodes.push(
+            view! { <text x=b.pt.0 y=b.pt.1 class="cage-count">{b.count.to_string()}</text> }
+                .into_any(),
+        );
+    }
+    for &(r, c) in hl {
+        let (cx, cy) = center_pt((r, c));
+        nodes.push(
+            view! { <circle cx=cx cy=cy r=0.52 fill="none" class="tutorial-hl" /> }.into_any(),
+        );
+    }
+    view! {
+        <svg class="board" viewBox=format!(
+            "{o} {o} {s} {s}",
+            o = BOARD_MARGIN as f64 - RESERVE_PAD,
+            s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD,
+        )>{nodes}</svg>
+    }
+    .into_any()
+}
+
 #[component]
 fn App() -> impl IntoView {
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
@@ -1203,6 +1363,11 @@ fn App() -> impl IntoView {
     let started = RwSignal::new(false);
     // Режим разработчика: экран демонстрации состояний и анимаций (вне партии).
     let dev = RwSignal::new(false);
+    // Справка по правилам и пошаговое обучение (туториал) — экраны из меню настроек.
+    let rules = RwSignal::new(false);
+    let tutorial = RwSignal::new(false);
+    let lesson_idx = RwSignal::new(0usize);
+    let lessons_sv = StoredValue::new(lessons());
     // Стороны, финишировавшие (все фишки в Доме) — в порядке финиша.
     let finished = RwSignal::new(Vec::<Side>::new());
     // Пауза: блокирует автоход ИИ и авто-бросок; анимация замирает между кадрами.
@@ -1559,7 +1724,7 @@ fn App() -> impl IntoView {
         <div class="wrap">
             <h1>"Шеш-Беш"</h1>
             // Экран настроек до старта партии: число игроков и тип каждой стороны.
-            {move || (!started.get() && !dev.get()).then(|| view! {
+            {move || (!started.get() && !dev.get() && !rules.get() && !tutorial.get()).then(|| view! {
                 <div class="settings">
                     <div class="set-row">
                         <span>"Игроков:"</span>
@@ -1599,8 +1764,91 @@ fn App() -> impl IntoView {
                         </div>
                     })}
                     <button class="primary" on:click=start_game>"Начать игру"</button>
-                    <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
+                    <div class="set-row">
+                        <button on:click=move |_| { lesson_idx.set(0); tutorial.set(true); }>"🎓 Обучение"</button>
+                        <button on:click=move |_| rules.set(true)>"📖 Правила"</button>
+                        <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
+                    </div>
                 </div>
+            })}
+
+            // Экран правил: структурированный справочник (самобытные правила).
+            {move || rules.get().then(|| view! {
+                <div class="controls">
+                    <button on:click=move |_| rules.set(false)>"← Назад"</button>
+                </div>
+                <div class="rules">
+                    <h2>"Шеш-Беш — правила"</h2>
+                    <p class="lead">"Самобытный вариант нард. Играют вдвоём или вчетвером; каждый владеет одной стороной квадрата и её Домом."</p>
+
+                    <h3>"Цель"</h3>
+                    <p>"Провести все 4 свои фишки полный круг по доске (против часовой стрелки) и завести их в свой Дом. Чужие фишки в Дом попасть не могут. Кто первым собрал Дом — победил. Вчетвером бывает командная игра 2×2 (победа, когда обе стороны команды собрали Дом) или каждый сам за себя."</p>
+
+                    <h3>"Доска"</h3>
+                    <ul>
+                        <li>"Квадрат; у каждой из 4 сторон — 19 клеток (углы общие для двух сторон)."</li>
+                        <li>"Посередине каждой стороны — "<b>"Дом"</b>" из 4 клеток, идущих внутрь квадрата."</li>
+                        <li>"Все фишки стартуют в резерве у своего Дома и вводятся в игру."</li>
+                    </ul>
+
+                    <h3>"Ход"</h3>
+                    <ul>
+                        <li>"За ход бросают две кости. Значения можно отнести к двум разным фишкам (по значению на каждую) или объединить на одну."</li>
+                        <li>"«Выбросить число» всегда значит значение на "<b>"одной"</b>" кости, а не сумму."</li>
+                        <li>"Ввод фишки в игру — по "<b>"6"</b>". На точку входа нельзя поставить вторую свою фишку; чужую там можно съесть."</li>
+                        <li>"Дубль даёт право на ещё один полный ход."</li>
+                        <li>"Правило максимального хода: из вариантов выбирают тот, что использует больше очков."</li>
+                        <li>"Нельзя перепрыгивать занятые клетки — исключение только углы (через занятый угол проходить можно)."</li>
+                    </ul>
+
+                    <h3>"Особые клетки"</h3>
+                    <ul>
+                        <li><b style="color:#93c5fd">"Луна"</b>" (2-я клетка от угла) — короткий путь. Фишка улетает на внутреннюю дорожку полей 1·3·6: с «1» двигает выброс 1, с «3» — 3, с «6» — 6, после чего возвращается на доску ближе к Дому. Луна полностью безопасна."</li>
+                        <li><b>"Тюрьма"</b>" (4-я клетка от угла) — изолирует фишку: выйти можно только выбросив 4 (фишка остаётся на месте). Удобно блокировать чужие фишки. Если фишка попала на Тюрьму этим же ходом и есть вторая кость — можно пройти мимо."</li>
+                        <li><b>"Углы"</b>" — общие клетки; на них фишки не едят и через них можно проходить."</li>
+                    </ul>
+
+                    <h3>"Съедание, плен и выкуп"</h3>
+                    <ul>
+                        <li>"Встав на клетку с чужой фишкой, вы её съедаете — она попадает к вам в плен."</li>
+                        <li>"Съедания нет на углах, Луне и в Тюрьме."</li>
+                        <li>"Чтобы вернуть пленную фишку, нужно выбросить 6 (выкуп), и тогда соперник обязан сделать ответный ход на 6 клеток. Затем нужна ещё одна 6 для повторного ввода."</li>
+                    </ul>
+
+                    <h3>"Дом"</h3>
+                    <p>"Заход в Дом — ровно по броску, по одной фишке в клетку; перепрыгивать занятые клетки Дома нельзя (но фишка в Доме может идти глубже, освобождая место). Перебор за пределы Дома нелегален; второго круга нет."</p>
+                </div>
+            })}
+
+            // Экран обучения: пошаговые уроки с примерами на доске.
+            {move || tutorial.get().then(|| {
+                let total = lessons_sv.with_value(Vec::len);
+                view! {
+                    <div class="status">
+                        <span class="herald">{move || {
+                            let i = lesson_idx.get();
+                            lessons_sv.with_value(|ls| format!("Шаг {}/{total}: {}", i + 1, ls[i].title))
+                        }}</span>
+                    </div>
+                    <div class="controls">
+                        <button on:click=move |_| tutorial.set(false)>"← Настройки"</button>
+                        <button class="icon-btn" title="Назад"
+                            on:click=move |_| lesson_idx.update(|i| *i = i.saturating_sub(1))>"◀"</button>
+                        <button class="icon-btn" title="Далее"
+                            on:click=move |_| lesson_idx.update(|i| *i = (*i + 1).min(total - 1))>"▶"</button>
+                    </div>
+                    <div class="board-area">
+                        <div class="board-wrap">
+                            {move || lessons_sv.with_value(|ls| {
+                                let l = &ls[lesson_idx.get().min(total - 1)];
+                                tutorial_board(&l.state, &l.hl)
+                            })}
+                        </div>
+                    </div>
+                    <p class="lesson-text">{move || {
+                        lessons_sv.with_value(|ls| ls[lesson_idx.get().min(total - 1)].text.to_string())
+                    }}</p>
+                }
             })}
 
             // Экран разработчика: панель сценариев + демо-анимация + read-only доска.
