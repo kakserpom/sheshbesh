@@ -10,6 +10,7 @@ use leptos::prelude::*;
 use sheshbesh::board::{
     LOCAL_MOON, LOCAL_MOON_EXIT, LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR, PERIMETER, cell_kind,
 };
+use sheshbesh::moves::forced_six_moves;
 use sheshbesh::{
     Agent, BOARD_DIM, BOARD_MARGIN, CellKind, Checker, DiceRoll, DiceSource, Die, Game, GameState,
     Heuristic, LinearValue, MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side,
@@ -1318,7 +1319,7 @@ fn lessons() -> Vec<Lesson> {
         title: "Плен и выкуп",
         text: "Чтобы вернуть пленную фишку, её владелец выбрасывает 6 — она возвращается в резерв \
                (выкуп). Тогда захватчик обязан сразу сходить на 6 клеток (если есть чем). Жмите ▶: \
-               соперник выбрасывает 6 и выкупает свою фишку, а наша фишка делает обязательный ход на 6.",
+               соперник выкупит свою фишку, а затем выберите, какой нашей фишкой сделать ход на 6.",
         before: ransom_before,
         roll: Some(ransom_roll),
         moves: ransom_moves,
@@ -1385,8 +1386,11 @@ fn App() -> impl IntoView {
     // Выбрана ли демонстрационная фишка (первый клик хода в туториале).
     let tut_sel = RwSignal::new(false);
     // Сколько под-ходов текущего шага сыграно (ход = последовательность по костям;
-    // в туториале игрок проигрывает их по одному — как в реальной игре).
+    // в туториале игрок проигрывает их по одному — как в реальной игре). Для шага
+    // выкупа: 0 — выкуп ещё не сыгран, 1 — выбираем обязательный ход на 6.
     let tut_played = RwSignal::new(0usize);
+    // Выбранная фишка для обязательного хода на 6 (шаг выкупа).
+    let tut_pick = RwSignal::new(None::<usize>);
     // Стороны, финишировавшие (все фишки в Доме) — в порядке финиша.
     let finished = RwSignal::new(Vec::<Side>::new());
     // Пауза: блокирует автоход ИИ и авто-бросок; анимация замирает между кадрами.
@@ -1791,6 +1795,7 @@ fn App() -> impl IntoView {
                             lesson_idx.set(0);
                             tut_sel.set(false);
                             tut_played.set(0);
+                            tut_pick.set(None);
                             lessons_sv.with_value(|ls| {
                                 game.set(Game::new(ls[0].before.clone()));
                                 // Первый бросок — до первого хода.
@@ -1892,6 +1897,7 @@ fn App() -> impl IntoView {
                         }
                     });
                     tut_played.set(0);
+                    tut_pick.set(None);
                 };
                 // Проиграть `count` под-ходов текущего шага начиная с уже сыгранных
                 // (1 — по клику на клетку; usize::MAX — весь оставшийся ход по ▶).
@@ -1901,15 +1907,32 @@ fn App() -> impl IntoView {
                     }
                     let cur = lesson_idx.get_untracked();
                     lessons_sv.with_value(|ls| {
-                        // Шаг-выкуп: весь ход (выкуп + обязательный ответ) через движок.
+                        // Шаг-выкуп в две фазы: сперва соперник выкупает пленную, затем
+                        // игрок ВЫБИРАЕТ обязательный ход захватчика на 6.
                         if ls[cur].commit {
-                            if let Some(r) = ls[cur].roll {
-                                let mut gg = Game::new(ls[cur].before.clone());
+                            let Some(r) = ls[cur].roll else { return };
+                            let st = game.get_untracked().state.clone();
+                            if tut_played.get_untracked() == 0 {
+                                // Фаза 0: ход соперника — выкуп пленной фишки.
                                 let mut frames = Vec::new();
-                                // roll_anim=false: бросок уже показан при входе в шаг.
-                                commit_frames(&mut frames, &mut gg, r, ls[cur].moves.clone(), &[], false, |_, _, _| 0);
+                                let mut s = st;
+                                for mv in &ls[cur].moves {
+                                    s = apply_with_frames(&mut frames, s, *mv, r, &[]);
+                                }
                                 tut_sel.set(false);
-                                finish_step(&mut frames, &gg.state, cur);
+                                tut_played.set(1); // дальше — выбор хода на 6
+                                play(frames);
+                            } else {
+                                // Фаза 1: ▶ выбирает первый из обязательных ходов на 6.
+                                let opts = forced_six_moves(&st, Side::A);
+                                let mut frames = Vec::new();
+                                let end = match opts.first() {
+                                    Some(mv) => apply_with_frames(&mut frames, st, *mv, r, &[]),
+                                    None => st,
+                                };
+                                tut_sel.set(false);
+                                tut_pick.set(None);
+                                finish_step(&mut frames, &end, cur);
                                 play(frames);
                             }
                             return;
@@ -2019,6 +2042,39 @@ fn App() -> impl IntoView {
                                             nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| play_submoves(1) /> }.into_any());
                                         }
                                     }
+                                } else if ls[cur].commit && tut_played.get() == 1 {
+                                    // Выбор обязательного хода захватчика на 6: игрок сам
+                                    // решает, какой фишкой ходить (фишка → её клетка +6).
+                                    let r = ls[cur].roll.unwrap_or(dr(6, 6));
+                                    let st = game.get().state;
+                                    let pick = tut_pick.get();
+                                    let mut shown: Vec<usize> = Vec::new();
+                                    for mv in forced_six_moves(&st, Side::A) {
+                                        if shown.contains(&mv.checker) {
+                                            continue;
+                                        }
+                                        shown.push(mv.checker);
+                                        let ci = mv.checker;
+                                        let (sx, sy, _) = checker_xy(&st, ci);
+                                        let selected = pick == Some(ci);
+                                        let src_cls = if selected { "hl-sel" } else { "hl-src" };
+                                        nodes.push(view! { <circle cx=sx cy=sy r=0.47 fill="none" class=src_cls /> }.into_any());
+                                        nodes.push(view! { <circle cx=sx cy=sy r=0.5 class="hit" on:click=move |_| tut_pick.set(Some(ci)) /> }.into_any());
+                                        if selected {
+                                            let (tx, ty, _) = checker_xy(&apply(&st, mv), ci);
+                                            nodes.push(view! { <circle cx=tx cy=ty r=0.47 fill="none" class="hl-dst" /> }.into_any());
+                                            nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit"
+                                                on:click=move |_| {
+                                                    if animating.get_untracked() { return; }
+                                                    let st = game.get_untracked().state.clone();
+                                                    let mut frames = Vec::new();
+                                                    let end = apply_with_frames(&mut frames, st, mv, r, &[]);
+                                                    tut_pick.set(None);
+                                                    finish_step(&mut frames, &end, cur);
+                                                    play(frames);
+                                                } /> }.into_any());
+                                        }
+                                    }
                                 }
                                 nodes
                             })
@@ -2052,6 +2108,7 @@ fn App() -> impl IntoView {
                             rolling.set(false);
                             tut_sel.set(false);
                             tut_played.set(0);
+                            tut_pick.set(None);
                             let i = lesson_idx.get_untracked().saturating_sub(1);
                             lesson_idx.set(i);
                             lessons_sv.with_value(|ls| {
@@ -2068,9 +2125,17 @@ fn App() -> impl IntoView {
                     }}</p>
                     {move || lessons_sv.with_value(|ls| {
                         let cur = lesson_idx.get().min(total - 1);
-                        (ls[cur].roll.is_some() && !ls[cur].commit).then(|| view! {
-                            <p class="lesson-hint">"👆 Сделайте ход сами: нажмите на фишку, затем на подсвеченную клетку. Или жмите ▶."</p>
-                        })
+                        if ls[cur].commit {
+                            (tut_played.get() == 1).then(|| view! {
+                                <p class="lesson-hint">"👆 Выберите, какой фишкой сделать обязательный ход на 6: нажмите фишку, затем её клетку."</p>
+                            }).into_any()
+                        } else if ls[cur].roll.is_some() {
+                            view! {
+                                <p class="lesson-hint">"👆 Сделайте ход сами: нажмите на фишку, затем на подсвеченную клетку. Или жмите ▶."</p>
+                            }.into_any()
+                        } else {
+                            ().into_any()
+                        }
                     })}
                 }
             })}
