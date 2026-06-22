@@ -1930,18 +1930,21 @@ fn App() -> impl IntoView {
                             tutorial.set(true);
                         }>"🎓 Обучение"</button>
                         <button on:click=move |_| rules.set(true)>"📖 Правила"</button>
-                        <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
+                        // Режим разработчика — только в отладочной сборке.
+                        {cfg!(debug_assertions).then(|| view! {
+                            <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
+                        })}
                     </div>
                 </div>
             })}
 
             // Экран правил: структурированный справочник (самобытные правила).
             {move || rules.get().then(|| view! {
-                <div class="controls">
-                    <button on:click=move |_| rules.set(false)>"← Назад"</button>
-                </div>
                 <div class="rules">
-                    <h2>"Шеш-Беш — правила"</h2>
+                    <div class="page-head">
+                        <button class="icon-btn" title="Назад" on:click=move |_| rules.set(false)>"←"</button>
+                        <h2>"Шеш-Беш — правила"</h2>
+                    </div>
                     <p class="lead">"Самобытный вариант нард. Играют вдвоём или вчетвером; каждый владеет одной стороной квадрата и её Домом."</p>
 
                     <h3>"Цель"</h3>
@@ -2292,10 +2295,10 @@ fn App() -> impl IntoView {
             // Экран разработчика: панель сценариев + демо-анимация + read-only доска.
             {move || dev.get().then(|| view! {
                 <div class="status">
+                    <button class="icon-btn" title="Настройки" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); dev.set(false); }>"←"</button>
                     <span class="herald" inner_html=move || herald.get()></span>
                 </div>
                 <div class="controls dev-controls">
-                    <button on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); dev.set(false); }>"← Настройки"</button>
                     {DEMOS.iter().map(|&(d, label)| view! {
                         <button on:click=move |_| {
                             // Обрываем демо-анимацию, если идёт, и показываем сценарий.
