@@ -85,6 +85,15 @@ fn enemies_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> Vec<usize> 
         .collect()
 }
 
+/// Стоит ли на клетке периметра `cell` СВОЯ фишка (та же сторона). Нельзя встать
+/// второй своей фишкой на обычную клетку — исключения только угол и Тюрьма.
+fn own_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> bool {
+    state
+        .checkers
+        .iter()
+        .any(|c| c.owner == owner && c.pos.perimeter_cell(c.owner) == Some(cell))
+}
+
 /// Стоит ли на клетке периметра `cell` хоть одна фишка (любого игрока).
 /// Используется для правила «нельзя проходить через фишки» (и оценкой ИИ).
 pub(crate) fn occupied(state: &GameState, cell: PerimeterIdx) -> bool {
@@ -153,7 +162,16 @@ fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
             }
             if (target as usize) < PERIMETER {
                 let abs = owner.entry().advance(target as usize);
-                let (new_pos, captures, kind) = match cell_kind(abs) {
+                let kind = cell_kind(abs);
+                // Нельзя встать ВТОРОЙ своей фишкой на одну клетку. Исключения: угол
+                // (там фишки соседствуют) и Тюрьма (вход/«зашёл-вышел»). Союзники —
+                // не «свои», им можно сосуществовать (это ловит `own_on` по стороне).
+                if matches!(kind, CellKind::Plain | CellKind::HomeEntrance)
+                    && own_on(state, owner, abs)
+                {
+                    return None;
+                }
+                let (new_pos, captures, kind) = match kind {
                     CellKind::Moon => (
                         Position::Moon {
                             side: abs.side(),
@@ -292,7 +310,12 @@ fn prison_pass(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
     }
     let (new_pos, captures) = if (target as usize) < PERIMETER {
         let abs = owner.entry().advance(target as usize);
-        match cell_kind(abs) {
+        let kind = cell_kind(abs);
+        // Нельзя встать второй своей фишкой на обычную клетку (углы/Тюрьма — исключения).
+        if matches!(kind, CellKind::Plain | CellKind::HomeEntrance) && own_on(state, owner, abs) {
+            return None;
+        }
+        match kind {
             CellKind::Moon => (
                 Position::Moon {
                     side: abs.side(),
@@ -598,6 +621,49 @@ mod tests {
                 progress: Side::A.progress_of(exit)
             }
         );
+    }
+
+    #[test]
+    fn cannot_stack_two_own_on_plain_cell() {
+        // Своя фишка A на progress 12 (обычная клетка). Второй своей фишкой (с 10) на
+        // неё встать НЕЛЬЗЯ; на пустую клетку 14 — можно.
+        assert_eq!(
+            cell_kind(Side::A.entry().advance(12)),
+            CellKind::Plain,
+            "тест полагается на обычную клетку"
+        );
+        let s = state_a(&[
+            Position::OnTrack { progress: 12 },
+            Position::OnTrack { progress: 10 },
+        ]);
+        let mv = moves_for_die(&s, 2);
+        assert!(
+            !mv.iter().any(|m| m.checker == 1),
+            "нельзя встать второй своей фишкой на занятую своей клетку"
+        );
+        assert!(mv.iter().any(|m| m.checker == 0), "на пустую 14 — можно");
+        // Если клетка 12 пуста — на неё встать можно.
+        let s2 = state_a(&[Position::OnTrack { progress: 10 }]);
+        assert!(moves_for_die(&s2, 2).iter().any(|m| m.checker == 0));
+    }
+
+    #[test]
+    fn cannot_pass_through_own_on_plain() {
+        // Своя фишка A на progress 15 (обычная клетка) — пройти СКВОЗЬ неё нельзя:
+        // ход с 14 на 16 (промежуточная 15) нелегален. (Через занятый угол — можно,
+        // это покрыто `path_clear`/углами отдельно.)
+        assert_eq!(cell_kind(Side::A.entry().advance(15)), CellKind::Plain);
+        let s = state_a(&[
+            Position::OnTrack { progress: 15 },
+            Position::OnTrack { progress: 14 },
+        ]);
+        assert!(
+            !moves_for_die(&s, 2).iter().any(|m| m.checker == 1),
+            "нельзя проходить сквозь свою фишку на обычной клетке"
+        );
+        // Без своей фишки на 15 ход 14→16 легален.
+        let s2 = state_a(&[Position::OnTrack { progress: 14 }]);
+        assert!(moves_for_die(&s2, 2).iter().any(|m| m.checker == 0));
     }
 
     #[test]
