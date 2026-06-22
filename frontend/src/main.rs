@@ -2218,11 +2218,20 @@ fn App() -> impl IntoView {
                     </div>
                     </div>
                     <p class="lesson-text">{move || {
-                        lessons_sv.with_value(|ls| ls[lesson_idx.get().min(total - 1)].text.to_string())
+                        // Пока кости кувыркаются — нейтральная заглушка: текст урока
+                        // называет выпавшие значения и спойлерил бы ещё не вставший бросок.
+                        if rolling.get() {
+                            "🎲 Бросаем кости…".to_string()
+                        } else {
+                            lessons_sv.with_value(|ls| ls[lesson_idx.get().min(total - 1)].text.to_string())
+                        }
                     }}</p>
                     {move || lessons_sv.with_value(|ls| {
                         let cur = lesson_idx.get().min(total - 1);
-                        if ls[cur].commit {
+                        if rolling.get() {
+                            // Во время броска ход ещё нельзя делать — подсказку прячем.
+                            ().into_any()
+                        } else if ls[cur].commit {
                             (tut_played.get() == 1).then(|| view! {
                                 <p class="lesson-hint">"👆 Выберите, какой фишкой сделать обязательный ход на 6: нажмите фишку, затем её клетку."</p>
                             }).into_any()
