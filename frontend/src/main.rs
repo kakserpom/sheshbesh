@@ -75,14 +75,20 @@ struct Frame {
     note: Option<String>,
 }
 
-/// Имя стороны для комментатора: «Игрок L» (человек) или «ИИ L» (компьютер).
+/// Имя стороны для комментатора: «Игрок L» (человек) или «ИИ L» (компьютер),
+/// окрашенное в цвет стороны. Статус рисуется как HTML (`inner_html`), поэтому
+/// возвращаем `<b>`-спан с цветом; текст наш — инъекций не бывает.
 fn side_name(side: Side, humans: &[Side]) -> String {
     let who = if humans.contains(&side) {
         "Игрок"
     } else {
         "ИИ"
     };
-    format!("{who} {}", side.letter())
+    format!(
+        "<b style=\"color:{}\">{who} {}</b>",
+        side_color(side),
+        side.letter()
+    )
 }
 
 /// Реплика об одном применённом ходе (съедание/Дом/Луна/Тюрьма/выкуп). Для
@@ -115,8 +121,8 @@ fn move_note(before: &GameState, after: &GameState, mv: Move, humans: &[Side]) -
         MoveKind::PrisonRelease => "выход из Тюрьмы.",
         MoveKind::EnterHome => "заход фишки в Дом!",
         MoveKind::HomeAdvance => "фишка идёт вглубь Дома.",
-        MoveKind::PrisonPass => "фишка минует Тюрьму.",
-        MoveKind::Step | MoveKind::Ransom => return None,
+        // Проход сквозь Тюрьму отдельной репликой не сопровождаем (лишний шум).
+        MoveKind::PrisonPass | MoveKind::Step | MoveKind::Ransom => return None,
     };
     Some(format!("{name}: {event}"))
 }
@@ -1592,7 +1598,7 @@ fn App() -> impl IntoView {
             // Экран разработчика: панель сценариев + демо-анимация + read-only доска.
             {move || dev.get().then(|| view! {
                 <div class="status">
-                    <span class="herald">{move || herald.get()}</span>
+                    <span class="herald" inner_html=move || herald.get()></span>
                 </div>
                 <div class="controls dev-controls">
                     <button on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); dev.set(false); }>"← Настройки"</button>
@@ -1637,7 +1643,7 @@ fn App() -> impl IntoView {
             // Игровой экран после старта.
             {move || started.get().then(|| view! {
             <div class="status">
-                <span class="herald">{move || herald.get()}</span>
+                <span class="herald" inner_html=move || herald.get()></span>
             </div>
             <div class="controls">
                 <button class="icon-btn" title="Закончить игру" on:click=to_settings>"⏹"</button>
