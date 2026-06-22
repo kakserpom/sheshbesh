@@ -357,6 +357,37 @@ pub(crate) fn App() -> impl IntoView {
             apply_part(m);
             return;
         }
+        // Ход сразу за обе кости одной фишкой: клик по конечной клетке проигрывает всю
+        // последовательность и завершает ход.
+        if let Some(src) = sel.get_untracked()
+            && let Some((_, seq)) = combo_targets(&ps, &turns.get_untracked(), &pre, src)
+                .into_iter()
+                .find(|(d, _)| *d == target)
+        {
+            let mut frames = Vec::new();
+            let mut st = ps.clone();
+            let mut i = 0;
+            while i < seq.len() {
+                let mv = seq[i];
+                // Проход сквозь Тюрьму (вход + проход) анимируем как сквозной шаг,
+                // не показывая каземат.
+                let through = mv.kind == MoveKind::EnterPrison
+                    && seq
+                        .get(i + 1)
+                        .is_some_and(|n| n.kind == MoveKind::PrisonPass && n.checker == mv.checker);
+                if through {
+                    st = step_through_prison(&mut frames, st, mv, r);
+                    i += 1;
+                    continue;
+                }
+                st = apply_with_frames(&mut frames, st, mv, r, &hs);
+                i += 1;
+            }
+            let mut played = pre.clone();
+            played.extend(seq);
+            finish(frames, st, played);
+            return;
+        }
         match sel.get_untracked() {
             None => {
                 if cands.iter().any(|&m| move_source(&ps, m) == target) {
@@ -1055,6 +1086,17 @@ pub(crate) fn App() -> impl IntoView {
                             dsts.push((r, c));
                         }
                     }
+                    // «Ход сразу за обе кости» одной фишкой — конечные клетки как
+                    // дополнительные цели (например, 1-1 → пройти Тюрьму насквозь на 2).
+                    let combo_dsts: Vec<(usize, usize)> = cur
+                        .map(|s| combo_targets(&ps, &turns.get(), &pre, s))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|(d, _)| match d {
+                            Sel::Cell(r, c) if !dsts.contains(&(r, c)) => Some((r, c)),
+                            _ => None,
+                        })
+                        .collect();
                     let sel_cell = match cur { Some(Sel::Cell(r, c)) => Some((r, c)), _ => None };
                     // Источник «в каземате» (настоящий пленник) рисуем рамкой вокруг
                     // каземата; фишку на клетке/выходе (в т.ч. уже освобождённую) — кружком
@@ -1091,6 +1133,11 @@ pub(crate) fn App() -> impl IntoView {
                         let (cx, cy) = center_pt(rc);
                         nodes.push(ring_pt(cx, cy, "hl-dst"));
                     }
+                    // Цель «за обе кости сразу» — пунктиром, чтобы отличать от одиночной.
+                    for &rc in &combo_dsts {
+                        let (cx, cy) = center_pt(rc);
+                        nodes.push(ring_pt(cx, cy, "hl-combo"));
+                    }
                     if cur.is_none() {
                         for &rc in &srcs {
                             nodes.push(pt_hl(rc, "hl-src"));
@@ -1112,6 +1159,12 @@ pub(crate) fn App() -> impl IntoView {
                         }
                     }
                     for &(r, c) in &dsts {
+                        let (cx, cy) = center_pt((r, c));
+                        nodes.push(view! {
+                            <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
+                        }.into_any());
+                    }
+                    for &(r, c) in &combo_dsts {
                         let (cx, cy) = center_pt((r, c));
                         nodes.push(view! {
                             <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />

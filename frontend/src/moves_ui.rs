@@ -43,3 +43,37 @@ pub(crate) fn sel_of(owner: Side, pos: Position) -> Sel {
         _ => checker_cell(owner, pos).map_or(Sel::Reserve, |(r, c)| Sel::Cell(r, c)),
     }
 }
+
+/// «Ход сразу за обе кости» одной фишкой: для каждого полного хода (с уже сыгранным
+/// префиксом `prefix`), где ВСЕ оставшиеся части (минимум две) играются ОДНОЙ фишкой
+/// из `src`, возвращает (клетка финиша, оставшаяся последовательность). Клетку финиша
+/// считаем как у `move_dest` последней части (вход в Тюрьму/на Луну — клетка входа).
+pub(crate) fn combo_targets(
+    ps: &GameState,
+    turns: &[Vec<Move>],
+    prefix: &[Move],
+    src: Sel,
+) -> Vec<(Sel, Vec<Move>)> {
+    let step = prefix.len();
+    let mut out: Vec<(Sel, Vec<Move>)> = Vec::new();
+    for t in turns {
+        if t.len() < step + 2 || t[..step] != *prefix {
+            continue;
+        }
+        let rest = &t[step..];
+        let ci = rest[0].checker;
+        if !rest.iter().all(|m| m.checker == ci) || move_source(ps, rest[0]) != src {
+            continue;
+        }
+        // Состояние перед ПОСЛЕДНЕЙ частью — чтобы взять её `move_dest` (клетку входа).
+        let mut st = ps.clone();
+        for &m in &rest[..rest.len() - 1] {
+            st = apply(&st, m);
+        }
+        let dest = move_dest(&st, rest[rest.len() - 1]);
+        if matches!(dest, Sel::Cell(..)) && !out.iter().any(|(d, _)| *d == dest) {
+            out.push((dest, rest.to_vec()));
+        }
+    }
+    out
+}
