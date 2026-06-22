@@ -1198,8 +1198,21 @@ fn die3d(v: u8) -> impl IntoView {
 struct Lesson {
     title: &'static str,
     text: &'static str,
+    /// Позиция в начале хода игрока (сторона A).
     before: GameState,
+    /// Бросок этого хода (`None` — шаг-пояснение без хода).
     roll: Option<DiceRoll>,
+    /// Ход игрока (под-ходы по костям), посчитанный движком.
+    moves: Vec<Move>,
+    /// Ход соперника (C), который автоматически проигрывается после хода игрока,
+    /// прежде чем дойти до следующего шага — чтобы стороны ходили по очереди.
+    opp: Option<OppTurn>,
+}
+
+/// Авто-ход соперника между ходами игрока.
+struct OppTurn {
+    roll: DiceRoll,
+    moves: Vec<Move>,
 }
 
 /// Пара значений → бросок двух костей.
@@ -1207,119 +1220,98 @@ fn dr(a: u8, b: u8) -> DiceRoll {
     DiceRoll::new(Die::new(a).expect("1..6"), Die::new(b).expect("1..6"))
 }
 
-/// Шаги туториала: **одна** фишка A проходит весь путь по заранее заданным броскам —
-/// ввод (6) → Тюрьма (5) → выход (4) → Луна (6) и её поля (1·3) → сход (6) → съедание
-/// (3) → Дом. На каждом шаге показана кость, которой сделан этот ход.
+/// Туториал как **непрерывная партия** A против C по заранее заданным броскам: одна
+/// фишка A проходит путь (ввод→Тюрьма→Луна→съедание), а между её ходами соперник C
+/// двигает свою фишку-«мувера» (`checkers[5]`), не мешая пути; фишка-мишень C
+/// (`checkers[4]`) стоит до съедания. Все ходы считает движок (`legal_turns`),
+/// поэтому они легальны и соблюдают правило максимального хода.
 fn lessons() -> Vec<Lesson> {
     use Side::{A, C};
-    // База-позиция: демо-фишка A (`checkers[0]`) в `a0`; остальные 3 фишки A — в Доме
-    // (инертны, ходит только демо-фишка); фишка-мишень C — на клетке прогресса 28 (её
-    // съедим), остальные C — в Доме. Ходы из таких позиций считает движок (legal_turns).
-    let base = |a0: Position| {
-        let mut s = GameState::new(vec![A, C], A);
-        s.checkers.clear();
-        s.checkers.push(Checker { owner: A, pos: a0 });
-        for d in 1..4u8 {
-            s.checkers.push(Checker {
-                owner: A,
-                pos: Position::Home { depth: d },
-            });
-        }
-        let c_cell = A.entry().advance(28); // абс. клетка прогресса 28 (мишень)
-        s.checkers.push(Checker {
-            owner: C,
-            pos: Position::OnTrack {
-                progress: C.progress_of(c_cell),
-            },
+    // Стартовая позиция непрерывной партии.
+    let mut s = GameState::new(vec![A, C], A);
+    s.checkers.clear();
+    s.checkers.push(Checker { owner: A, pos: Position::Reserve }); // A[0] — демо-фишка
+    for d in 1..4u8 {
+        s.checkers.push(Checker { owner: A, pos: Position::Home { depth: d } }); // A[1..3] инертны
+    }
+    s.checkers.push(Checker { owner: C, pos: Position::OnTrack { progress: 64 } }); // C[4] мишень
+    s.checkers.push(Checker { owner: C, pos: Position::OnTrack { progress: 5 } }); // C[5] мувер
+    for d in 1..3u8 {
+        s.checkers.push(Checker { owner: C, pos: Position::Home { depth: d } }); // C[6,7]
+    }
+
+    // Ход игрока (A) — единственный легальный (движок форсирует путь).
+    let a_turn = |st: &GameState, r: DiceRoll| legal_turns(st, r).into_iter().next().unwrap_or_default();
+    // Ход соперника (C) — максимальный, двигающий ТОЛЬКО мувера C[5], иначе любой.
+    let c_turn = |st: &GameState, r: DiceRoll| {
+        let turns = legal_turns(st, r);
+        turns
+            .iter()
+            .find(|t| !t.is_empty() && t.iter().all(|m| m.checker == 5))
+            .or_else(|| turns.first())
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    // Сценарий: (бросок A, бросок C после, заголовок, текст). Последний шаг — без C.
+    let script: [(DiceRoll, Option<DiceRoll>, &str, &str); 6] = [
+        (dr(6, 5), Some(dr(3, 2)), "Цель и ввод",
+         "У каждого 4 фишки в резерве; цель — обойти доску против часовой и собрать все в своём Доме. \
+          Выпало 6 и 5: по 6 фишка входит на точку входа, затем оставшейся 5 доходит до Тюрьмы. \
+          Нажмите фишку, затем клетку (по одной кости), или ▶."),
+        (dr(4, 6), Some(dr(4, 1)), "Тюрьма и Луна",
+         "Тюрьма держит фишку: выйти можно только выбросив 4 — она выпала. Затем оставшейся 6 фишка \
+          идёт дальше и попадает на Луну. Сделайте оба под-хода."),
+        (dr(1, 2), Some(dr(3, 1)), "Луна",
+         "Луна — короткий безопасный путь по полям 1·3·6 (съесть нельзя). Выпало 1 — переход с поля «1» \
+          на «3». Вторая кость (2) не играется: на Луне нужно точное значение. Сделайте ход."),
+        (dr(3, 2), Some(dr(2, 1)), "Дорожка Луны",
+         "Выпало 3 — переход с поля «3» на «6». Осталось выбросить 6, чтобы сойти с Луны."),
+        (dr(6, 1), Some(dr(4, 2)), "Сход с Луны",
+         "По 6 фишка сходит с Луны на доску, заметно ближе к Дому. Впереди — фишка соперника."),
+        (dr(2, 1), None, "Съедание",
+         "Встав на клетку с фишкой соперника, фишка съедает её — пленная уходит к нашему Дому \
+          (с красной обводкой). На углах, Луне и в Тюрьме не едят."),
+    ];
+
+    let mut out = Vec::new();
+    let mut g = Game::new(s);
+    for (a_roll, c_roll, title, text) in script {
+        let before = g.state.clone();
+        let moves = a_turn(&g.state, a_roll);
+        g.commit_turn(a_roll, moves.clone(), |_, _, _| 0);
+        let opp = c_roll.map(|cr| {
+            let cm = c_turn(&g.state, cr);
+            g.commit_turn(cr, cm.clone(), |_, _, _| 0);
+            OppTurn { roll: cr, moves: cm }
         });
-        for d in 1..4u8 {
-            s.checkers.push(Checker {
-                owner: C,
-                pos: Position::Home { depth: d },
-            });
-        }
-        s
-    };
-    let prison = A.local_to_perimeter(LOCAL_PRISON_FAR);
-    let moon = |field| Position::Moon {
-        side: Side::B,
-        field,
-    };
+        out.push(Lesson { title, text, before, roll: Some(a_roll), moves, opp });
+    }
 
-    vec![
-        Lesson {
-            title: "Цель и ввод",
-            text: "У каждого 4 фишки в резерве; цель — обойти доску против часовой и собрать все в \
-                   своём Доме. Выпало 6 и 5: по 6 фишка входит на точку входа, оставшейся 5 доходит \
-                   до Тюрьмы. Нажмите фишку, затем клетку — или ▶.",
-            before: base(Position::Reserve),
-            roll: Some(dr(6, 5)),
-        },
-        Lesson {
-            title: "Тюрьма",
-            text: "Тюрьма (4-я клетка от угла) держит фишку: выйти можно только выбросив 4 — она \
-                   выпала. Оставшейся 6 фишка идёт дальше и попадает на Луну. Сделайте ход.",
-            before: base(Position::Prison { cell: prison }),
-            roll: Some(dr(4, 6)),
-        },
-        Lesson {
-            title: "Луна",
-            text: "Луна — короткий безопасный путь по полям 1·3·6 (съесть на ней нельзя). Выпало 1 — \
-                   переход с поля «1» на «3». Вторая кость (2) не играется: на Луне нужно точное \
-                   значение, а других фишек в игре нет. Сделайте ход.",
-            before: base(moon(MoonField::One)),
-            roll: Some(dr(1, 2)),
-        },
-        Lesson {
-            title: "Дорожка Луны",
-            text: "Выпало 3 — переход с поля «3» на «6». Осталось выбросить 6, чтобы сойти с Луны. \
-                   Сделайте ход.",
-            before: base(moon(MoonField::Three)),
-            roll: Some(dr(3, 2)),
-        },
-        Lesson {
-            title: "Сход с Луны и съедание",
-            text: "Выпало 6 и 3: по 6 фишка сходит с Луны на доску, а оставшейся 3 встаёт на клетку с \
-                   фишкой соперника впереди и съедает её. На углах, Луне и в Тюрьме не едят. \
-                   Сделайте ход.",
-            before: base(moon(MoonField::Six)),
-            roll: Some(dr(6, 3)),
-        },
-        Lesson {
-            title: "Плен и выкуп",
-            text: "Съеденная фишка соперника — в плену у вашего Дома (с красной обводкой). Чтобы \
-                   вернуть свою пленную, её владелец выбрасывает 6 (выкуп) и обязывает соперника \
-                   сходить на 6, а затем ещё 6 — для повторного ввода. Дальше →.",
-            before: {
-                let mut s = base(Position::OnTrack { progress: 28 });
-                s.checkers[4].pos = Position::Captured { captor: A };
-                s
-            },
-            roll: None,
-        },
-        Lesson {
-            title: "Дом и победа",
-            text: "Дойдя до Дома, фишка заходит ровно по броску — по одной в клетку; перепрыгивать \
-                   занятые клетки Дома нельзя (но можно идти глубже). Чужие фишки в Дом не пускают. \
-                   Заведите все 4 фишки в Дом — и вы выиграли!",
-            before: {
-                let mut s = base(Position::Home { depth: 0 });
-                s.checkers[0].pos = Position::Home { depth: 0 };
-                s
-            },
-            roll: None,
-        },
-    ]
-}
-
-/// Единственный легальный ход из позиции `before` при броске `roll` — его вычисляет
-/// движок (`legal_turns` уже соблюдает правило максимального хода). В позициях
-/// туториала ход однозначен, так что просто берём первый.
-fn chosen_turn(before: &GameState, roll: DiceRoll) -> Vec<Move> {
-    legal_turns(before, roll)
-        .into_iter()
-        .next()
-        .unwrap_or_default()
+    // Шаги-пояснения без хода.
+    out.push(Lesson {
+        title: "Плен и выкуп",
+        text: "Съеденная фишка соперника — в плену у нашего Дома. Чтобы вернуть свою пленную, её \
+               владелец выбрасывает 6 (выкуп) и обязывает соперника сходить на 6, затем ещё 6 — для \
+               повторного ввода. Дальше →.",
+        before: g.state.clone(),
+        roll: None,
+        moves: Vec::new(),
+        opp: None,
+    });
+    let mut home = g.state.clone();
+    home.checkers[0].pos = Position::Home { depth: 0 }; // финал: демо-фишка в Доме
+    out.push(Lesson {
+        title: "Дом и победа",
+        text: "Дойдя до Дома, фишка заходит ровно по броску — по одной в клетку; перепрыгивать занятые \
+               клетки Дома нельзя (но можно идти глубже). Чужие фишки в Дом не пускают. Заведите все 4 \
+               фишки в Дом — и вы выиграли!",
+        before: home,
+        roll: None,
+        moves: Vec::new(),
+        opp: None,
+    });
+    out
 }
 
 /// Кадры броска кости БЕЗ движения фишки: кубики кувыркаются (3D), затем застывают.
@@ -1839,14 +1831,27 @@ fn App() -> impl IntoView {
             // в игре (сигнал `game` + `play` + keyed-фишки со скольжением).
             {move || tutorial.get().then(|| {
                 let total = lessons_sv.with_value(Vec::len);
-                // Завершает кадры хода: после последнего под-хода бросаем кости
-                // СЛЕДУЮЩЕГО шага (бросок — до следующего хода) и переходим к нему.
+                // Завершает кадры хода игрока: проигрывает авто-ход соперника (если есть)
+                // — чтобы стороны ходили по очереди — затем бросает кости СЛЕДУЮЩЕГО
+                // шага (бросок до хода) и переходит к нему.
                 let finish_step = move |frames: &mut Vec<Frame>, after: &GameState, cur: usize| {
                     lessons_sv.with_value(|ls| {
+                        // Ход соперника: его бросок + пошаговое движение его фишки.
+                        let end_state = match &ls[cur].opp {
+                            Some(opp) => {
+                                frames.extend(roll_only_frames(after, opp.roll));
+                                let mut st = after.clone();
+                                for mv in &opp.moves {
+                                    st = apply_with_frames(frames, st, *mv, opp.roll, &[]);
+                                }
+                                st
+                            }
+                            None => after.clone(),
+                        };
                         if cur + 1 < ls.len() {
                             match ls[cur + 1].roll {
-                                Some(nr) => frames.extend(roll_only_frames(after, nr)),
-                                None => frames.push(Frame { state: after.clone(), roll: None, hold: HOLD_STEP_MS, rolling: false, note: None }),
+                                Some(nr) => frames.extend(roll_only_frames(&end_state, nr)),
+                                None => frames.push(Frame { state: end_state, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None }),
                             }
                             lesson_idx.set(cur + 1);
                         }
@@ -1863,7 +1868,7 @@ fn App() -> impl IntoView {
                     lessons_sv.with_value(|ls| {
                         match ls[cur].roll {
                             Some(r) => {
-                                let chosen = chosen_turn(&ls[cur].before, r);
+                                let chosen = &ls[cur].moves;
                                 let k = tut_played.get_untracked();
                                 let end = k.saturating_add(count).min(chosen.len());
                                 let mut state = game.get_untracked().state.clone();
@@ -1932,8 +1937,8 @@ fn App() -> impl IntoView {
                             let cur = lesson_idx.get().min(total - 1);
                             lessons_sv.with_value(|ls| {
                                 let mut nodes: Vec<AnyView> = Vec::new();
-                                if let Some(r) = ls[cur].roll {
-                                    let chosen = chosen_turn(&ls[cur].before, r);
+                                if ls[cur].roll.is_some() {
+                                    let chosen = &ls[cur].moves;
                                     let k = tut_played.get();
                                     if k < chosen.len() {
                                         let st = game.get().state;
