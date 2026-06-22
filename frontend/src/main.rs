@@ -1178,6 +1178,10 @@ fn App() -> impl IntoView {
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
     // Обученная TD(λ)-ценность: ею ходит компьютер (сильнее эвристики).
     let ai = StoredValue::new(ai_model());
+    // Поколение партии: растёт при старте/остановке игры. Любая запущенная анимация
+    // (spawn_local) запоминает своё поколение и прекращается, когда оно устарело, —
+    // иначе старая партия продолжала бы крутить кадры поверх новой.
+    let epoch = StoredValue::new(0u64);
     // Настройки: число игроков, типы сторон и (для 4) командный режим 2×2.
     let players = RwSignal::new(2usize);
     let humans = RwSignal::new(vec![Side::A]);
@@ -1239,10 +1243,18 @@ fn App() -> impl IntoView {
         if frames.is_empty() {
             return;
         }
+        let era = epoch.get_value();
         animating.set(true);
         spawn_local(async move {
             for frame in frames {
+                // Новая партия началась — бросаем эту анимацию (не трогая сигналы).
+                if epoch.get_value() != era {
+                    return;
+                }
                 while paused.get_untracked() {
+                    if epoch.get_value() != era {
+                        return;
+                    }
                     TimeoutFuture::new(150).await;
                 }
                 // Показываем кадр, затем держим его свою паузу (бросок — дольше шага).
@@ -1253,6 +1265,9 @@ fn App() -> impl IntoView {
                     herald.set(note);
                 }
                 TimeoutFuture::new(frame.hold).await;
+            }
+            if epoch.get_value() != era {
+                return;
             }
             rolling.set(false);
             animating.set(false);
@@ -1299,9 +1314,13 @@ fn App() -> impl IntoView {
     // Старт партии: держим паузу-заставку (видно «Игра началась»), затем снимаем
     // блокировку — дальше ход подхватят Effect'ы (авто-бросок человека / ход ИИ).
     let kickoff = move || {
+        let era = epoch.get_value();
         animating.set(true);
         spawn_local(async move {
             TimeoutFuture::new(INTRO_MS).await;
+            if epoch.get_value() != era {
+                return;
+            }
             animating.set(false);
         });
     };
@@ -1329,12 +1348,17 @@ fn App() -> impl IntoView {
             let name = side_name(g.state.to_move, &hs);
             // Анимируем бросок игрока так же, как у компьютера: кубики кувыркаются,
             // затем показывается результат и включается выбор хода.
+            let era = epoch.get_value();
             animating.set(true);
             spawn_local(async move {
                 herald.set(format!("{name} бросает кости…"));
                 roll.set(Some(r));
                 rolling.set(true);
                 TimeoutFuture::new(ROLL_ANIM_MS).await;
+                // Новая партия началась за время броска — прекращаем.
+                if epoch.get_value() != era {
+                    return;
+                }
                 rolling.set(false);
                 herald.set(if no_move {
                     format!("{name}: выпало {a} и {b}. Ходить нечем — пропуск.")
@@ -1436,6 +1460,8 @@ fn App() -> impl IntoView {
 
     // Запуск партии по выбранным настройкам (число игроков и кто человек).
     let start_game = move |_| {
+        // Новое поколение — глушит анимации предыдущей партии (иначе две идут разом).
+        epoch.update_value(|e| *e += 1);
         let active = active_for(players.get_untracked());
         dice.update_value(|d| *d = RandomDice::from_seed(seed()));
         roll.set(None);
@@ -1453,8 +1479,15 @@ fn App() -> impl IntoView {
         started.set(true);
         kickoff();
     };
-    // Назад к настройкам (кнопка «Настройки»).
-    let to_settings = move |_| started.set(false);
+    // Назад к настройкам / «Закончить игру»: глушим анимации текущей партии и
+    // сбрасываем переходные сигналы, чтобы новая партия стартовала с чистого листа.
+    let to_settings = move |_| {
+        epoch.update_value(|e| *e += 1);
+        animating.set(false);
+        rolling.set(false);
+        roll.set(None);
+        started.set(false);
+    };
 
     // Демо-анимация (режим разработчика): пошаговый ход со съеданием через тот же
     // конвейер кадров, что и в партии (бросок, шаги по клеткам, реплики ведущего).
@@ -1462,6 +1495,7 @@ fn App() -> impl IntoView {
         if animating.get_untracked() {
             return;
         }
+        epoch.update_value(|e| *e += 1);
         let mut gg = demo_capture();
         let r = DiceRoll::new(Die::new(3).expect("3"), Die::new(1).expect("1"));
         let t = legal_turns(&gg.state, r);
@@ -1488,6 +1522,8 @@ fn App() -> impl IntoView {
 
     // Открыть/закрыть экран разработчика, показав состояние-заглушку.
     let open_dev = move |_| {
+        epoch.update_value(|e| *e += 1);
+        animating.set(false);
         game.set(Game::new(demo_game(Demo::Reserve)));
         roll.set(None);
         herald.set("Режим разработчика: выберите сценарий.".to_string());
@@ -1559,9 +1595,12 @@ fn App() -> impl IntoView {
                     <span class="herald">{move || herald.get()}</span>
                 </div>
                 <div class="controls dev-controls">
-                    <button on:click=move |_| dev.set(false)>"← Настройки"</button>
+                    <button on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); dev.set(false); }>"← Настройки"</button>
                     {DEMOS.iter().map(|&(d, label)| view! {
                         <button on:click=move |_| {
+                            // Обрываем демо-анимацию, если идёт, и показываем сценарий.
+                            epoch.update_value(|e| *e += 1);
+                            animating.set(false);
                             game.set(Game::new(demo_game(d)));
                             roll.set(None);
                             herald.set(label.to_string());
