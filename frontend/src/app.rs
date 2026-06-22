@@ -289,7 +289,11 @@ pub(crate) fn App() -> impl IntoView {
         frames.push(Frame {
             state: fg.state.clone(),
             roll: None,
-            hold: if burn_note.is_some() { HOLD_NOMOVE_MS } else { HOLD_STEP_MS },
+            hold: if burn_note.is_some() {
+                HOLD_NOMOVE_MS
+            } else {
+                HOLD_STEP_MS
+            },
             rolling: false,
             note: burn_note,
             pts: Vec::new(),
@@ -315,6 +319,39 @@ pub(crate) fn App() -> impl IntoView {
         let ps = g.state.clone(); // доска уже продвинута применёнными частями хода
         let pre = prefix.get_untracked();
         let cands = step_opts(&turns.get_untracked(), &pre);
+        // Применяет выбранную часть хода `m`: проигрывает её и либо завершает ход, либо
+        // продолжает со следующей костью.
+        let apply_part = |m: Move| {
+            let mut np = pre.clone();
+            np.push(m);
+            let total = turns.get_untracked().first().map_or(0, Vec::len);
+            let mut frames = Vec::new();
+            let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs);
+            if np.len() >= total {
+                finish(frames, after, np);
+            } else {
+                // Сохраняем фокус на той же фишке, если ею можно ходить дальше.
+                let next_src = sel_of(
+                    after.checkers[m.checker].owner,
+                    after.checkers[m.checker].pos,
+                );
+                let keep = step_opts(&turns.get_untracked(), &np)
+                    .iter()
+                    .any(|&mv| move_source(&after, mv) == next_src);
+                prefix.set(np);
+                sel.set(keep.then_some(next_src));
+                play(frames);
+            }
+        };
+        // Ход «на месте» (выход из Тюрьмы «зашёл-вышел»: источник == цель) исполняем
+        // одним кликом по клетке — выбора цели нет.
+        if let Some(&m) = cands
+            .iter()
+            .find(|&&m| move_source(&ps, m) == target && move_dest(&ps, m) == target)
+        {
+            apply_part(m);
+            return;
+        }
         match sel.get_untracked() {
             None => {
                 if cands.iter().any(|&m| move_source(&ps, m) == target) {
@@ -325,29 +362,10 @@ pub(crate) fn App() -> impl IntoView {
             Some(src) => {
                 let found = cands
                     .iter()
-                    .find(|&&m| move_source(&ps, m) == src && move_dest(&ps, m) == target);
-                if let Some(&m) = found {
-                    let mut np = pre.clone();
-                    np.push(m);
-                    let total = turns.get_untracked().first().map_or(0, Vec::len);
-                    // Выбранную часть хода проигрываем сразу — пошагово, по клеткам.
-                    let mut frames = Vec::new();
-                    let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs);
-                    if np.len() >= total {
-                        finish(frames, after, np);
-                    } else {
-                        // Сохраняем фокус на той же фишке, если ею можно ходить дальше.
-                        let next_src = sel_of(
-                            after.checkers[m.checker].owner,
-                            after.checkers[m.checker].pos,
-                        );
-                        let keep = step_opts(&turns.get_untracked(), &np)
-                            .iter()
-                            .any(|&mv| move_source(&after, mv) == next_src);
-                        prefix.set(np);
-                        sel.set(keep.then_some(next_src));
-                        play(frames);
-                    }
+                    .find(|&&m| move_source(&ps, m) == src && move_dest(&ps, m) == target)
+                    .copied();
+                if let Some(m) = found {
+                    apply_part(m);
                 } else if cands.iter().any(|&m| move_source(&ps, m) == target) {
                     sel.set(Some(target));
                 } else {
@@ -1028,6 +1046,15 @@ pub(crate) fn App() -> impl IntoView {
                     if cur.is_none() {
                         for &rc in &srcs {
                             nodes.push(ring(rc, "hl-src"));
+                            // Пленную фишку можно освободить, кликнув и по самой клетке
+                            // Тюрьмы (не только по каземату) — подсветим её тоже.
+                            if prison_cage(rc).is_some() {
+                                let (cx, cy) = center_pt(rc);
+                                nodes.push(ring_pt(cx, cy, "hl-src"));
+                                nodes.push(view! {
+                                    <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(rc.0, rc.1)) />
+                                }.into_any());
+                            }
                         }
                     }
                     // Кликабельные зоны: источники/выбранная — в точке фишки (каземат для
