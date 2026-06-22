@@ -1471,6 +1471,7 @@ fn App() -> impl IntoView {
     let dev = RwSignal::new(false);
     // Справка по правилам и пошаговое обучение (туториал) — экраны из меню настроек.
     let rules = RwSignal::new(false);
+    let about = RwSignal::new(false);
     let tutorial = RwSignal::new(false);
     let lesson_idx = RwSignal::new(0usize);
     let lessons_sv = StoredValue::new(lessons());
@@ -1867,10 +1868,10 @@ fn App() -> impl IntoView {
         <div class="wrap">
             // Заголовок — только на экране настроек; в партии/обучении он лишь крал бы
             // высоту у доски.
-            {move || (!started.get() && !dev.get() && !rules.get() && !tutorial.get())
+            {move || (!started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get())
                 .then(|| view! { <h1>"Шеш-Беш"</h1> })}
             // Экран настроек до старта партии: число игроков и тип каждой стороны.
-            {move || (!started.get() && !dev.get() && !rules.get() && !tutorial.get()).then(|| view! {
+            {move || (!started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get()).then(|| view! {
                 <div class="settings">
                     <div class="set-row">
                         <span>"Игроков:"</span>
@@ -1930,6 +1931,7 @@ fn App() -> impl IntoView {
                             tutorial.set(true);
                         }>"🎓 Обучение"</button>
                         <button on:click=move |_| rules.set(true)>"📖 Правила"</button>
+                        <button on:click=move |_| about.set(true)>"❤️ Об игре"</button>
                         // Режим разработчика — только в отладочной сборке.
                         {cfg!(debug_assertions).then(|| view! {
                             <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
@@ -1983,6 +1985,19 @@ fn App() -> impl IntoView {
 
                     <h3>"Дом"</h3>
                     <p>"Заход в Дом — ровно по броску, по одной фишке в клетку; перепрыгивать занятые клетки Дома нельзя (но фишка в Доме может идти глубже, освобождая место). Перебор за пределы Дома нелегален. При этом второй круг возможен через Луну: своя Луна стоит у самого Дома, и фишка с неё выходит в начало круга — приходится идти ещё раз."</p>
+                </div>
+            })}
+
+            // Экран «Об игре»: личная история происхождения этой самобытной игры.
+            {move || about.get().then(|| view! {
+                <div class="rules">
+                    <div class="page-head">
+                        <button class="icon-btn" title="Назад" on:click=move |_| about.set(false)>"←"</button>
+                        <h2>"Об игре"</h2>
+                    </div>
+                    <p>"Эта настольная игра была известна среди студентов МИФИ ещё в 70-е годы."</p>
+                    <p>"В 90-е, когда я был маленьким, в один из дней мы с отцом купили в книжном магазине лист ватмана. Он расчертил на нём поле, и мы стали играть вечерами, сидя на ковре. К нам присоединялись его школьные и студенческие друзья — это было здорово."</p>
+                    <p>"Вспоминая эти моменты с теплотой, я решил воссоздать игру на компьютере. Описания этой игры в Интернете мне найти так и не удалось — поэтому правила здесь восстановлены по памяти."</p>
                 </div>
             })}
 
