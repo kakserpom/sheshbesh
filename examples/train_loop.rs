@@ -28,7 +28,7 @@ fn clone_model(m: &LinearValue) -> LinearValue {
 
 fn load_or_zero(path: &str) -> LinearValue {
     std::fs::read(path).ok().map_or_else(
-        || LinearValue::from_floats(&vec![0.0_f32; sheshbesh::FEATURES + 1]),
+        || LinearValue::from_floats(&[0.0_f32; sheshbesh::FEATURES + 1]),
         |b| {
             let f: Vec<f32> = b
                 .chunks_exact(4)
@@ -68,7 +68,7 @@ fn main() {
     let train_games: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10_000);
     let eval_games: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(400);
 
-    let modes = vec![
+    let modes = [
         Mode { name: "2p", file: "frontend/src/model.bin", active: vec![Side::A, Side::C], teams: false },
         Mode { name: "3p", file: "frontend/src/model_3p.bin", active: vec![Side::A, Side::B, Side::C], teams: false },
         Mode { name: "4p", file: "frontend/src/model_4p.bin", active: Side::ALL.to_vec(), teams: false },
