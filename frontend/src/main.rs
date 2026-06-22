@@ -12,10 +12,22 @@ use sheshbesh::board::{
 };
 use sheshbesh::{
     Agent, BOARD_DIM, BOARD_MARGIN, CellKind, Checker, DiceRoll, DiceSource, Die, Game, GameState,
-    Heuristic, MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side, apply,
-    checker_cell, legal_turns, margin_coord,
+    Heuristic, LinearValue, MoonField, Move, MoveKind, PerimeterIdx, Position, RandomDice, Side,
+    apply, best_forced, best_turn, checker_cell, legal_turns, margin_coord,
 };
 use wasm_bindgen_futures::spawn_local;
+
+/// Веса обученной TD(λ)-ценности (LE f32), встроены в бинарь. См. `examples/export_model.rs`.
+static MODEL_BYTES: &[u8] = include_bytes!("model.bin");
+
+/// Загружает обученную линейную ценность из встроенных весов — ею ходит компьютер.
+fn ai_model() -> LinearValue {
+    let floats: Vec<f32> = MODEL_BYTES
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    LinearValue::from_floats(&floats)
+}
 
 /// Пауза-заставка перед первым ходом партии (мс) — чтобы старт не мелькал.
 const INTRO_MS: u32 = 1800;
@@ -1157,6 +1169,8 @@ fn die3d(v: u8) -> impl IntoView {
 #[component]
 fn App() -> impl IntoView {
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
+    // Обученная TD(λ)-ценность: ею ходит компьютер (сильнее эвристики).
+    let ai = StoredValue::new(ai_model());
     // Настройки: число игроков, типы сторон и (для 4) командный режим 2×2.
     let players = RwSignal::new(2usize);
     let humans = RwSignal::new(vec![Side::A]);
@@ -1257,11 +1271,13 @@ fn App() -> impl IntoView {
         dice.update_value(|d| roll_v = Some(d.roll()));
         let r = roll_v.expect("roll");
         let t = legal_turns(&gg.state, r);
-        let idx = Heuristic.choose_turn(&gg.state, &t).min(t.len() - 1);
+        let idx = ai
+            .with_value(|m| best_turn(m, &gg.state, &t))
+            .min(t.len() - 1);
         let played = t[idx].clone();
         let mut frames = Vec::new();
         commit_frames(&mut frames, &mut gg, r, played, &hs, true, |s, c, o| {
-            Heuristic.choose_forced(s, c, o)
+            ai.with_value(|m| best_forced(m, s, c, o))
         });
         frames.push(Frame {
             state: gg.state.clone(),
