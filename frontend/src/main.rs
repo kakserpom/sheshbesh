@@ -1391,8 +1391,9 @@ fn lessons() -> Vec<Lesson> {
     out.push(Lesson {
         title: "Плен и выкуп",
         text: "Чтобы вернуть пленную фишку, её владелец выбрасывает 6 — она возвращается в резерв \
-               (выкуп). Тогда захватчик обязан сразу сходить на 6 клеток (если есть чем). Жмите ▶: \
-               соперник выкупит свою фишку, а затем выберите, какой нашей фишкой сделать ход на 6.",
+               (выкуп). Соперник тут же выкупает свою фишку (она улетает к нему в резерв). \
+               Тогда захватчик обязан сразу сходить на 6 клеток: выберите, какой нашей фишкой — \
+               нажмите фишку, затем подсвеченную клетку.",
         before: ransom_before,
         roll: Some(ransom_roll),
         moves: ransom_moves,
@@ -1967,18 +1968,32 @@ fn App() -> impl IntoView {
                             None => after.clone(),
                         };
                         let _ = end_state;
+                        let mut next_commit = false;
                         if cur + 1 < ls.len() {
                             // Бросок следующего шага — на ЕГО позиции `before` (она же = конец
                             // хода для непрерывных шагов; для отдельных — переход к новой).
                             let nb = ls[cur + 1].before.clone();
+                            next_commit = ls[cur + 1].commit;
                             match ls[cur + 1].roll {
-                                Some(nr) => frames.extend(roll_only_frames(&nb, nr)),
+                                Some(nr) => {
+                                    frames.extend(roll_only_frames(&nb, nr));
+                                    // Шаг-выкуп: сразу проигрываем ход соперника (возврат
+                                    // пленной фишки в резерв), оставляя игроку лишь выбор
+                                    // обязательного ответного хода на 6 (фаза 1).
+                                    if next_commit {
+                                        let mut s = nb;
+                                        for mv in &ls[cur + 1].moves {
+                                            s = apply_with_frames(frames, s, *mv, nr, &[]);
+                                        }
+                                    }
+                                }
                                 None => frames.push(Frame { state: nb, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None, pts: Vec::new() }),
                             }
                             lesson_idx.set(cur + 1);
                         }
+                        // Для шага-выкупа сразу переходим к фазе выбора хода на 6.
+                        tut_played.set(usize::from(next_commit));
                     });
-                    tut_played.set(0);
                     tut_pick.set(None);
                 };
                 // Проиграть `count` под-ходов текущего шага начиная с уже сыгранных
