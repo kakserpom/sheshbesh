@@ -1958,6 +1958,10 @@ fn App() -> impl IntoView {
                                                 (MoveKind::EnterMoon, Position::Moon { side, .. }) => {
                                                     center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON)))
                                                 }
+                                                // Вход в Тюрьму — на саму клетку, а не в каземат.
+                                                (MoveKind::EnterPrison, Position::Prison { cell }) => {
+                                                    center_pt(margin_coord(cell))
+                                                }
                                                 _ => {
                                                     let (x, y, _) = checker_xy(&after, moved);
                                                     (x, y)
