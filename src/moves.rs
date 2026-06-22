@@ -35,9 +35,6 @@ pub enum MoveKind {
     MoonExit,
     /// Освобождение из Тюрьмы (по «4»): фишка остаётся на той же клетке.
     PrisonRelease,
-    /// Проход сквозь Тюрьму: фишка, только что попавшая на клетку Тюрьмы этим
-    /// ходом, использует ещё одну кость и идёт дальше, не оставаясь в плену.
-    PrisonPass,
     /// Заход в Дом (ровно, по 1 фишке в клетку).
     EnterHome,
     /// Продвижение вглубь Дома (фишка уже в Доме идёт на более глубокую клетку,
@@ -268,62 +265,11 @@ fn resolve(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
     }
 }
 
-/// Проход сквозь Тюрьму: фишка, только что (этим ходом) попавшая на клетку Тюрьмы,
-/// использует ещё одну кость и идёт дальше — как обычный шаг от клетки Тюрьмы, не
-/// оставаясь в плену. `None` — если так не пройти. Применяется только к «свежим»
-/// пленникам (см. `maximal_sequences`); обычный пленник так ходить не может.
-fn prison_pass(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
-    let ch = state.checkers[ci];
-    let owner = ch.owner;
-    let Position::Prison { cell } = ch.pos else {
-        return None;
-    };
-    let progress = owner.progress_of(cell);
-    let target = progress + die as u16;
-    if !path_clear(state, owner, progress, die) {
-        return None;
-    }
-    let (new_pos, captures) = if (target as usize) < PERIMETER {
-        let abs = owner.entry().advance(target as usize);
-        match cell_kind(abs) {
-            CellKind::Moon => (
-                Position::Moon {
-                    side: abs.side(),
-                    field: MoonField::One,
-                },
-                vec![],
-            ),
-            CellKind::Prison => (Position::Prison { cell: abs }, vec![]),
-            CellKind::Corner => (Position::OnTrack { progress: target }, vec![]),
-            CellKind::Plain | CellKind::HomeEntrance => (
-                Position::OnTrack { progress: target },
-                enemies_on(state, owner, abs),
-            ),
-        }
-    } else {
-        let depth = (target as usize) - PERIMETER;
-        if depth < HOME_DEPTH && !home_depth_taken(state, owner, depth as u8) {
-            (Position::Home { depth: depth as u8 }, vec![])
-        } else {
-            return None;
-        }
-    };
-    Some(Resolved {
-        new_pos,
-        captures,
-        kind: MoveKind::PrisonPass,
-    })
-}
-
 /// Легален ли конкретный ход в данном состоянии (без паники, в отличие от `apply`).
 /// Нужно туровому циклу: ответный ход захватчика при выкупе может сделать
 /// нелегальным следующий ход выбранной последовательности — такой ход пропускается.
 pub fn move_legal(state: &GameState, mv: Move) -> bool {
-    if mv.kind == MoveKind::PrisonPass {
-        prison_pass(state, mv.checker, mv.die).is_some()
-    } else {
-        resolve(state, mv.checker, mv.die).is_some()
-    }
+    resolve(state, mv.checker, mv.die).is_some()
 }
 
 /// Все легальные ходы стороны `side` для значения кости `die`.
@@ -377,11 +323,7 @@ pub fn legal_moves(state: &GameState, remaining: &[u8]) -> Vec<Move> {
 /// # Panics
 /// Если ход нелегален в данном состоянии.
 pub fn apply(state: &GameState, mv: Move) -> GameState {
-    let resolved = if mv.kind == MoveKind::PrisonPass {
-        prison_pass(state, mv.checker, mv.die).expect("apply: нелегальный проход Тюрьмы")
-    } else {
-        resolve(state, mv.checker, mv.die).expect("apply: нелегальный ход")
-    };
+    let resolved = resolve(state, mv.checker, mv.die).expect("apply: нелегальный ход");
     let mut next = state.clone();
     // Съеденные фишки достаются стороне, чья фишка ходит (на обычных ходах это
     // текущий игрок; при вынужденном ответном ходе — захватчик).
@@ -416,30 +358,12 @@ fn maximal_sequences(
 ) {
     let mut extended = false;
     let mut tried = Vec::new();
-    // «Свежие» пленники — фишки, попавшие в Тюрьму ИМЕННО этим ходом (они уже двигались
-    // в этой последовательности). Им разрешён проход дальше (`prison_pass`); фишкам,
-    // сидевшим в Тюрьме с прошлого хода, — нет (только выход по «4», через `resolve`).
-    let fresh: Vec<usize> = (0..state.checkers.len())
-        .filter(|&ci| {
-            matches!(state.checkers[ci].pos, Position::Prison { .. })
-                && prefix.iter().any(|m| m.checker == ci)
-        })
-        .collect();
     for &die in remaining {
         if tried.contains(&die) {
             continue;
         }
         tried.push(die);
-        let mut moves = moves_for_die(state, die);
-        for &ci in &fresh {
-            if let Some(r) = prison_pass(state, ci, die) {
-                moves.push(Move {
-                    checker: ci,
-                    die,
-                    kind: r.kind,
-                });
-            }
-        }
+        let moves = moves_for_die(state, die);
         for mv in moves {
             extended = true;
             let next = apply(state, mv);
@@ -615,10 +539,10 @@ mod tests {
     }
 
     #[test]
-    fn prison_pass_forced_through_with_one_checker() {
-        // Одна фишка A на progress 11; бросок (2,3): «2» ставит на Тюрьму (13),
-        // но по правилу максимального хода нужно использовать обе кости — фишка
-        // обязана пройти дальше, а не застрять в Тюрьме.
+    fn prison_avoided_by_overshoot_with_one_checker() {
+        // Одна фишка A на progress 11; бросок (2,3): «2» встал бы на Тюрьму (13), но по
+        // правилу максимального хода выгоднее ПЕРЕШАГНУТЬ Тюрьму (3 → 14, мимо), затем 2.
+        // Зайти в Тюрьму и застрять (нет «4») как максимальный ход нельзя.
         let s = state_a(&[Position::OnTrack { progress: 11 }]);
         let turns = legal_turns(&s, roll(2, 3));
         assert!(!turns.is_empty());
@@ -632,18 +556,23 @@ mod tests {
                 "при одной фишке нельзя застрять в Тюрьме: {t:?}"
             );
         }
-        // Есть последовательность «вошёл в Тюрьму (2) → прошёл дальше (3)».
-        assert!(turns.iter().any(|t| {
-            t.len() == 2 && t[0].kind == MoveKind::EnterPrison && t[1].kind == MoveKind::PrisonPass
-        }));
+        // Максимальный ход — перешагнуть Тюрьму мимо, а не входить в неё.
+        assert!(
+            turns
+                .iter()
+                .all(|t| t.iter().all(|m| m.kind != MoveKind::EnterPrison))
+        );
     }
 
     #[test]
-    fn prison_four_lets_choose_pass_or_release() {
-        // Бросок (2,4): «2» ставит на Тюрьму (13). На «4» — выбор: пройти дальше
-        // (мимо Тюрьмы) ИЛИ «зашёл-вышел» (освобождение, остаётся на клетке 13).
+    fn prison_entry_then_only_release() {
+        // Бросок (2,4), одна фишка A (progress 11). Выбор делается ПЕРВЫМ ходом:
+        //  • зайти в Тюрьму (13) и «зашёл-вышел» по «4» — остаться на клетке 13; либо
+        //  • перешагнуть Тюрьму (4 → 15, мимо) и пойти дальше (2 → 17).
+        // Зайдя в Тюрьму, второй костью пройти дальше уже НЕЛЬЗЯ — только освобождение.
         let s = state_a(&[Position::OnTrack { progress: 11 }]);
-        let finals: Vec<Position> = legal_turns(&s, roll(2, 4))
+        let turns = legal_turns(&s, roll(2, 4));
+        let finals: Vec<Position> = turns
             .iter()
             .map(|t| {
                 let mut st = s.clone();
@@ -653,13 +582,19 @@ mod tests {
                 st.checkers[0].pos
             })
             .collect();
-        // «зашёл-вышел»: свободна на клетке Тюрьмы.
+        // «зашёл-вышел»: свободна на клетке Тюрьмы (13).
         assert!(finals.contains(&Position::OnTrack { progress: 13 }));
-        // либо ушла дальше (не в плену и не на клетке Тюрьмы).
+        // перешагнула Тюрьму мимо и ушла дальше (не в Тюрьме и не на клетке 13).
         assert!(
             finals.iter().any(|p| !matches!(p, Position::Prison { .. })
                 && *p != Position::OnTrack { progress: 13 })
         );
+        // Войдя в Тюрьму, дальше можно ТОЛЬКО освободиться (PrisonRelease).
+        for t in &turns {
+            if t.first().is_some_and(|m| m.kind == MoveKind::EnterPrison) {
+                assert!(t[1..].iter().all(|m| m.kind == MoveKind::PrisonRelease));
+            }
+        }
     }
 
     #[test]
