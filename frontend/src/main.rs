@@ -1234,10 +1234,12 @@ fn die3d(v: u8) -> impl IntoView {
         1 => "die-bounce-b",
         _ => "die-bounce-c",
     };
-    // Независимая случайная длительность из одного широкого диапазона (0.9–2.2с):
-    // кости могут встать и почти одновременно, и в заметно разные моменты —
-    // настоящий случайный бросок (равномерное вращение делает разницу видимой).
-    let dur = 0.9 + js_sys::Math::random() * 1.3;
+    // Длительность кувырка держим у самого конца окна броска (`ROLL_ANIM_MS` = 2.4с):
+    // кость крутится почти всё время и встаёт на грань лишь под занавес — иначе
+    // рано остановившаяся кость показывала бы результат задолго до того, как ведущий
+    // объявит бросок (спойлер). Лёгкий случайный разброс длительности/задержки
+    // оставляет ощущение живого броска (кости встают не строго одновременно).
+    let dur = 1.9 + js_sys::Math::random() * 0.35;
     let delay = js_sys::Math::random() * 0.12;
     view! {
         // Обёртка с тем же таймингом — кость подпрыгивает по ходу вращения.
@@ -1365,22 +1367,13 @@ fn lessons() -> Vec<Lesson> {
         out.push(Lesson { title, text, before, roll: Some(a_roll), moves, opp, commit: false });
     }
 
-    // Шаг выкупа: соперник C выкупает свою пленную фишку (бросок 6 → Ransom), и тогда
-    // захватчик A обязан сходить на 6 (движок сам выбирает ход). Отдельная позиция: у A
-    // есть фишки, способные пройти 6 (на пути они на Луне/в Доме и не подошли бы).
+    // Шаг выкупа — ПРОДОЛЖЕНИЕ той же партии (без перескока на чужую расстановку):
+    // мы только что съели фишку C (она у нас в плену), ход за C. Чтобы показать
+    // обязательный ответный ход захватчика на 6, выводим нашу фишку с чужой Луны на
+    // дорожку — единственную, которой будет чем сходить на 6 (домашние фишки не могут).
     let ransom_before = {
-        let mut s = GameState::new(vec![A, C], A);
-        s.checkers.clear();
-        s.checkers.push(Checker { owner: A, pos: Position::OnTrack { progress: 10 } });
-        s.checkers.push(Checker { owner: A, pos: Position::OnTrack { progress: 20 } });
-        for d in 1..3u8 {
-            s.checkers.push(Checker { owner: A, pos: Position::Home { depth: d } });
-        }
-        s.checkers.push(Checker { owner: C, pos: Position::Captured { captor: A } });
-        for d in 0..3u8 {
-            s.checkers.push(Checker { owner: C, pos: Position::Home { depth: d } });
-        }
-        s.to_move = C;
+        let mut s = g.state.clone(); // после съедания: C-фишка в плену у A, ход C
+        s.checkers[0].pos = Position::OnTrack { progress: 40 };
         s
     };
     let ransom_roll = dr(6, 2);
@@ -1394,14 +1387,21 @@ fn lessons() -> Vec<Lesson> {
                (выкуп). Соперник тут же выкупает свою фишку (она улетает к нему в резерв). \
                Тогда захватчик обязан сразу сходить на 6 клеток: выберите, какой нашей фишкой — \
                нажмите фишку, затем подсвеченную клетку.",
-        before: ransom_before,
+        before: ransom_before.clone(),
         roll: Some(ransom_roll),
-        moves: ransom_moves,
+        moves: ransom_moves.clone(),
         opp: None,
         commit: true,
     });
 
-    let mut home = g.state.clone();
+    // Состояние после выкупа и обязательного хода на 6 — основа финального шага, чтобы
+    // и переход к «Дому» двигал лишь нашу фишку, без перескоков расстановки.
+    let after_ransom = {
+        let mut rg = Game::new(ransom_before);
+        rg.commit_turn(ransom_roll, ransom_moves, |_, _, _| 0);
+        rg.state
+    };
+    let mut home = after_ransom;
     home.checkers[0].pos = Position::Home { depth: 0 }; // финал: демо-фишка в Доме
     out.push(Lesson {
         title: "Дом и победа",
