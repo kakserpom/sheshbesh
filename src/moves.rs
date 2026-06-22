@@ -892,4 +892,21 @@ mod tests {
         assert_eq!(pips(&turns[0]), 2);
         assert_eq!(turns[0][0].kind, MoveKind::EnterHome);
     }
+    #[test]
+    fn ransom_counts_toward_max_move() {
+        // A: пленник + фишка на progress 70. При 6-2 этой фишкой играется только «2»
+        // (заход в Дом; «6» — перебор за пределы Дома). Но выкуп пленника тратит «6»,
+        // поэтому правило максимального хода ОБЯЗЫВАЕТ выкупить (6) и сходить на 2 —
+        // суммарно 8 очков, а не просто 2.
+        let s = state_a(&[
+            Position::Captured { captor: Side::C },
+            Position::OnTrack { progress: 70 },
+        ]);
+        assert_eq!(max_pips(&s, roll(6, 2)), 8);
+        let turns = legal_turns(&s, roll(6, 2));
+        assert!(turns.iter().all(|t| {
+            t.iter().any(|m| m.kind == MoveKind::Ransom)
+                && t.iter().any(|m| m.kind == MoveKind::EnterHome)
+        }));
+    }
 }
