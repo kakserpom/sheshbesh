@@ -270,12 +270,28 @@ pub(crate) fn App() -> impl IntoView {
             scratch = apply_with_frames(&mut frames, scratch, fm, r, &hs);
         }
         let _ = scratch;
+        // Если сыграны не обе кости — оставшуюся сыграть нечем, она «сгорает».
+        // Сообщаем об этом (особенно при дубле, где иначе переброс выглядит внезапным).
+        let [a, b] = r.values();
+        let burn_note = (outcome.played.len() < 2).then(|| {
+            let burned = if outcome.played.len() == 1 {
+                if outcome.played[0].die == a { b } else { a }
+            } else {
+                a
+            };
+            let name = side_name(outcome.side, &hs);
+            if outcome.again {
+                format!("{name}: сыграть {burned} больше нечем — дубль, переброс!")
+            } else {
+                format!("{name}: сыграть {burned} нечем — кость сгорает.")
+            }
+        });
         frames.push(Frame {
             state: fg.state.clone(),
             roll: None,
-            hold: HOLD_STEP_MS,
+            hold: if burn_note.is_some() { HOLD_NOMOVE_MS } else { HOLD_STEP_MS },
             rolling: false,
-            note: None,
+            note: burn_note,
             pts: Vec::new(),
         });
         turns.set(Vec::new());
