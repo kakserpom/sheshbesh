@@ -84,6 +84,9 @@ struct Frame {
     hold: u32,
     rolling: bool,
     note: Option<String>,
+    /// Переопределение точки отрисовки фишки `(индекс, x, y)` — для движения по
+    /// параболе Луны (иначе keyed-кружок шёл бы по прямой между полями).
+    pts: Vec<(usize, f64, f64)>,
 }
 
 /// Имя стороны для комментатора: «Игрок L» (человек) или «ИИ L» (компьютер),
@@ -282,9 +285,35 @@ fn apply_with_frames(
             hold: HOLD_STEP_MS,
             rolling: false,
             note: None,
+            pts: Vec::new(),
         });
     }
     let after = apply(&state, mv);
+    // Движение по параболе Луны: вход (→поле 1), переход между полями и сход —
+    // фишку ведём по дуге через кадры с переопределённой точкой `pts`.
+    let moon_seg = match (mv.kind, after.checkers[mv.checker].pos, state.checkers[mv.checker].pos) {
+        (MoveKind::EnterMoon, Position::Moon { side, field }, _) => Some((side, 0.0, moon_field_t(field))),
+        (MoveKind::MoonAdvance, Position::Moon { side, field }, Position::Moon { field: from, .. }) => {
+            Some((side, moon_field_t(from), moon_field_t(field)))
+        }
+        (MoveKind::MoonExit, _, Position::Moon { side, field }) => Some((side, moon_field_t(field), 1.0)),
+        _ => None,
+    };
+    if let Some((side, t0, t1)) = moon_seg {
+        let steps = 8;
+        for k in 1..=steps {
+            let t = t0 + (t1 - t0) * (f64::from(k) / f64::from(steps));
+            let (x, y) = moon_arc_point(side, t);
+            frames.push(Frame {
+                state: after.clone(),
+                roll: Some(roll),
+                hold: HOLD_STEP_MS / 7,
+                rolling: false,
+                note: None,
+                pts: vec![(mv.checker, x, y)],
+            });
+        }
+    }
     let note = move_note(&state, &after, mv, humans);
     frames.push(Frame {
         state: after.clone(),
@@ -292,6 +321,7 @@ fn apply_with_frames(
         hold: HOLD_STEP_MS,
         rolling: false,
         note,
+        pts: Vec::new(),
     });
     after
 }
@@ -322,6 +352,7 @@ fn commit_frames<F>(
             hold: ROLL_ANIM_MS,
             rolling: true,
             note: Some(format!("{} бросает кости…", side_name(side, humans))),
+            pts: Vec::new(),
         });
         // …затем кости встают на результат и держатся. Если ходить нечем — дольше.
         frames.push(Frame {
@@ -334,6 +365,7 @@ fn commit_frames<F>(
             },
             rolling: false,
             note: Some(roll_note(side, humans, roll, no_move)),
+            pts: Vec::new(),
         });
     }
     let pre = game.state.clone();
@@ -390,6 +422,7 @@ fn step_through_prison(
                 hold: HOLD_STEP_MS,
                 rolling: false,
                 note: None,
+                pts: Vec::new(),
             });
         }
     }
@@ -576,6 +609,36 @@ struct ArcGeom {
 }
 
 /// Дуга Луны стороны `side`: парабола от входа к выходу, выгиб внутрь квадрата.
+/// Параметр `t` ∈ [0,1] поля Луны на параболе (вход 0 → выход 1).
+fn moon_field_t(field: MoonField) -> f64 {
+    match field {
+        MoonField::One => 0.30,
+        MoonField::Three => 0.50,
+        MoonField::Six => 0.72,
+    }
+}
+
+/// Точка на параболе Луны стороны `side` при параметре `t` ∈ [0,1] (вход→выход).
+fn moon_arc_point(side: Side, t: f64) -> (f64, f64) {
+    let c = BOARD_DIM as f64 / 2.0;
+    let edge = |coord| {
+        let p = center_pt(coord);
+        let d = (c - p.0, c - p.1);
+        if d.0.abs() > d.1.abs() {
+            (p.0 + d.0.signum() * 0.5, p.1)
+        } else {
+            (p.0, p.1 + d.1.signum() * 0.5)
+        }
+    };
+    let p0 = edge(margin_coord(side.local_to_perimeter(LOCAL_MOON)));
+    let p2 = edge(margin_coord(side.local_to_perimeter(LOCAL_MOON_EXIT)));
+    let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
+    let dir = (c - mid.0, c - mid.1);
+    let len = (dir.0 * dir.0 + dir.1 * dir.1).sqrt().max(1e-3);
+    let ctrl = (mid.0 + dir.0 / len * 9.0, mid.1 + dir.1 / len * 9.0);
+    bez(p0, ctrl, p2, t)
+}
+
 fn moon_arc(side: Side) -> ArcGeom {
     let c = BOARD_DIM as f64 / 2.0;
     // Концы параболы — в середине внутренней грани клеток входа и выхода Луны
@@ -1008,6 +1071,16 @@ fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
     )
 }
 
+/// Точка отрисовки фишки `i` с учётом покадрового переопределения `pts` (движение по
+/// параболе Луны); если переопределения нет — обычная `checker_xy`.
+fn anim_xy(state: &GameState, i: usize, pts: &[(usize, f64, f64)]) -> (f64, f64, bool) {
+    if let Some(&(_, x, y)) = pts.iter().find(|p| p.0 == i) {
+        (x, y, true)
+    } else {
+        checker_xy(state, i)
+    }
+}
+
 // --- Статичная отрисовка доски (без фишек) ---
 
 fn cell_rect(coord: (usize, usize), class: &'static str) -> impl IntoView {
@@ -1353,6 +1426,7 @@ fn roll_only_frames(state: &GameState, roll: DiceRoll) -> Vec<Frame> {
             hold: ROLL_ANIM_MS,
             rolling: true,
             note: None,
+            pts: Vec::new(),
         },
         Frame {
             state: state.clone(),
@@ -1360,6 +1434,7 @@ fn roll_only_frames(state: &GameState, roll: DiceRoll) -> Vec<Frame> {
             hold: HOLD_ROLL_MS,
             rolling: false,
             note: None,
+            pts: Vec::new(),
         },
     ]
 }
@@ -1407,6 +1482,8 @@ fn App() -> impl IntoView {
     let animating = RwSignal::new(false);
     // Крутятся ли сейчас кости (анимация броска).
     let rolling = RwSignal::new(false);
+    // Покадровое переопределение точек фишек (для движения по параболе Луны).
+    let anim_pts = RwSignal::new(Vec::<(usize, f64, f64)>::new());
     // Текст ведущего-комментатора над доской.
     let herald = RwSignal::new(String::new());
 
@@ -1463,6 +1540,7 @@ fn App() -> impl IntoView {
                 game.update(|g| g.state = frame.state);
                 roll.set(frame.roll);
                 rolling.set(frame.rolling);
+                anim_pts.set(frame.pts);
                 if let Some(note) = frame.note {
                     herald.set(note);
                 }
@@ -1471,6 +1549,7 @@ fn App() -> impl IntoView {
             if epoch.get_value() != era {
                 return;
             }
+            anim_pts.set(Vec::new());
             rolling.set(false);
             animating.set(false);
         });
@@ -1509,6 +1588,7 @@ fn App() -> impl IntoView {
             hold: HOLD_STEP_MS,
             rolling: false,
             note: None,
+            pts: Vec::new(),
         });
         play(frames);
     });
@@ -1596,6 +1676,7 @@ fn App() -> impl IntoView {
             hold: HOLD_STEP_MS,
             rolling: false,
             note: None,
+            pts: Vec::new(),
         });
         turns.set(Vec::new());
         prefix.set(Vec::new());
@@ -1718,6 +1799,7 @@ fn App() -> impl IntoView {
             hold: HOLD_STEP_MS,
             rolling: false,
             note: Some("Демо завершено.".to_string()),
+            pts: Vec::new(),
         });
         play(frames);
     };
@@ -1891,7 +1973,7 @@ fn App() -> impl IntoView {
                             let nb = ls[cur + 1].before.clone();
                             match ls[cur + 1].roll {
                                 Some(nr) => frames.extend(roll_only_frames(&nb, nr)),
-                                None => frames.push(Frame { state: nb, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None }),
+                                None => frames.push(Frame { state: nb, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None, pts: Vec::new() }),
                             }
                             lesson_idx.set(cur + 1);
                         }
@@ -1994,9 +2076,9 @@ fn App() -> impl IntoView {
                                 r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
                                 class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
                                 fill=move || side_color(game.get().state.checkers[i].owner)
-                                cx=move || checker_xy(&game.get().state, i).0
-                                cy=move || checker_xy(&game.get().state, i).1
-                                opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
+                                cx=move || anim_xy(&game.get().state, i, &anim_pts.get()).0
+                                cy=move || anim_xy(&game.get().state, i, &anim_pts.get()).1
+                                opacity=move || if anim_xy(&game.get().state, i, &anim_pts.get()).2 { 1.0 } else { 0.0 }
                             />
                         </For>
                         <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
@@ -2172,9 +2254,9 @@ fn App() -> impl IntoView {
                             r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
                             class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
                             fill=move || side_color(game.get().state.checkers[i].owner)
-                            cx=move || checker_xy(&game.get().state, i).0
-                            cy=move || checker_xy(&game.get().state, i).1
-                            opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
+                            cx=move || anim_xy(&game.get().state, i, &anim_pts.get()).0
+                            cy=move || anim_xy(&game.get().state, i, &anim_pts.get()).1
+                            opacity=move || if anim_xy(&game.get().state, i, &anim_pts.get()).2 { 1.0 } else { 0.0 }
                         />
                     </For>
                     <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
@@ -2231,9 +2313,9 @@ fn App() -> impl IntoView {
                             "piece"
                         }
                         fill=move || side_color(game.get().state.checkers[i].owner)
-                        cx=move || checker_xy(&game.get().state, i).0
-                        cy=move || checker_xy(&game.get().state, i).1
-                        opacity=move || if checker_xy(&game.get().state, i).2 { 1.0 } else { 0.0 }
+                        cx=move || anim_xy(&game.get().state, i, &anim_pts.get()).0
+                        cy=move || anim_xy(&game.get().state, i, &anim_pts.get()).1
+                        opacity=move || if anim_xy(&game.get().state, i, &anim_pts.get()).2 { 1.0 } else { 0.0 }
                     />
                 </For>
 
