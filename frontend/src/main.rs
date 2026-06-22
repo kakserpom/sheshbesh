@@ -1823,8 +1823,9 @@ fn App() -> impl IntoView {
                     let fy = (ay - vb_o) / vb_s * 100.0;
                     let [a, b] = r.values();
                     let inner = if spinning {
-                        let cls = if r.is_double() { "dice rolling double" } else { "dice rolling" };
-                        view! { <span class=cls>{die3d(a)} {die3d(b)}</span> }.into_any()
+                        // Пока кости крутятся, дубль золотом НЕ подсвечиваем — только
+                        // после остановки (иначе результат «виден» раньше времени).
+                        view! { <span class="dice rolling">{die3d(a)} {die3d(b)}</span> }.into_any()
                     } else {
                         let cls = if r.is_double() { "dice double" } else { "dice" };
                         view! { <span class=cls>{die_face(a)} {die_face(b)}</span> }.into_any()
