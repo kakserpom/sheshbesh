@@ -1107,6 +1107,40 @@ pub(crate) fn App() -> impl IntoView {
                                 && matches!(ps.checkers[m.checker].pos, Position::Prison { .. })
                         })
                     };
+                    // Точка подсветки/хита источника — на самой фишке (Луна — на дуге,
+                    // угол — со смещением), а не в центре клетки.
+                    let src_point = |rc: (usize, usize)| -> (f64, f64) {
+                        cands
+                            .iter()
+                            .find(|&&m| move_source(&ps, m) == Sel::Cell(rc.0, rc.1))
+                            .map_or_else(
+                                || center_pt(rc),
+                                |&m| {
+                                    let (x, y, _) = checker_xy(&ps, m.checker);
+                                    (x, y)
+                                },
+                            )
+                    };
+                    // Точка цели — куда ВСТАНЕТ фишка (Луна — на дугу), кроме входа в
+                    // Тюрьму/на Луну, где цель — клетка-ворота (центр клетки периметра).
+                    let dst_point = |rc: (usize, usize)| -> (f64, f64) {
+                        cands
+                            .iter()
+                            .find(|&&m| {
+                                cur == Some(move_source(&ps, m)) && move_dest(&ps, m) == Sel::Cell(rc.0, rc.1)
+                            })
+                            .map_or_else(
+                                || center_pt(rc),
+                                |&m| {
+                                    if matches!(m.kind, MoveKind::EnterMoon | MoveKind::EnterPrison) {
+                                        center_pt(rc)
+                                    } else {
+                                        let (x, y, _) = checker_xy(&apply(&ps, m), m.checker);
+                                        (x, y)
+                                    }
+                                },
+                            )
+                    };
 
                     let mut nodes: Vec<AnyView> = Vec::new();
                     let ring_pt = |cx: f64, cy: f64, cls: &'static str| {
@@ -1120,17 +1154,16 @@ pub(crate) fn App() -> impl IntoView {
                         if caged(rc) {
                             cage_ring(rc, cls)
                         } else {
-                            let (cx, cy) = center_pt(rc);
+                            let (cx, cy) = src_point(rc);
                             ring_pt(cx, cy, cls)
                         }
                     };
                     if let Some(rc) = sel_cell {
                         nodes.push(pt_hl(rc, "hl-sel"));
                     }
-                    // Цели — на самой клетке (центр): для входа в Тюрьму это клетка
-                    // периметра, а не каземат.
+                    // Цели — на точке, куда встанет фишка (Луна — на дугу).
                     for &rc in &dsts {
-                        let (cx, cy) = center_pt(rc);
+                        let (cx, cy) = dst_point(rc);
                         nodes.push(ring_pt(cx, cy, "hl-dst"));
                     }
                     // Цель «за обе кости сразу» — пунктиром, чтобы отличать от одиночной.
@@ -1148,7 +1181,7 @@ pub(crate) fn App() -> impl IntoView {
                     let mut src_hits: Vec<(usize, usize)> = srcs.clone();
                     if let Some(rc) = sel_cell { src_hits.push(rc); }
                     for rc in src_hits {
-                        let (cx, cy) = center_pt(rc);
+                        let (cx, cy) = src_point(rc);
                         nodes.push(view! {
                             <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(rc.0, rc.1)) />
                         }.into_any());
@@ -1159,7 +1192,7 @@ pub(crate) fn App() -> impl IntoView {
                         }
                     }
                     for &(r, c) in &dsts {
-                        let (cx, cy) = center_pt((r, c));
+                        let (cx, cy) = dst_point((r, c));
                         nodes.push(view! {
                             <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
                         }.into_any());
