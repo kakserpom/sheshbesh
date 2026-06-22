@@ -1377,6 +1377,9 @@ fn App() -> impl IntoView {
     let lessons_sv = StoredValue::new(lessons());
     // Выбрана ли демонстрационная фишка (первый клик хода в туториале).
     let tut_sel = RwSignal::new(false);
+    // Сколько под-ходов текущего шага сыграно (ход = последовательность по костям;
+    // в туториале игрок проигрывает их по одному — как в реальной игре).
+    let tut_played = RwSignal::new(0usize);
     // Стороны, финишировавшие (все фишки в Доме) — в порядке финиша.
     let finished = RwSignal::new(Vec::<Side>::new());
     // Пауза: блокирует автоход ИИ и авто-бросок; анимация замирает между кадрами.
@@ -1780,6 +1783,7 @@ fn App() -> impl IntoView {
                             rolling.set(false);
                             lesson_idx.set(0);
                             tut_sel.set(false);
+                            tut_played.set(0);
                             lessons_sv.with_value(|ls| {
                                 game.set(Game::new(ls[0].before.clone()));
                                 // Первый бросок — до первого хода.
@@ -1848,41 +1852,57 @@ fn App() -> impl IntoView {
             // в игре (сигнал `game` + `play` + keyed-фишки со скольжением).
             {move || tutorial.get().then(|| {
                 let total = lessons_sv.with_value(Vec::len);
-                // Переход к следующему шагу: проигрываем легальный ход текущего шага
-                // (его считает движок), а затем сразу бросаем кости следующего шага —
-                // чтобы бросок был ДО следующего хода игрока.
-                let advance = move || {
+                // Завершает кадры хода: после последнего под-хода бросаем кости
+                // СЛЕДУЮЩЕГО шага (бросок — до следующего хода) и переходим к нему.
+                let finish_step = move |frames: &mut Vec<Frame>, after: &GameState, cur: usize| {
+                    lessons_sv.with_value(|ls| {
+                        if cur + 1 < ls.len() {
+                            match ls[cur + 1].roll {
+                                Some(nr) => frames.extend(roll_only_frames(after, nr)),
+                                None => frames.push(Frame { state: after.clone(), roll: None, hold: HOLD_STEP_MS, rolling: false, note: None }),
+                            }
+                            lesson_idx.set(cur + 1);
+                        }
+                    });
+                    tut_played.set(0);
+                };
+                // Проиграть `count` под-ходов текущего шага начиная с уже сыгранных
+                // (1 — по клику на клетку; usize::MAX — весь оставшийся ход по ▶).
+                let play_submoves = move |count: usize| {
                     if animating.get_untracked() {
                         return;
                     }
                     let cur = lesson_idx.get_untracked();
                     lessons_sv.with_value(|ls| {
-                        if cur + 1 >= ls.len() {
-                            return;
-                        }
-                        tut_sel.set(false);
-                        let next_before = ls[cur + 1].before.clone();
-                        let next_roll = ls[cur + 1].roll;
                         match ls[cur].roll {
                             Some(r) => {
-                                // Ход текущего шага (без анимации броска — он уже был).
-                                let mut gg = Game::new(ls[cur].before.clone());
+                                let chosen = chosen_turn(&ls[cur].before, r);
+                                let k = tut_played.get_untracked();
+                                let end = k.saturating_add(count).min(chosen.len());
+                                let mut state = game.get_untracked().state.clone();
                                 let mut frames = Vec::new();
-                                commit_frames(&mut frames, &mut gg, r, chosen_turn(&ls[cur].before, r), &[], false, |_, _, _| 0);
-                                match next_roll {
-                                    Some(nr) => frames.extend(roll_only_frames(&gg.state, nr)),
-                                    None => frames.push(Frame { state: gg.state.clone(), roll: None, hold: HOLD_STEP_MS, rolling: false, note: None }),
+                                for mv in &chosen[k..end] {
+                                    state = apply_with_frames(&mut frames, state, *mv, r, &[]);
                                 }
-                                lesson_idx.set(cur + 1);
+                                tut_sel.set(false);
+                                if end >= chosen.len() {
+                                    finish_step(&mut frames, &state, cur);
+                                } else {
+                                    tut_played.set(end);
+                                }
                                 play(frames);
                             }
                             None => {
                                 // Шаг-пояснение без хода — просто показываем следующий.
-                                lesson_idx.set(cur + 1);
-                                game.set(Game::new(next_before.clone()));
-                                match next_roll {
-                                    Some(nr) => play(roll_only_frames(&next_before, nr)),
-                                    None => roll.set(None),
+                                if cur + 1 < ls.len() {
+                                    let nb = ls[cur + 1].before.clone();
+                                    lesson_idx.set(cur + 1);
+                                    tut_played.set(0);
+                                    game.set(Game::new(nb.clone()));
+                                    match ls[cur + 1].roll {
+                                        Some(nr) => play(roll_only_frames(&nb, nr)),
+                                        None => roll.set(None),
+                                    }
                                 }
                             }
                         }
@@ -1919,24 +1939,30 @@ fn App() -> impl IntoView {
                         <For each=move || stack_counts(&game.get().state) key=|b| b.key let:b>
                             {badge_view(game, b.key)}
                         </For>
-                        // Интерактивный ход кликами (фишка → клетка), не во время движения.
+                        // Интерактивный ход кликами ПО ОДНОМУ под-ходу (по каждой кости):
+                        // фишка → клетка её следующего под-хода. Не во время движения.
                         {move || (!animating.get()).then(|| {
                             let cur = lesson_idx.get().min(total - 1);
                             lessons_sv.with_value(|ls| {
                                 let mut nodes: Vec<AnyView> = Vec::new();
-                                if cur + 1 < ls.len()
-                                    && ls[cur].roll.is_some()
-                                    && let Some(tgt) = target_cell(ls[cur + 1].before.checkers[0].pos)
-                                {
-                                    let (sx, sy, _) = checker_xy(&ls[cur].before, 0);
-                                    let (tx, ty) = center_pt(tgt);
-                                    let sel = tut_sel.get();
-                                    let src_cls = if sel { "hl-sel" } else { "hl-src" };
-                                    nodes.push(view! { <circle cx=sx cy=sy r=0.47 fill="none" class=src_cls /> }.into_any());
-                                    nodes.push(view! { <circle cx=sx cy=sy r=0.5 class="hit" on:click=move |_| tut_sel.set(true) /> }.into_any());
-                                    if sel {
-                                        nodes.push(view! { <circle cx=tx cy=ty r=0.47 fill="none" class="hl-dst" /> }.into_any());
-                                        nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| advance() /> }.into_any());
+                                if let Some(r) = ls[cur].roll {
+                                    let chosen = chosen_turn(&ls[cur].before, r);
+                                    let k = tut_played.get();
+                                    if k < chosen.len() {
+                                        let st = game.get().state;
+                                        let mv = chosen[k];
+                                        let after = apply(&st, mv);
+                                        let moved = mv.checker;
+                                        let (sx, sy, _) = checker_xy(&st, moved);
+                                        let sel = tut_sel.get();
+                                        let src_cls = if sel { "hl-sel" } else { "hl-src" };
+                                        nodes.push(view! { <circle cx=sx cy=sy r=0.47 fill="none" class=src_cls /> }.into_any());
+                                        nodes.push(view! { <circle cx=sx cy=sy r=0.5 class="hit" on:click=move |_| tut_sel.set(true) /> }.into_any());
+                                        if sel && let Some(tgt) = target_cell(after.checkers[moved].pos) {
+                                            let (tx, ty) = center_pt(tgt);
+                                            nodes.push(view! { <circle cx=tx cy=ty r=0.47 fill="none" class="hl-dst" /> }.into_any());
+                                            nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| play_submoves(1) /> }.into_any());
+                                        }
                                     }
                                 }
                                 nodes
@@ -1969,6 +1995,7 @@ fn App() -> impl IntoView {
                             animating.set(false);
                             rolling.set(false);
                             tut_sel.set(false);
+                            tut_played.set(0);
                             let i = lesson_idx.get_untracked().saturating_sub(1);
                             lesson_idx.set(i);
                             lessons_sv.with_value(|ls| {
@@ -1977,7 +2004,7 @@ fn App() -> impl IntoView {
                             });
                         }>"◀"</button>
                     <button class="nav-arrow right" title="Далее"
-                        on:click=move |_| advance()>"▶"</button>
+                        on:click=move |_| play_submoves(usize::MAX)>"▶"</button>
                     </div>
                     </div>
                     <p class="lesson-text">{move || {
