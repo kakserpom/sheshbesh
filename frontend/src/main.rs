@@ -1837,13 +1837,16 @@ fn App() -> impl IntoView {
                 let finish_step = move |frames: &mut Vec<Frame>, after: &GameState, cur: usize| {
                     lessons_sv.with_value(|ls| {
                         // Ход соперника: его бросок + пошаговое движение его фишки.
+                        // В этих кадрах `to_move = C`, чтобы кости рисовались у Дома C.
                         let end_state = match &ls[cur].opp {
                             Some(opp) => {
-                                frames.extend(roll_only_frames(after, opp.roll));
                                 let mut st = after.clone();
+                                st.to_move = Side::C;
+                                frames.extend(roll_only_frames(&st, opp.roll));
                                 for mv in &opp.moves {
                                     st = apply_with_frames(frames, st, *mv, opp.roll, &[]);
                                 }
+                                st.to_move = Side::A; // вернули очередь игроку
                                 st
                             }
                             None => after.clone(),
@@ -1976,12 +1979,13 @@ fn App() -> impl IntoView {
                             })
                         })}
                     </svg>
-                    // Две кости у Дома демонстрационной стороны (A) — как в реальной игре
-                    // (через тот же сигнал `roll`, что и в партии).
+                    // Две кости у Дома ХОДЯЩЕЙ стороны (в кадрах хода соперника `to_move`
+                    // = C) — как в реальной игре, через тот же сигнал `roll`.
                     {move || roll.get().map(|r| {
                         let [a, b] = r.values();
-                        let (ax, ay) = outside_anchor(Side::A, DICE_OUT);
-                        let (out, _) = reserve_axes(Side::A);
+                        let side = game.get().state.to_move;
+                        let (ax, ay) = outside_anchor(side, DICE_OUT);
+                        let (out, _) = reserve_axes(side);
                         let vertical = out.0 != 0.0;
                         let vb_o = BOARD_MARGIN as f64 - RESERVE_PAD;
                         let vb_s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD;
