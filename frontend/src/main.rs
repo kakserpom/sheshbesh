@@ -218,10 +218,17 @@ fn apply_with_frames(
         Position::OnTrack { progress } => {
             let target = progress + u16::from(mv.die);
             if target < perim {
-                // Обычный шаг по периметру.
-                (progress + 1..target)
+                // Обычный шаг по периметру (промежуточные клетки без конечной).
+                let mut v: Vec<Position> = (progress + 1..target)
                     .map(|i| Position::OnTrack { progress: i })
-                    .collect()
+                    .collect();
+                // Заход на Луну / в Тюрьму: фишка сперва ВСТАЁТ на саму клетку
+                // (ворота), а затем улетает на дугу Луны / в каземат. Иначе конечный
+                // кадр (Луна/Тюрьма рисуются вне клетки) «проглатывал» эту клетку.
+                if matches!(mv.kind, MoveKind::EnterMoon | MoveKind::EnterPrison) {
+                    v.push(Position::OnTrack { progress: target });
+                }
+                v
             } else {
                 // Заход в Дом: периметр → клетка ВХОДА в Дом (ворота) → клетки Дома
                 // вглубь. Без «второго круга» по периметру.
