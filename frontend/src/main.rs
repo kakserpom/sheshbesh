@@ -1373,7 +1373,9 @@ fn lessons() -> Vec<Lesson> {
     // дорожку — единственную, которой будет чем сходить на 6 (домашние фишки не могут).
     let ransom_before = {
         let mut s = g.state.clone(); // после съедания: C-фишка в плену у A, ход C
-        s.checkers[0].pos = Position::OnTrack { progress: 40 };
+        // Ставим у Дома: ход на 6 доведёт фишку до клетки перед Домом, а на финальном
+        // шаге она зайдёт в Дом настоящим ходом (а не «перепрыгнет»).
+        s.checkers[0].pos = Position::OnTrack { progress: 64 };
         s
     };
     let ransom_roll = dr(6, 2);
@@ -1401,16 +1403,19 @@ fn lessons() -> Vec<Lesson> {
         rg.commit_turn(ransom_roll, ransom_moves, |_, _, _| 0);
         rg.state
     };
-    let mut home = after_ransom;
-    home.checkers[0].pos = Position::Home { depth: 0 }; // финал: демо-фишка в Доме
+    // Финальный шаг — НАСТОЯЩИЙ ход: наша фишка (уже у Дома после хода на 6) заходит
+    // в Дом по броску, а не «перепрыгивает». Остальные три фишки A уже в Доме, поэтому
+    // этим ходом партия выигрывается.
+    let home_roll = dr(2, 1);
+    let home_moves = a_turn(&after_ransom, home_roll);
     out.push(Lesson {
         title: "Дом и победа",
         text: "Дойдя до Дома, фишка заходит ровно по броску — по одной в клетку; перепрыгивать занятые \
-               клетки Дома нельзя (но можно идти глубже). Чужие фишки в Дом не пускают. Заведите все 4 \
-               фишки в Дом — и вы выиграли!",
-        before: home,
-        roll: None,
-        moves: Vec::new(),
+               клетки Дома нельзя (но можно идти глубже). Чужие фишки в Дом не пускают. Заведите фишку \
+               в Дом этим ходом — все 4 фишки дома, и вы выиграли!",
+        before: after_ransom,
+        roll: Some(home_roll),
+        moves: home_moves,
         opp: None,
         commit: false,
     });
