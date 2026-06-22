@@ -265,6 +265,9 @@ pub(crate) fn App() -> impl IntoView {
         let hs = humans.get_untracked();
         let mut fg = Game::new(turn_start.get_value());
         let outcome = fg.commit_turn(r, played, |_, _, _| 0);
+        if cfg!(debug_assertions) {
+            dbg_log_turn(&outcome);
+        }
         let mut scratch = after;
         for &fm in &outcome.forced {
             scratch = apply_with_frames(&mut frames, scratch, fm, r, &hs);
@@ -380,14 +383,23 @@ pub(crate) fn App() -> impl IntoView {
         // Новое поколение — глушит анимации предыдущей партии (иначе две идут разом).
         epoch.update_value(|e| *e += 1);
         let active = active_for(players.get_untracked());
-        dice.update_value(|d| *d = RandomDice::from_seed(seed()));
+        let game_seed = seed();
+        let teams_on = teams.get_untracked() && active.len() == 4;
+        dice.update_value(|d| *d = RandomDice::from_seed(game_seed));
         roll.set(None);
         turns.set(Vec::new());
         prefix.set(Vec::new());
         sel.set(None);
         finished.set(Vec::new());
-        let g = fresh(dice, active, teams.get_untracked());
         let hs = humans.get_untracked();
+        // Технический лог партии (для воспроизведения багов) — только в отладке.
+        if cfg!(debug_assertions) {
+            leptos::logging::log!(
+                "[GAMELOG] === new game === seed={game_seed} players={} humans={hs:?} teams={teams_on}",
+                active.len()
+            );
+        }
+        let g = fresh(dice, active, teams_on);
         herald.set(format!(
             "Игра началась! Ходит {}.",
             side_name(g.state.to_move, &hs)

@@ -1,7 +1,23 @@
 use crate::geom::{moon_arc_point, moon_field_t};
 use leptos::prelude::*;
 use sheshbesh::board::PERIMETER;
-use sheshbesh::{DiceRoll, Game, GameState, Move, MoveKind, Position, RandomDice, Side, apply};
+use sheshbesh::{
+    DiceRoll, Game, GameState, Move, MoveKind, Position, RandomDice, Side, TurnOutcome, apply,
+};
+
+/// Технический лог одного хода для воспроизведения багов (печатается в консоль только
+/// в отладочной сборке): сторона, бросок и ФАКТИЧЕСКИ применённые ходы (`applied` —
+/// включая ответы захватчика при выкупе). Вместе с залогированным seed этого хватает,
+/// чтобы воспроизвести партию.
+pub(crate) fn dbg_log_turn(outcome: &TurnOutcome) {
+    let [a, b] = outcome.roll.values();
+    let moves: Vec<String> = outcome
+        .applied
+        .iter()
+        .map(|m| format!("{:?}(c{},d{})", m.kind, m.checker, m.die))
+        .collect();
+    leptos::logging::log!("[GAMELOG] {:?} {a}-{b} | {}", outcome.side, moves.join(" "));
+}
 
 /// Пауза-заставка перед первым ходом партии (мс) — чтобы старт не мелькал.
 pub(crate) const INTRO_MS: u32 = 1800;
@@ -348,6 +364,9 @@ pub(crate) fn commit_frames<F>(
     }
     let pre = game.state.clone();
     let outcome = game.commit_turn(roll, played, forced);
+    if cfg!(debug_assertions) {
+        dbg_log_turn(&outcome);
+    }
     // Анимируем в порядке применения (`applied`): ход игрока, а сразу за выкупом —
     // обязательный ответ захватчика (его фишка — не текущей ходящей стороны).
     let applied = &outcome.applied;
