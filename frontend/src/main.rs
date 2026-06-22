@@ -566,10 +566,20 @@ fn move_source(ps: &GameState, m: Move) -> Sel {
 
 fn move_dest(ps: &GameState, m: Move) -> Sel {
     let after = apply(ps, m);
-    sel_of(
-        after.checkers[m.checker].owner,
-        after.checkers[m.checker].pos,
-    )
+    let pos = after.checkers[m.checker].pos;
+    // Заход в Тюрьму/на Луну целим в КЛЕТКУ входа (периметр), а не в каземат / на дугу
+    // Луны, куда фишка затем уходит, — там подсветка цели выглядела бы не на месте.
+    match (m.kind, pos) {
+        (MoveKind::EnterPrison, Position::Prison { cell }) => {
+            let (r, c) = margin_coord(cell);
+            Sel::Cell(r, c)
+        }
+        (MoveKind::EnterMoon, Position::Moon { side, .. }) => {
+            let (r, c) = margin_coord(side.local_to_perimeter(LOCAL_MOON));
+            Sel::Cell(r, c)
+        }
+        _ => sel_of(after.checkers[m.checker].owner, pos),
+    }
 }
 
 fn sel_of(owner: Side, pos: Position) -> Sel {
@@ -1648,9 +1658,31 @@ fn App() -> impl IntoView {
                     return;
                 }
                 rolling.set(false);
-                herald.set(if no_move {
-                    format!("{name}: выпало {a} и {b}. Ходить нечем — пропуск.")
-                } else if r.is_double() {
+                if no_move {
+                    // Ходить нечем: показываем бросок и САМИ пропускаем ход через паузу
+                    // (без кнопки) — как это делает компьютер.
+                    herald.set(format!("{name}: выпало {a} и {b}. Ходить нечем — пропуск."));
+                    TimeoutFuture::new(HOLD_NOMOVE_MS).await;
+                    if epoch.get_value() != era {
+                        return;
+                    }
+                    let mut fg = Game::new(turn_start.get_value());
+                    fg.commit_turn(r, Vec::new(), |_, _, _| 0);
+                    turns.set(Vec::new());
+                    prefix.set(Vec::new());
+                    sel.set(None);
+                    // `play` сам снимет `animating` по завершении кадра передачи хода.
+                    play(vec![Frame {
+                        state: fg.state,
+                        roll: None,
+                        hold: HOLD_STEP_MS,
+                        rolling: false,
+                        note: None,
+                        pts: Vec::new(),
+                    }]);
+                    return;
+                }
+                herald.set(if r.is_double() {
                     format!("{name}: выпало {a} и {b}. Дубль — ещё ход!")
                 } else {
                     format!("{name}: выпало {a} и {b}. Выберите ход.")
@@ -2312,18 +2344,6 @@ fn App() -> impl IntoView {
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
                 <span class="herald" inner_html=move || herald.get()></span>
-                {move || {
-                    let g = game.get();
-                    let no_moves = roll.get().is_some()
-                        && !game_over(&g.state, teams.get())
-                        && humans.get().contains(&g.state.to_move)
-                        && turns.get().first().is_none_or(Vec::is_empty);
-                    no_moves.then(|| view! {
-                        <button on:click=move |_| finish(Vec::new(), game.get_untracked().state.clone(), Vec::new())>
-                            "Нет ходов — пропустить"
-                        </button>
-                    })
-                }}
             </div>
 
             <div class="board-area">
@@ -2402,47 +2422,77 @@ fn App() -> impl IntoView {
                     if let Some(rc) = sel_cell {
                         nodes.push(ring(rc, "hl-sel"));
                     }
+                    // Цели рисуем на самой клетке (центр), а НЕ через `pt_of`: для входа в
+                    // Тюрьму это клетка периметра, а не каземат.
                     for &rc in &dsts {
-                        nodes.push(ring(rc, "hl-dst"));
+                        let (cx, cy) = center_pt(rc);
+                        nodes.push(ring_pt(cx, cy, "hl-dst"));
                     }
                     if cur.is_none() {
                         for &rc in &srcs {
                             nodes.push(ring(rc, "hl-src"));
                         }
                     }
-                    // Кликабельные зоны (круг в точке клетки/каземата).
-                    let mut hits: Vec<(usize, usize)> = srcs.clone();
-                    hits.extend(dsts.iter().copied());
-                    if let Some(rc) = sel_cell { hits.push(rc); }
-                    for (r, c) in hits {
+                    // Кликабельные зоны: источники/выбранная — в точке фишки (каземат для
+                    // пленённых), цели — в центре клетки входа.
+                    let mut src_hits: Vec<(usize, usize)> = srcs.clone();
+                    if let Some(rc) = sel_cell { src_hits.push(rc); }
+                    for (r, c) in src_hits {
                         let (cx, cy) = pt_of((r, c));
+                        nodes.push(view! {
+                            <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
+                        }.into_any());
+                    }
+                    for &(r, c) in &dsts {
+                        let (cx, cy) = center_pt((r, c));
                         nodes.push(view! {
                             <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
                         }.into_any());
                     }
                     // Выносные зоны хода (резерв у своего Дома, плен — у Дома
                     // захватчика): подсветка + клик в их центре.
-                    let mut zone = |kind: Sel, zx: f64, zy: f64| {
+                    // Полурамка вокруг выносного ряда резерва (4 слота + запас): вдоль
+                    // стороны — длинная ось, поперёк — короткая.
+                    let res_half = |side: Side| -> (f64, f64) {
+                        let (_, along) = reserve_axes(side);
+                        let (long, short) = (1.5 * RESERVE_GAP + 0.5, 0.5);
+                        if along.0.abs() > along.1.abs() { (long, short) } else { (short, long) }
+                    };
+                    let mut zone = |kind: Sel, side: Side, out_dist: f64, boxed: bool| {
+                        let (zx, zy) = outside_anchor(side, out_dist);
                         let is_src = cands.iter().any(|&m| move_source(&ps, m) == kind);
                         let is_dst = cur.is_some_and(|s| {
                             cands.iter().any(|&m| move_source(&ps, m) == s && move_dest(&ps, m) == kind)
                         });
                         let is_sel = cur == Some(kind);
-                        if is_sel {
-                            nodes.push(ring_pt(zx, zy, "hl-sel"));
+                        let cls = if is_sel {
+                            Some("hl-sel")
                         } else if is_dst {
-                            nodes.push(ring_pt(zx, zy, "hl-dst"));
+                            Some("hl-dst")
                         } else if is_src && cur.is_none() {
-                            nodes.push(ring_pt(zx, zy, "hl-src"));
-                        }
-                        if is_sel || is_dst || (is_src && cur.is_none()) {
+                            Some("hl-src")
+                        } else {
+                            None
+                        };
+                        let Some(cls) = cls else { return };
+                        if boxed {
+                            // Резерв обводим скруглённой рамкой по всему ряду (не кружком).
+                            let (hw, hh) = res_half(side);
+                            let (x, y, w, h) = (zx - hw, zy - hh, 2.0 * hw, 2.0 * hh);
+                            nodes.push(view! {
+                                <rect x=x y=y width=w height=h rx=0.28 ry=0.28 fill="none" class=cls />
+                            }.into_any());
+                            nodes.push(view! {
+                                <rect x=x y=y width=w height=h class="hit" on:click=move |_| click(kind) />
+                            }.into_any());
+                        } else {
+                            nodes.push(ring_pt(zx, zy, cls));
                             nodes.push(view! {
                                 <circle cx=zx cy=zy r=1.1 class="hit" on:click=move |_| click(kind) />
                             }.into_any());
                         }
                     };
-                    let (rx, ry) = outside_anchor(mover, RESERVE_OUT);
-                    zone(Sel::Reserve, rx, ry);
+                    zone(Sel::Reserve, mover, RESERVE_OUT, true);
                     // Пленные хода — у Домов захватчиков; зона на каждом таком Доме.
                     let mut captors: Vec<Side> = Vec::new();
                     for c in &ps.checkers {
@@ -2454,8 +2504,7 @@ fn App() -> impl IntoView {
                         }
                     }
                     for captor in captors {
-                        let (cx2, cy2) = outside_anchor(captor, CAPTURED_OUT);
-                        zone(Sel::Captured, cx2, cy2);
+                        zone(Sel::Captured, captor, CAPTURED_OUT, false);
                     }
                     nodes
                 }}
