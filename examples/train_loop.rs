@@ -66,7 +66,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let max_gens: Option<u64> = args.get(1).and_then(|s| s.parse().ok());
     let train_games: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10_000);
-    let eval_games: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(400);
+    let eval_games: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(800);
+    // Принимаем кандидата только при перевесе НЕ меньше этого порога — иначе шум оценки
+    // (винрейт в нардах гуляет на ±несколько %) гонял бы веса случайным блужданием.
+    let margin = 0.02_f64;
 
     let modes = [
         Mode { name: "2p", file: "frontend/src/model.bin", active: vec![Side::A, Side::C], teams: false },
@@ -101,7 +104,7 @@ fn main() {
             let eval_seed = 1_000 + generation;
             let cs = strength(&cand, md, eval_games, eval_seed);
             let bs = strength(&best[i], md, eval_games, eval_seed);
-            let mark = if cs > bs {
+            let mark = if cs > bs + margin {
                 best[i] = cand;
                 save(md.file, &best[i]);
                 "ПРИНЯТА → сохранена"
