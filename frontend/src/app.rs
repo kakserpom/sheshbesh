@@ -1,15 +1,16 @@
+use crate::controls::{SoundControl, SpeedMenu, ThemeControl};
 use crate::demo::*;
 use crate::geom::*;
 use crate::lessons::*;
 use crate::model::*;
 use crate::moves_ui::*;
-use crate::settings::{self, Speed, Theme};
+use crate::settings::{self, Speed};
 use crate::util::*;
 use crate::view::*;
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use sheshbesh::board::LOCAL_MOON;
-use sheshbesh::moves::forced_six_moves;
+use sheshbesh::moves::{forced_six_moves, move_legal};
 use sheshbesh::{
     Agent, BOARD_DIM, BOARD_MARGIN, DiceRoll, DiceSource, Die, Game, GameState, Heuristic, Move,
     MoveKind, Position, RandomDice, Side, apply, best_forced, best_turn, legal_turns, margin_coord,
@@ -78,7 +79,8 @@ pub(crate) fn App() -> impl IntoView {
     let theme = RwSignal::new(init_theme);
     let speed = RwSignal::new(init_speed);
     let sound = RwSignal::new(init_sound);
-    let settings_open = RwSignal::new(false);
+    // Открыт ли выпадающий ползунок скорости (по иконке «⏩»).
+    let speed_menu = RwSignal::new(false);
     // Открыт ли выпадающий список выбора темы (в основном меню, по иконке-палитре).
     let theme_menu = RwSignal::new(false);
     // Применяем тему/скорость к корню документа и сохраняем при каждом изменении.
@@ -95,14 +97,32 @@ pub(crate) fn App() -> impl IntoView {
     Effect::new(move |_| settings::save_sound(sound.get()));
 
     // Горячие клавиши. Escape закрывает любые всплывающие окна; s/t/p (по физической
-    // клавише, не зависит от раскладки) — звук / следующая тема / пауза.
+    // клавише, не зависит от раскладки) — звук / следующая тема / пауза (пауза — только
+    // в партии).
     window_event_listener(leptos::ev::keydown, move |e| {
         if e.key() == "Escape" {
-            show_log.set(false);
-            settings_open.set(false);
-            theme_menu.set(false);
-            rules.set(false);
-            about.set(false);
+            // Escape действует послойно: если открыто всплывающее окно (лог, ползунок
+            // скорости, меню темы, Правила, «От автора») — закрываем ТОЛЬКО его. Если
+            // ничего не открыто, а мы в обучении — выходим из обучения в меню (как «←»).
+            // Так из открытых в обучении Правил первый Escape вернёт к обучению, а второй
+            // — в главное меню.
+            let popup_open = show_log.get_untracked()
+                || speed_menu.get_untracked()
+                || theme_menu.get_untracked()
+                || rules.get_untracked()
+                || about.get_untracked();
+            if popup_open {
+                show_log.set(false);
+                speed_menu.set(false);
+                theme_menu.set(false);
+                rules.set(false);
+                about.set(false);
+            } else if tutorial.get_untracked() {
+                epoch.update_value(|n| *n += 1);
+                animating.set(false);
+                rolling.set(false);
+                tutorial.set(false);
+            }
             return;
         }
         // Не перехватываем буквы, когда фокус в поле ввода (textarea лога, ползунок, select).
@@ -116,8 +136,36 @@ pub(crate) fn App() -> impl IntoView {
         match e.code().as_str() {
             "KeyS" => sound.update(|s| *s = !*s),
             "KeyT" => theme.update(|t| *t = t.next()),
-            "KeyP" => paused.update(|p| *p = !*p),
+            // Пауза — только в партии (не в обучении/режиме разработчика).
+            "KeyP" if started.get_untracked() && !tutorial.get_untracked() && !dev.get_untracked() => {
+                paused.update(|p| *p = !*p);
+            }
             _ => {}
+        }
+    });
+
+    // Клик вне выпадающих настроек закрывает их. Чтобы переключатели продолжали
+    // работать, клик ВНУТРИ своего wrapper'а (`.theme-pick`/`.speed-pick`) меню не
+    // трогает (его переключит собственный обработчик), но закрывает СОСЕДНЕЕ меню;
+    // клик вне обоих — закрывает оба. (Эмиттится после on:click кнопки — всплытие.)
+    window_event_listener(leptos::ev::click, move |e| {
+        let el = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+        let inside = |sel: &str| {
+            el.as_ref()
+                .is_some_and(|el| el.closest(sel).ok().flatten().is_some())
+        };
+        let (close_theme, close_speed) = if inside(".speed-pick") {
+            (true, false)
+        } else if inside(".theme-pick") {
+            (false, true)
+        } else {
+            (true, true)
+        };
+        if close_theme && theme_menu.get_untracked() {
+            theme_menu.set(false);
+        }
+        if close_speed && speed_menu.get_untracked() {
+            speed_menu.set(false);
         }
     });
 
@@ -372,15 +420,14 @@ pub(crate) fn App() -> impl IntoView {
             scratch = apply_with_frames(&mut frames, scratch, fm, r, &hs);
         }
         let _ = scratch;
-        // Если сыграны не обе кости — оставшуюся сыграть нечем, она «сгорает».
-        // Сообщаем об этом (особенно при дубле, где иначе переброс выглядит внезапным).
+        // Если использованы не все очки броска — остаток сыграть нечем, он «сгорает».
+        // Очки могли быть объединены в один ход, поэтому считаем по сумме `pips`, а не
+        // по числу ходов. Сообщаем об этом (особенно при дубле, где иначе переброс
+        // выглядит внезапным).
         let [a, b] = r.values();
-        let burn_note = (outcome.played.len() < 2).then(|| {
-            let burned = if outcome.played.len() == 1 {
-                if outcome.played[0].die == a { b } else { a }
-            } else {
-                a
-            };
+        let used: u8 = outcome.played.iter().map(|m| m.pips).sum();
+        let burn_note = (!outcome.played.is_empty() && used < a + b).then(|| {
+            let burned = a + b - used;
             let name = side_name(outcome.side, &hs);
             if outcome.again {
                 format!("{name}: сыграть {burned} больше нечем — дубль, переброс!")
@@ -427,10 +474,13 @@ pub(crate) fn App() -> impl IntoView {
         let apply_part = |m: Move| {
             let mut np = pre.clone();
             np.push(m);
-            let total = turns.get_untracked().first().map_or(0, Vec::len);
             let mut frames = Vec::new();
             let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs);
-            if np.len() >= total {
+            // Ход завершён, когда префикс больше нечем продолжить. Длину сравнивать
+            // нельзя: объединение костей делает максимальные ходы разной длины
+            // (`[Step{a+b}]` и `[Step{a},Step{b}]` оба максимальны).
+            let next_steps = step_opts(&turns.get_untracked(), &np);
+            if next_steps.is_empty() {
                 finish(frames, after, np);
             } else {
                 // Сохраняем фокус на той же фишке, если ею можно ходить дальше.
@@ -438,7 +488,7 @@ pub(crate) fn App() -> impl IntoView {
                     after.checkers[m.checker].owner,
                     after.checkers[m.checker].pos,
                 );
-                let keep = step_opts(&turns.get_untracked(), &np)
+                let keep = next_steps
                     .iter()
                     .any(|&mv| move_source(&after, mv) == next_src);
                 prefix.set(np);
@@ -464,22 +514,8 @@ pub(crate) fn App() -> impl IntoView {
         {
             let mut frames = Vec::new();
             let mut st = ps.clone();
-            let mut i = 0;
-            while i < seq.len() {
-                let mv = seq[i];
-                // Проход сквозь Тюрьму (вход + проход) анимируем как сквозной шаг,
-                // не показывая каземат.
-                let through = mv.kind == MoveKind::EnterPrison
-                    && seq
-                        .get(i + 1)
-                        .is_some_and(|n| n.kind == MoveKind::PrisonPass && n.checker == mv.checker);
-                if through {
-                    st = step_through_prison(&mut frames, st, mv, r);
-                    i += 1;
-                    continue;
-                }
+            for &mv in &seq {
                 st = apply_with_frames(&mut frames, st, mv, r, &hs);
-                i += 1;
             }
             let mut played = pre.clone();
             played.extend(seq);
@@ -685,20 +721,7 @@ pub(crate) fn App() -> impl IntoView {
                         <button on:click=move |_| rules.set(true)>"📖 Правила"</button>
                         <button on:click=move |_| about.set(true)>"❤️ От автора"</button>
                         // Выбор темы оформления — иконка-палитра с выпадающим списком.
-                        <div class="theme-pick">
-                            <button class="icon-btn" title="Тема оформления"
-                                on:click=move |_| theme_menu.update(|o| *o = !*o)>"🎨"</button>
-                            {move || theme_menu.get().then(|| view! {
-                                <div class="theme-menu">
-                                    {Theme::ALL.into_iter().map(|t| view! {
-                                        <button class:on=move || theme.get() == t
-                                            on:click=move |_| { theme.set(t); theme_menu.set(false); }>
-                                            {t.label()}
-                                        </button>
-                                    }).collect_view()}
-                                </div>
-                            })}
-                        </div>
+                        <ThemeControl theme menu_open=theme_menu/>
                         // Режим разработчика — только в отладочной сборке.
                         {cfg!(debug_assertions).then(|| view! {
                             <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
@@ -771,7 +794,7 @@ pub(crate) fn App() -> impl IntoView {
 
             // Экран обучения: пошаговые уроки с анимацией. Доска и кубик — те же, что
             // в игре (сигнал `game` + `play` + keyed-фишки со скольжением).
-            {move || tutorial.get().then(|| {
+            {move || (tutorial.get() && !rules.get()).then(|| {
                 let total = lessons_sv.with_value(Vec::len);
                 // Завершает кадры хода игрока: проигрывает авто-ход соперника (если есть)
                 // — чтобы стороны ходили по очереди — затем бросает кости СЛЕДУЮЩЕГО
@@ -794,12 +817,11 @@ pub(crate) fn App() -> impl IntoView {
                             None => after.clone(),
                         };
                         let _ = end_state;
-                        let mut next_commit = false;
                         if cur + 1 < ls.len() {
                             // Бросок следующего шага — на ЕГО позиции `before` (она же = конец
                             // хода для непрерывных шагов; для отдельных — переход к новой).
                             let nb = ls[cur + 1].before.clone();
-                            next_commit = ls[cur + 1].commit;
+                            let next_commit = ls[cur + 1].commit;
                             // Шаг-«телепорт» (расстановка задана вручную): помечаем первый
                             // кадр перехода на fade — доска погаснет, сменится и проявится,
                             // чтобы фишки не «перелетали» через всю доску.
@@ -824,9 +846,18 @@ pub(crate) fn App() -> impl IntoView {
                                 f.fade = true;
                             }
                             lesson_idx.set(cur + 1);
+                            // Для шага-выкупа сразу переходим к фазе выбора хода на 6.
+                            tut_played.set(usize::from(next_commit));
+                        } else {
+                            // Последний шаг отыгран: помечаем его полностью сыгранным
+                            // (`tut_played == moves.len()`), чтобы интерактивный слой
+                            // СКРЫЛСЯ. Иначе он остался бы на последнем шаге (lesson_idx
+                            // не растёт) и попытался бы переиграть ход с уже сыгранной
+                            // позиции — `apply` на ставшем нелегальным ходе паникует, и
+                            // слой кликов «умирает»: после этого ход не сделать вручную
+                            // даже вернувшись на прошлые шаги.
+                            tut_played.set(ls[cur].moves.len());
                         }
-                        // Для шага-выкупа сразу переходим к фазе выбора хода на 6.
-                        tut_played.set(usize::from(next_commit));
                     });
                     tut_pick.set(None);
                 };
@@ -949,7 +980,11 @@ pub(crate) fn App() -> impl IntoView {
                 view! {
                     <div class="status">
                         <div class="status-left">
-                        <button class="icon-btn" title="Настройки" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
+                        <button class="icon-btn" title="Назад в меню" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
+                        <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
+                        <SoundControl sound/>
+                        <SpeedMenu open=speed_menu speed/>
+                        <ThemeControl theme menu_open=theme_menu/>
                         </div>
                         // Выпадающий список шагов — прыжок на любой шаг обучения.
                         <div class="lesson-pick">
@@ -998,8 +1033,11 @@ pub(crate) fn App() -> impl IntoView {
                                 if ls[cur].roll.is_some() && !ls[cur].commit {
                                     let chosen = &ls[cur].moves;
                                     let k = tut_played.get();
-                                    if k < chosen.len() {
-                                        let st = game.get().state;
+                                    let st = game.get().state;
+                                    // Слой рисуем, только если очередной под-ход ЛЕГАЛЕН из
+                                    // текущей позиции — иначе `apply` ниже паниковал бы (так
+                                    // было на завершённом последнем шаге).
+                                    if k < chosen.len() && move_legal(&st, chosen[k]) {
                                         let mv = chosen[k];
                                         let after = apply(&st, mv);
                                         let moved = mv.checker;
@@ -1156,6 +1194,13 @@ pub(crate) fn App() -> impl IntoView {
                     }).collect_view()}
                     <button on:click=anim_demo>"▶ Анимация: ход и съедание"</button>
                 </div>
+                // Панель прослушивания звуков: по кнопке на каждое событие.
+                <div class="controls dev-controls">
+                    <span class="set-name">"Звуки:"</span>
+                    {settings::SoundKind::ALL.iter().map(|&(kind, label)| view! {
+                        <button on:click=move |_| settings::play(kind)>{label}</button>
+                    }).collect_view()}
+                </div>
                 <div class="board-area">
                 <div class="board-wrap">
                 <svg class="board" viewBox=format!(
@@ -1193,27 +1238,10 @@ pub(crate) fn App() -> impl IntoView {
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
                 <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
-                <button class="icon-btn" class:on=move || sound.get()
-                    title=move || if sound.get() { "Звук включён" } else { "Звук выключен" }
-                    on:click=move |_| sound.update(|s| *s = !*s)>
-                    {move || if sound.get() { "🔊" } else { "🔇" }}
-                </button>
-                <button class="icon-btn" title="Настройки" on:click=move |_| settings_open.set(true)>"⚙"</button>
+                <SoundControl sound/>
+                <SpeedMenu open=speed_menu speed/>
                 // Тема оформления — палитра с выпадающим списком (так же, как в меню).
-                <div class="theme-pick">
-                    <button class="icon-btn" title="Тема оформления"
-                        on:click=move |_| theme_menu.update(|o| *o = !*o)>"🎨"</button>
-                    {move || theme_menu.get().then(|| view! {
-                        <div class="theme-menu">
-                            {Theme::ALL.into_iter().map(|t| view! {
-                                <button class:on=move || theme.get() == t
-                                    on:click=move |_| { theme.set(t); theme_menu.set(false); }>
-                                    {t.label()}
-                                </button>
-                            }).collect_view()}
-                        </div>
-                    })}
-                </div>
+                <ThemeControl theme menu_open=theme_menu/>
                 // Технический лог партии — только в отладочной сборке.
                 {cfg!(debug_assertions).then(|| view! {
                     <button class="icon-btn" class:on=move || show_log.get() title="Лог партии" on:click=move |_| show_log.update(|v| *v = !*v)>"📋"</button>
@@ -1221,27 +1249,6 @@ pub(crate) fn App() -> impl IntoView {
                 </div>
                 <span class="herald" inner_html=move || herald.get()></span>
             </div>
-
-            // Панель настроек, меняемых на лету (тема/скорость/звук) — не прерывает партию.
-            {move || settings_open.get().then(|| view! {
-                <div class="settings-pop">
-                    <div class="settings-head">
-                        <b>"Настройки"</b>
-                        <button class="icon-btn" title="Закрыть" on:click=move |_| settings_open.set(false)>"✕"</button>
-                    </div>
-                    <div class="set-group">
-                        <span class="set-name">"Скорость"</span>
-                        <input type="range" class="speed-slider"
-                            min="0" max=move || (Speed::ALL.len() - 1).to_string() step="1"
-                            prop:value=move || speed.get().index().to_string()
-                            on:input=move |ev| {
-                                let i: usize = event_target_value(&ev).parse().unwrap_or(2);
-                                speed.set(Speed::from_index(i));
-                            } />
-                        <span class="speed-val">{move || speed.get().label()}</span>
-                    </div>
-                </div>
-            })}
 
             // Панель технического лога: текст в textarea (клик — выделить всё, затем Ctrl+C).
             {move || show_log.get().then(|| {

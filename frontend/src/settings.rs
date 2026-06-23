@@ -4,7 +4,7 @@
 //! Значения сохраняются в `localStorage`, чтобы переживать перезагрузку.
 use std::cell::RefCell;
 use wasm_bindgen::JsCast;
-use web_sys::{AudioContext, OscillatorType};
+use web_sys::{AudioContext, BiquadFilterType, OscillatorType};
 
 // --- Тема оформления ---------------------------------------------------------
 
@@ -181,7 +181,7 @@ pub(crate) fn save_sound(on: bool) {
 // --- Звук (Web Audio) --------------------------------------------------------
 
 /// Событие, под которое проигрывается короткий синтезированный звук.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SoundKind {
     Dice,
     Capture,
@@ -192,6 +192,21 @@ pub(crate) enum SoundKind {
     Enter,
     Ransom,
     Win,
+}
+
+impl SoundKind {
+    /// Все звуки с подписями — для панели прослушивания в режиме разработчика.
+    pub(crate) const ALL: [(SoundKind, &'static str); 9] = [
+        (SoundKind::Dice, "🎲 Бросок"),
+        (SoundKind::Enter, "⬇ Ввод"),
+        (SoundKind::Capture, "💥 Съедание"),
+        (SoundKind::PrisonIn, "🔒 В Тюрьму"),
+        (SoundKind::PrisonOut, "🔓 Из Тюрьмы"),
+        (SoundKind::Moon, "🌙 Луна"),
+        (SoundKind::Ransom, "💰 Выкуп"),
+        (SoundKind::Home, "🏠 Дом"),
+        (SoundKind::Win, "🏆 Победа"),
+    ];
 }
 
 thread_local! {
@@ -212,60 +227,144 @@ fn ctx() -> Option<AudioContext> {
     })
 }
 
-/// Один тон: частота, отступ от «сейчас», длительность, форма волны, громкость.
-fn tone(c: &AudioContext, freq: f64, start: f64, dur: f64, wave: OscillatorType, vol: f32) {
-    let (Ok(osc), Ok(gain)) = (c.create_oscillator(), c.create_gain()) else {
+/// Перкуссионная огибающая на параметре громкости: быстрая атака, плавный спад.
+fn env(g: &web_sys::AudioParam, t0: f64, dur: f64, vol: f32, attack: f64) {
+    let _ = g.set_value_at_time(0.0001, t0);
+    let _ = g.linear_ramp_to_value_at_time(vol, t0 + attack);
+    let _ = g.exponential_ramp_to_value_at_time(0.0001, t0 + dur);
+}
+
+/// Тон-«голос»: осциллятор → лоупас-фильтр → огибающая. Фильтр срезает верхние
+/// гармоники (`cutoff`, Гц) — именно они делают меандр/пилу «жужжащими» и резкими,
+/// так что лоупас заметно смягчает звук. `to` — конечная частота для глиссандо
+/// (равна `freq`, если скольжения нет).
+#[allow(clippy::too_many_arguments)]
+fn voice(
+    c: &AudioContext,
+    freq: f64,
+    to: f64,
+    start: f64,
+    dur: f64,
+    wave: OscillatorType,
+    vol: f32,
+    cutoff: f64,
+) {
+    let (Ok(osc), Ok(gain), Ok(lp)) = (
+        c.create_oscillator(),
+        c.create_gain(),
+        c.create_biquad_filter(),
+    ) else {
         return;
     };
     osc.set_type(wave);
-    osc.frequency().set_value(freq as f32);
     let t0 = c.current_time() + start;
-    let g = gain.gain();
-    let _ = g.set_value_at_time(0.0001, t0);
-    let _ = g.linear_ramp_to_value_at_time(vol, t0 + 0.012);
-    let _ = g.exponential_ramp_to_value_at_time(0.0001, t0 + dur);
-    let _ = osc.connect_with_audio_node(&gain);
+    let f = osc.frequency();
+    let _ = f.set_value_at_time(freq as f32, t0);
+    if (to - freq).abs() > f64::EPSILON {
+        let _ = f.exponential_ramp_to_value_at_time(to as f32, t0 + dur);
+    }
+    lp.set_type(BiquadFilterType::Lowpass);
+    lp.frequency().set_value(cutoff as f32);
+    env(&gain.gain(), t0, dur, vol, 0.01);
+    let _ = osc.connect_with_audio_node(&lp);
+    let _ = lp.connect_with_audio_node(&gain);
     let _ = gain.connect_with_audio_node(&c.destination());
     let _ = osc.start_with_when(t0);
     let _ = osc.stop_with_when(t0 + dur + 0.03);
 }
 
+/// Шумовой щелчок: короткий буфер белого шума → полосовой фильтр (центр `center`,
+/// добротность `q`) → огибающая. Звучит как удар/щелчок/стук — для костей и съедания,
+/// где чистые тоны звучат искусственно.
+fn noise(c: &AudioContext, start: f64, dur: f64, vol: f32, center: f64, q: f64) {
+    let sr = c.sample_rate();
+    let len = ((f64::from(sr) * dur) as u32).max(1);
+    let Ok(buf) = c.create_buffer(1, len, sr) else {
+        return;
+    };
+    let data: Vec<f32> = (0..len)
+        .map(|_| (js_sys::Math::random() as f32) * 2.0 - 1.0)
+        .collect();
+    let _ = buf.copy_to_channel(&data, 0);
+    let (Ok(src), Ok(bp), Ok(gain)) = (
+        c.create_buffer_source(),
+        c.create_biquad_filter(),
+        c.create_gain(),
+    ) else {
+        return;
+    };
+    src.set_buffer(Some(&buf));
+    bp.set_type(BiquadFilterType::Bandpass);
+    bp.frequency().set_value(center as f32);
+    bp.q().set_value(q as f32);
+    let t0 = c.current_time() + start;
+    env(&gain.gain(), t0, dur, vol, 0.004);
+    let _ = src.connect_with_audio_node(&bp);
+    let _ = bp.connect_with_audio_node(&gain);
+    let _ = gain.connect_with_audio_node(&c.destination());
+    let _ = src.start_with_when(t0);
+}
+
 /// Проигрывает короткий звук события (если звук включён — проверяет вызывающий).
 pub(crate) fn play(kind: SoundKind) {
     let Some(c) = ctx() else { return };
-    use OscillatorType::{Sawtooth, Sine, Square, Triangle};
+    use OscillatorType::{Sine, Square, Triangle};
     match kind {
+        // Кости стучат: три коротких шумовых щелчка чуть разной высоты — «трещотка».
         SoundKind::Dice => {
-            tone(&c, 230.0, 0.0, 0.05, Square, 0.07);
-            tone(&c, 180.0, 0.06, 0.05, Square, 0.06);
-            tone(&c, 280.0, 0.12, 0.05, Square, 0.06);
+            noise(&c, 0.0, 0.05, 0.20, 2600.0, 1.2);
+            noise(&c, 0.07, 0.05, 0.16, 2100.0, 1.2);
+            noise(&c, 0.13, 0.06, 0.18, 3000.0, 1.0);
         }
+        // Удар: глубокий тон со скольжением вниз + короткий шумовой щелчок-«шлепок».
         SoundKind::Capture => {
-            tone(&c, 150.0, 0.0, 0.18, Sawtooth, 0.11);
-            tone(&c, 75.0, 0.02, 0.22, Square, 0.1);
+            voice(&c, 220.0, 70.0, 0.0, 0.22, Sine, 0.28, 1400.0);
+            noise(&c, 0.0, 0.06, 0.16, 900.0, 0.8);
         }
-        SoundKind::PrisonIn => tone(&c, 130.0, 0.0, 0.28, Square, 0.12),
+        // В Тюрьму: тяжёлый «лязг» — два расстроенных тона скользят вниз под лоупасом.
+        SoundKind::PrisonIn => {
+            voice(&c, 200.0, 130.0, 0.0, 0.34, Triangle, 0.22, 800.0);
+            voice(&c, 150.0, 98.0, 0.0, 0.34, Square, 0.07, 700.0);
+        }
+        // Из Тюрьмы: два светлых тона вверх — облегчение.
         SoundKind::PrisonOut => {
-            tone(&c, 300.0, 0.0, 0.12, Triangle, 0.1);
-            tone(&c, 500.0, 0.1, 0.16, Triangle, 0.1);
+            voice(&c, 330.0, 330.0, 0.0, 0.13, Triangle, 0.16, 2600.0);
+            voice(&c, 494.0, 494.0, 0.1, 0.18, Triangle, 0.16, 2800.0);
         }
+        // Луна: мерцающее восходящее арпеджио чистыми синусами (с лёгкой расстройкой).
         SoundKind::Moon => {
-            tone(&c, 600.0, 0.0, 0.1, Sine, 0.08);
-            tone(&c, 900.0, 0.08, 0.12, Sine, 0.08);
-            tone(&c, 1300.0, 0.16, 0.16, Sine, 0.07);
+            for (i, f) in [660.0, 988.0, 1319.0, 1760.0].into_iter().enumerate() {
+                let t = i as f64 * 0.075;
+                voice(&c, f, f, t, 0.18, Sine, 0.12, 6000.0);
+                voice(&c, f * 1.003, f * 1.003, t, 0.18, Sine, 0.05, 6000.0);
+            }
         }
+        // Дом: тёплая восходящая терция (мягкий треугольник под лоупасом).
         SoundKind::Home => {
-            tone(&c, 660.0, 0.0, 0.12, Sine, 0.1);
-            tone(&c, 990.0, 0.09, 0.2, Sine, 0.1);
+            voice(&c, 587.0, 587.0, 0.0, 0.16, Triangle, 0.18, 2400.0);
+            voice(&c, 880.0, 880.0, 0.1, 0.26, Triangle, 0.18, 2600.0);
         }
-        SoundKind::Enter => tone(&c, 440.0, 0.0, 0.09, Triangle, 0.08),
+        // Ввод фишки: короткий мягкий «бульк» вверх.
+        SoundKind::Enter => voice(&c, 330.0, 440.0, 0.0, 0.12, Triangle, 0.16, 2200.0),
+        // Выкуп: яркий «звон монеты» — два высоких блика.
         SoundKind::Ransom => {
-            tone(&c, 820.0, 0.0, 0.09, Square, 0.07);
-            tone(&c, 1100.0, 0.08, 0.13, Square, 0.07);
+            voice(&c, 988.0, 988.0, 0.0, 0.1, Triangle, 0.12, 4000.0);
+            voice(&c, 1319.0, 1319.0, 0.07, 0.16, Triangle, 0.12, 4500.0);
         }
+        // Победа: мажорное арпеджио C-E-G-C с длинной последней нотой (фанфара).
         SoundKind::Win => {
             for (i, f) in [523.0, 659.0, 784.0, 1047.0].into_iter().enumerate() {
-                tone(&c, f, i as f64 * 0.13, 0.22, Triangle, 0.11);
+                let last = i == 3;
+                voice(
+                    &c,
+                    f,
+                    f,
+                    i as f64 * 0.12,
+                    if last { 0.4 } else { 0.16 },
+                    Triangle,
+                    0.16,
+                    3500.0,
+                );
             }
         }
     }

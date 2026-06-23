@@ -6,6 +6,7 @@
 //! сами (эвристика).
 
 mod app;
+mod controls;
 mod demo;
 mod geom;
 mod lessons;

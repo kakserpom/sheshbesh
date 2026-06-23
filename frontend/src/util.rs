@@ -50,7 +50,7 @@ pub(crate) fn dbg_log_turn(outcome: &TurnOutcome) {
     let moves: Vec<String> = outcome
         .applied
         .iter()
-        .map(|m| format!("{:?}(c{},d{})", m.kind, m.checker, m.die))
+        .map(|m| format!("{:?}(c{},p{})", m.kind, m.checker, m.pips))
         .collect();
     dbg_log(&format!(
         "[GAMELOG] {:?} {a}-{b} | {}",
@@ -165,8 +165,8 @@ pub(crate) fn move_note(
         MoveKind::PrisonRelease => "выход из Тюрьмы.",
         MoveKind::EnterHome => "заход фишки в Дом!",
         MoveKind::HomeAdvance => "фишка идёт вглубь Дома.",
-        // Проход сквозь Тюрьму, обычный шаг и выкуп репликой не сопровождаем (шум).
-        MoveKind::PrisonPass | MoveKind::Step | MoveKind::Ransom => return None,
+        // Обычный шаг и выкуп репликой не сопровождаем (шум).
+        MoveKind::Step | MoveKind::Ransom => return None,
     };
     Some(format!("{name}: {event}"))
 }
@@ -262,19 +262,20 @@ pub(crate) fn apply_with_frames(
 ) -> GameState {
     // Промежуточные клетки пути (без конечной — её даёт `apply`), чтобы фишка
     // «шагала», а не перепрыгивала.
-    let owner = state.checkers[mv.checker].owner;
     let perim = PERIMETER as u16;
     let mids: Vec<Position> = match state.checkers[mv.checker].pos {
         Position::OnTrack { progress } => {
-            let target = progress + u16::from(mv.die);
+            let target = progress + u16::from(mv.pips);
             if target < perim {
-                // Обычный шаг по периметру (промежуточные клетки без конечной).
+                // Ход по периметру (промежуточные клетки без конечной). При объединении
+                // костей фишка шагает по всем клеткам пути; спец-клетки, которые она лишь
+                // перешагивает, рисуются как обычные (`OnTrack` — на клетке, не в каземате).
                 let mut v: Vec<Position> = (progress + 1..target)
                     .map(|i| Position::OnTrack { progress: i })
                     .collect();
-                // Заход на Луну / в Тюрьму: фишка сперва ВСТАЁТ на саму клетку
-                // (ворота), а затем улетает на дугу Луны / в каземат. Иначе конечный
-                // кадр (Луна/Тюрьма рисуются вне клетки) «проглатывал» эту клетку.
+                // Заход на Луну / в Тюрьму (спец-клетка — КОНЕЧНАЯ): фишка сперва ВСТАЁТ
+                // на саму клетку (ворота), а затем улетает на дугу Луны / в каземат. Иначе
+                // конечный кадр (Луна/Тюрьма рисуются вне клетки) «проглатывал» эту клетку.
                 if matches!(mv.kind, MoveKind::EnterMoon | MoveKind::EnterPrison) {
                     v.push(Position::OnTrack { progress: target });
                 }
@@ -292,16 +293,9 @@ pub(crate) fn apply_with_frames(
             }
         }
         // Продвижение вглубь Дома — по клеткам Дома.
-        Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => (depth + 1..depth + mv.die)
-            .map(|d| Position::Home { depth: d })
-            .collect(),
-        // Проход сквозь Тюрьму — от клетки Тюрьмы по периметру.
-        Position::Prison { cell } if mv.kind == MoveKind::PrisonPass => {
-            let sp = owner.progress_of(cell);
-            (1..mv.die)
-                .map(|s| Position::OnTrack {
-                    progress: sp + u16::from(s),
-                })
+        Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => {
+            (depth + 1..depth + mv.pips)
+                .map(|d| Position::Home { depth: d })
                 .collect()
         }
         _ => Vec::new(),
@@ -422,21 +416,7 @@ pub(crate) fn commit_frames<F>(
     // обязательный ответ захватчика (его фишка — не текущей ходящей стороны).
     let applied = &outcome.applied;
     let mut scratch = pre;
-    let mut i = 0;
-    while i < applied.len() {
-        let mv = applied[i];
-        // Вход в Тюрьму, за которым этим же ходом сразу следует проход дальше, —
-        // это не заточение, а проход насквозь: шагаем сквозь клетку Тюрьмы, не
-        // показывая каземат и не объявляя «угодила в Тюрьму».
-        let through = mv.kind == MoveKind::EnterPrison
-            && applied
-                .get(i + 1)
-                .is_some_and(|n| n.kind == MoveKind::PrisonPass && n.checker == mv.checker);
-        if through {
-            scratch = step_through_prison(frames, scratch, mv, roll);
-            i += 1;
-            continue;
-        }
+    for &mv in applied {
         let forced_resp = scratch.checkers[mv.checker].owner != side;
         scratch = apply_with_frames(frames, scratch, mv, roll, humans);
         if forced_resp && let Some(last) = frames.last_mut() {
@@ -445,37 +425,7 @@ pub(crate) fn commit_frames<F>(
                 side_name(scratch.checkers[mv.checker].owner, humans)
             ));
         }
-        i += 1;
     }
-}
-
-/// Анимация шага в Тюрьму, когда за ним сразу следует проход дальше: фишка идёт
-/// сквозь клетку Тюрьмы как сквозь обычную (без каземата и реплики), но логически
-/// возвращаем настоящее состояние (Тюрьма) — для следующего хода `PrisonPass`.
-pub(crate) fn step_through_prison(
-    frames: &mut Vec<Frame>,
-    state: GameState,
-    mv: Move,
-    roll: DiceRoll,
-) -> GameState {
-    if let Position::OnTrack { progress: sp } = state.checkers[mv.checker].pos {
-        for step in 1..=mv.die {
-            let mut mid = state.clone();
-            mid.checkers[mv.checker].pos = Position::OnTrack {
-                progress: sp + u16::from(step),
-            };
-            frames.push(Frame {
-                state: mid,
-                roll: Some(roll),
-                hold: HOLD_STEP_MS,
-                rolling: false,
-                note: None,
-                pts: Vec::new(),
-                fade: false,
-            });
-        }
-    }
-    apply(&state, mv)
 }
 
 pub(crate) fn fresh(dice: StoredValue<RandomDice>, active: Vec<Side>, teams: bool) -> Game {
