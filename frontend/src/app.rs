@@ -26,6 +26,8 @@ pub(crate) fn App() -> impl IntoView {
     let players = RwSignal::new(2usize);
     let humans = RwSignal::new(vec![Side::A]);
     let teams = RwSignal::new(false);
+    // Алгоритм компьютера для каждой стороны (по индексу `Side`); по умолчанию MLP.
+    let algos = RwSignal::new([Algo::Mlp; 4]);
     let started = RwSignal::new(false);
     // Режим разработчика: экран демонстрации состояний и анимаций (вне партии).
     let dev = RwSignal::new(false);
@@ -154,8 +156,9 @@ pub(crate) fn App() -> impl IntoView {
         dice.update_value(|d| roll_v = Some(d.roll()));
         let r = roll_v.expect("roll");
         let t = legal_turns(&gg.state, r);
-        // Модель под текущий режим (число сторон + команды).
-        let m = ai_model_for(gg.state.active.len(), teams.get_untracked());
+        // Агент под алгоритм ходящей стороны и текущий режим (число сторон + команды).
+        let algo = algos.get_untracked()[gg.state.to_move.index()];
+        let m = ai_model_for(algo, gg.state.active.len(), teams.get_untracked());
         let idx = best_turn(&m, &gg.state, &t).min(t.len() - 1);
         let played = t[idx].clone();
         let mut frames = Vec::new();
@@ -533,6 +536,20 @@ pub(crate) fn App() -> impl IntoView {
                                     <button class:on=is_h on:click=move |_| toggle_human(s)>
                                         {move || if is_h() { "Человек" } else { "Компьютер" }}
                                     </button>
+                                    // Для компьютера — выбор алгоритма (MLP/Linear/эвристика).
+                                    {move || (!is_h()).then(|| view! {
+                                        <span class="algo-pick">
+                                            {Algo::ALL.into_iter().map(|a| {
+                                                let on = move || algos.get()[s.index()] == a;
+                                                view! {
+                                                    <button class:on=on
+                                                        on:click=move |_| algos.update(|arr| arr[s.index()] = a)>
+                                                        {a.label()}
+                                                    </button>
+                                                }
+                                            }).collect_view()}
+                                        </span>
+                                    })}
                                 </div>
                             }
                         }).collect_view()

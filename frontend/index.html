@@ -24,16 +24,22 @@
     h1 { font-weight: 600; margin: .2rem 0; font-size: 1.4rem; text-align: center; }
     /* Единая верхняя полоса: кнопки управления + статус-ведущий в один ряд, чтобы
        не красть высоту у доски. */
+    /* Кнопки прижаты слева, herald абсолютно центрирован по всей ширине строки. */
     .status {
-      display: flex; align-items: center; justify-content: center; gap: .6rem;
-      flex-wrap: wrap; font-size: 1.05rem; margin: .25rem 0; min-height: 2.2rem;
+      position: relative; display: flex; align-items: center; justify-content: flex-start;
+      gap: .6rem; flex-wrap: nowrap; font-size: 1.05rem; margin: .25rem 0; min-height: 2.2rem;
       text-align: center;
     }
-    .herald { font-weight: 500; }
+    .herald {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      font-weight: 500; max-width: 60%; pointer-events: none;
+    }
     /* Экран настроек */
     .settings { display: flex; flex-direction: column; align-items: center; gap: .8rem; margin: 2rem 0; }
     .set-row { display: flex; align-items: center; gap: .6rem; min-width: 16rem; justify-content: center; }
     .set-row b { min-width: 6rem; text-align: right; }
+    .algo-pick { display: inline-flex; gap: .3rem; }
+    .algo-pick button { font-size: .85rem; padding: .25rem .55rem; }
     button.on { background: #2563eb; border-color: #3b82f6; color: #fff; }
     button.primary { background: #16a34a; border-color: #22c55e; color: #fff; font-size: 1.1rem; padding: .5rem 1.2rem; margin-top: .6rem; }
     .controls { display: flex; gap: .6rem; align-items: center; justify-content: center; margin: .6rem 0; }
@@ -201,10 +207,10 @@
     /* Фишки: отдельный слой с плавным переходом позиции (анимация хода) */
     .piece {
       stroke: #0009; stroke-width: .05;
-      transition: cx .42s ease, cy .42s ease, opacity .2s ease;
+      transition: cx .32s ease, cy .32s ease, opacity .2s ease;
     }
     .piece.captive { stroke: #cbd5e1; stroke-width: .09; }
-    .cage-count { fill: #0b1220; font-size: .34px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; transition: transform .42s ease; }
+    .cage-count { fill: #0b1220; font-size: .34px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; transition: transform .32s ease; }
     /* Подсветка ходов и кликабельные зоны */
     /* Панель технического лога партии (отладка) */
     .logbox { position: fixed; inset: 6% 4%; z-index: 50; display: flex; flex-direction: column;
