@@ -815,40 +815,38 @@ pub(crate) fn App() -> impl IntoView {
                         }
                     });
                 };
-                // Прыжок на произвольный шаг (из выпадающего списка и стрелок ◀/▶ нет —
-                // только ◀): доска гасится/проявляется (fade), чтобы фишки не «перелетали».
+                // Прыжок на произвольный шаг (выпадающий список и кнопка ◀). Состояние
+                // ставим СРАЗУ (надёжно — без таймеров, которые могли «потеряться» и
+                // оставить шаг неинтерактивным), доску лишь кратко гасим для плавности.
                 let goto_lesson = move |i: usize| {
                     epoch.update_value(|e| *e += 1);
                     let era = epoch.get_value();
                     animating.set(false);
                     rolling.set(false);
                     tut_sel.set(false);
-                    tut_played.set(0);
                     tut_pick.set(None);
-                    fading.set(true);
-                    spawn_local(async move {
-                        TimeoutFuture::new(FADE_MS).await;
-                        if epoch.get_value() != era {
-                            return;
-                        }
-                        lesson_idx.set(i);
-                        lessons_sv.with_value(|ls| {
-                            let l = &ls[i];
-                            if l.commit {
-                                // Прыжок на шаг-выкуп: соперник УЖЕ выкупил фишку (фаза 0
-                                // неинтерактивна), сразу даём игроку фазу 1 — обязательный
-                                // ход захватчика на 6 (иначе кликать было бы не по чему).
-                                let mut st = l.before.clone();
-                                for mv in &l.moves {
-                                    st = apply(&st, *mv);
-                                }
-                                game.set(Game::new(st));
-                                tut_played.set(1);
-                            } else {
-                                game.set(Game::new(l.before.clone()));
+                    fading.set(true); // подавляет переход позиций — фишки не «перелетают»
+                    lesson_idx.set(i);
+                    lessons_sv.with_value(|ls| {
+                        let l = &ls[i];
+                        if l.commit {
+                            // Прыжок на шаг-выкуп: соперник УЖЕ выкупил фишку (фаза 0
+                            // неинтерактивна), сразу даём игроку фазу 1 — обязательный
+                            // ход захватчика на 6 (иначе кликать было бы не по чему).
+                            let mut st = l.before.clone();
+                            for mv in &l.moves {
+                                st = apply(&st, *mv);
                             }
-                            roll.set(l.roll);
-                        });
+                            game.set(Game::new(st));
+                            tut_played.set(1);
+                        } else {
+                            game.set(Game::new(l.before.clone()));
+                            tut_played.set(0);
+                        }
+                        roll.set(l.roll);
+                    });
+                    // Снимаем гашение в следующем кадре: позиции уже встали «вслепую».
+                    spawn_local(async move {
                         TimeoutFuture::new(FADE_MS).await;
                         if epoch.get_value() == era {
                             fading.set(false);
