@@ -784,7 +784,7 @@ pub(crate) fn App() -> impl IntoView {
                         {move || static_board(&game.get().state)}
                         <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
                             <circle
-                                r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
+                                r=move || match game.get().state.checkers[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
                                 class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
                                 fill=move || side_color(game.get().state.checkers[i].owner)
                                 cx=move || anim_xy(&game.get().state, i, &anim_pts.get()).0
@@ -976,7 +976,7 @@ pub(crate) fn App() -> impl IntoView {
                     {move || static_board(&game.get().state)}
                     <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
                         <circle
-                            r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
+                            r=move || match game.get().state.checkers[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
                             class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
                             fill=move || side_color(game.get().state.checkers[i].owner)
                             cx=move || anim_xy(&game.get().state, i, &anim_pts.get()).0
@@ -1039,7 +1039,7 @@ pub(crate) fn App() -> impl IntoView {
 
                 <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
                     <circle
-                        r=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Reserve | Position::Captured { .. }) { 0.3 } else { 0.36 }
+                        r=move || match game.get().state.checkers[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
                         class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) {
                             "piece captive"
                         } else {
