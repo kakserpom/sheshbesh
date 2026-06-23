@@ -400,7 +400,7 @@ mod tests {
         assert!(outcome.again);
         assert_eq!(game.state.to_move, Side::A);
         assert_eq!(outcome.played.len(), 2);
-        assert_eq!(outcome.played.iter().map(|m| m.die).sum::<u8>(), 12);
+        assert_eq!(outcome.played.iter().map(|m| m.pips).sum::<u8>(), 12);
         assert!(
             game.state
                 .checkers

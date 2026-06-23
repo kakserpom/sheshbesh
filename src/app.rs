@@ -258,7 +258,6 @@ fn kind_label(kind: MoveKind) -> &'static str {
         MoveKind::MoonExit => "с Луны",
         MoveKind::EnterPrison => "в Тюрьму",
         MoveKind::PrisonRelease => "из Тюрьмы",
-        MoveKind::PrisonPass => "мимо Тюрьмы",
         MoveKind::EnterHome => "в Дом",
         MoveKind::HomeAdvance => "вглубь Дома",
         MoveKind::Ransom => "выкуп",
@@ -296,7 +295,7 @@ fn move_endpoints(base: &GameState, mv: Move) -> (Option<PerimeterIdx>, Option<P
         .or_else(|| {
             // Вход на Луну: фишка уходит на дорожку, но подсветим клетку приземления.
             if let Position::OnTrack { progress } = base.checkers[mv.checker].pos {
-                let target = progress as usize + mv.die as usize;
+                let target = progress as usize + mv.pips as usize;
                 (target < PERIMETER).then(|| owner.entry().advance(target))
             } else {
                 None
@@ -310,10 +309,10 @@ fn describe_turn(seq: &[Move]) -> String {
     if seq.is_empty() {
         return "(пропуск — ходов нет)".to_string();
     }
-    let pips: u32 = seq.iter().map(|m| m.die as u32).sum();
+    let pips: u32 = seq.iter().map(|m| m.pips as u32).sum();
     let parts: Vec<String> = seq
         .iter()
-        .map(|m| format!("{}·{}", m.die, kind_label(m.kind)))
+        .map(|m| format!("{}·{}", m.pips, kind_label(m.kind)))
         .collect();
     format!("{pips} очк.: {}", parts.join(", "))
 }
@@ -409,7 +408,7 @@ fn dedup_moves(state: &GameState, moves: Vec<Move>) -> Vec<Move> {
     let mut out = Vec::new();
     for mv in moves {
         let c = &state.checkers[mv.checker];
-        let sig = (c.owner, c.pos, mv.die);
+        let sig = (c.owner, c.pos, mv.pips);
         if !seen.contains(&sig) {
             seen.push(sig);
             out.push(mv);
@@ -428,10 +427,9 @@ fn human_pick_sequence(
     roll: DiceRoll,
     turns: &[Vec<Move>],
 ) -> io::Result<Option<Vec<Move>>> {
-    let total = turns[0].len();
     let [a, b] = roll.values();
 
-    if total == 0 {
+    if turns[0].is_empty() {
         // Ходов нет — показываем экран и ждём подтверждения.
         let header = vec![
             Line::from(vec![
@@ -459,13 +457,28 @@ fn human_pick_sequence(
     let mut prefix: Vec<Move> = Vec::new();
     let mut base = state.clone();
 
-    for step in 0..total {
+    // Шагаем, пока префикс можно продолжить. Число шагов фиксировать нельзя:
+    // объединение костей делает максимальные ходы разной длины (`[Step{a+b}]` и
+    // `[Step{a},Step{b}]` оба максимальны).
+    loop {
+        let step = prefix.len();
         // Варианты-ходы на этом шаге; равнозначные (неразличимые фишки) схлопываем.
         let options = dedup_moves(&base, step_options(turns, &prefix, step));
+        if options.is_empty() {
+            break;
+        }
+        // Знаменатель «кость X/Y» — длина самой длинной последовательности с этим
+        // префиксом (объединённый ход короче, поэтому Y может уменьшиться по ходу).
+        let total = turns
+            .iter()
+            .filter(|t| t.len() > step && t[..step] == prefix[..])
+            .map(Vec::len)
+            .max()
+            .unwrap_or(step + 1);
 
         let labels: Vec<String> = options
             .iter()
-            .map(|m| format!("{}·{}", m.die, kind_label(m.kind)))
+            .map(|m| format!("{}·{}", m.pips, kind_label(m.kind)))
             .collect();
         let chosen_desc = if prefix.is_empty() {
             "—".to_string()
@@ -521,7 +534,7 @@ fn human_pick_forced(
     let shown = dedup_moves(state, options.to_vec());
     let descs: Vec<String> = shown
         .iter()
-        .map(|m| format!("{}·{}", m.die, kind_label(m.kind)))
+        .map(|m| format!("{}·{}", m.pips, kind_label(m.kind)))
         .collect();
     let header = vec![
         Line::from(vec![
