@@ -93,11 +93,15 @@ pub(crate) fn App() -> impl IntoView {
     });
     Effect::new(move |_| settings::save_sound(sound.get()));
 
-    // Escape закрывает лог партии (и панель настроек, если открыта).
+    // Escape закрывает любые всплывающие окна: лог, настройки, список тем, Правила,
+    // «От автора».
     window_event_listener(leptos::ev::keydown, move |e| {
         if e.key() == "Escape" {
             show_log.set(false);
             settings_open.set(false);
+            theme_menu.set(false);
+            rules.set(false);
+            about.set(false);
         }
     });
 
