@@ -14,6 +14,7 @@ use sheshbesh::{
     Agent, BOARD_DIM, BOARD_MARGIN, DiceRoll, DiceSource, Die, Game, GameState, Heuristic, Move,
     MoveKind, Position, RandomDice, Side, apply, best_forced, best_turn, legal_turns, margin_coord,
 };
+use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
 #[component]
@@ -93,8 +94,8 @@ pub(crate) fn App() -> impl IntoView {
     });
     Effect::new(move |_| settings::save_sound(sound.get()));
 
-    // Escape закрывает любые всплывающие окна: лог, настройки, список тем, Правила,
-    // «От автора».
+    // Горячие клавиши. Escape закрывает любые всплывающие окна; s/t/p (по физической
+    // клавише, не зависит от раскладки) — звук / следующая тема / пауза.
     window_event_listener(leptos::ev::keydown, move |e| {
         if e.key() == "Escape" {
             show_log.set(false);
@@ -102,6 +103,21 @@ pub(crate) fn App() -> impl IntoView {
             theme_menu.set(false);
             rules.set(false);
             about.set(false);
+            return;
+        }
+        // Не перехватываем буквы, когда фокус в поле ввода (textarea лога, ползунок, select).
+        let in_field = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|el| matches!(el.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT"));
+        if in_field {
+            return;
+        }
+        match e.code().as_str() {
+            "KeyS" => sound.update(|s| *s = !*s),
+            "KeyT" => theme.update(|t| *t = t.next()),
+            "KeyP" => paused.update(|p| *p = !*p),
+            _ => {}
         }
     });
 

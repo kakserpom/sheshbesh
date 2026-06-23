@@ -40,6 +40,12 @@ impl Theme {
             .find(|t| t.key() == s)
             .unwrap_or(Theme::Midnight)
     }
+
+    /// Следующая тема по кругу (для горячей клавиши).
+    pub(crate) fn next(self) -> Theme {
+        let i = Theme::ALL.iter().position(|&t| t == self).unwrap_or(0);
+        Theme::ALL[(i + 1) % Theme::ALL.len()]
+    }
 }
 
 // --- Скорость анимации -------------------------------------------------------

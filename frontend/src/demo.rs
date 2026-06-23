@@ -1,4 +1,4 @@
-use sheshbesh::board::LOCAL_PRISON_NEAR;
+use sheshbesh::board::{LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR};
 use sheshbesh::{Checker, Game, GameState, MoonField, Position, Side};
 
 // --- Режим разработчика: демонстрационные состояния доски ---
@@ -10,6 +10,7 @@ pub(crate) enum Demo {
     Moon(MoonField),
     Cell,
     Prison,
+    PrisonStack,
     Captured,
     Homes,
 }
@@ -22,6 +23,7 @@ pub(crate) const DEMOS: &[(Demo, &str)] = &[
     (Demo::Moon(MoonField::Six), "16 фишек на Луне — поле 6"),
     (Demo::Cell, "16 фишек на углу"),
     (Demo::Prison, "16 фишек в одной Тюрьме"),
+    (Demo::PrisonStack, "Тюрьма: стопки одного цвета"),
     (Demo::Captured, "12 фишек в плену (макс)"),
     (Demo::Homes, "Дома заполнены"),
 ];
@@ -58,6 +60,18 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
         Demo::Prison => {
             let cell = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
             demo_state(move |_, _| Position::Prison { cell })
+        }
+        // Наглядно: разное число фишек ОДНОГО цвета в Тюрьме (группируются со счётчиком,
+        // как на углу и Луне). Ближняя Тюрьма: A×4 и B×3; дальняя: C×2; остальное — резерв.
+        Demo::PrisonStack => {
+            let near = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
+            let far = Side::A.local_to_perimeter(LOCAL_PRISON_FAR);
+            demo_state(move |side, k| match side {
+                Side::A => Position::Prison { cell: near },
+                Side::B if k < 3 => Position::Prison { cell: near },
+                Side::C if k < 2 => Position::Prison { cell: far },
+                _ => Position::Reserve,
+            })
         }
         // Свою фишку в плен не берут: A держит максимум — по 4 от B/C/D (12), а её
         // собственные 4 фишки остаются в резерве.
