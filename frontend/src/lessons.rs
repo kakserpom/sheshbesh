@@ -24,6 +24,10 @@ pub(crate) struct Lesson {
     /// Ход целиком проигрывается через `commit_turn`/`commit_frames` (с выкупом и
     /// обязательным ответным ходом захватчика), а не покликовыми под-ходами.
     pub(crate) commit: bool,
+    /// Позиция `before` — скачок относительно конца предыдущего шага (расстановка
+    /// задана вручную, а не получена ходом). При переходе к такому шагу доска
+    /// гасится/проявляется (fade), чтобы фишки не «перелетали» через всю доску.
+    pub(crate) teleport: bool,
 }
 
 /// Авто-ход соперника между ходами игрока.
@@ -153,6 +157,7 @@ pub(crate) fn lessons() -> Vec<Lesson> {
             moves,
             opp,
             commit: false,
+            teleport: false,
         });
     }
 
@@ -183,6 +188,7 @@ pub(crate) fn lessons() -> Vec<Lesson> {
         moves: ransom_moves.clone(),
         opp: None,
         commit: true,
+        teleport: true, // фишку переставили к Дому — переход к шагу гасим/проявляем
     });
 
     // Состояние после выкупа и обязательного хода на 6 — основа финального шага, чтобы
@@ -207,6 +213,7 @@ pub(crate) fn lessons() -> Vec<Lesson> {
         moves: home_moves,
         opp: None,
         commit: false,
+        teleport: false,
     });
     out
 }
@@ -222,6 +229,7 @@ pub(crate) fn roll_only_frames(state: &GameState, roll: DiceRoll) -> Vec<Frame> 
             rolling: true,
             note: None,
             pts: Vec::new(),
+            fade: false,
         },
         Frame {
             state: state.clone(),
@@ -230,6 +238,7 @@ pub(crate) fn roll_only_frames(state: &GameState, roll: DiceRoll) -> Vec<Frame> 
             rolling: false,
             note: None,
             pts: Vec::new(),
+            fade: false,
         },
     ]
 }

@@ -69,6 +69,8 @@ pub(crate) const HOLD_ROLL_MS: u32 = 1100;
 pub(crate) const HOLD_NOMOVE_MS: u32 = 1800;
 /// Пауза на один шаг фишки по клетке, мс.
 pub(crate) const HOLD_STEP_MS: u32 = 570;
+/// Длительность гашения/проявления доски на кадре-«телепорте», мс (см. CSS `.board-wrap`).
+pub(crate) const FADE_MS: u32 = 220;
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 pub(crate) fn seed() -> u64 {
@@ -106,6 +108,10 @@ pub(crate) struct Frame {
     /// Переопределение точки отрисовки фишки `(индекс, x, y)` — для движения по
     /// параболе Луны (иначе keyed-кружок шёл бы по прямой между полями).
     pub(crate) pts: Vec<(usize, f64, f64)>,
+    /// Кадр-«телепорт»: позиция меняется скачком (не продолжение хода — например,
+    /// загрузка новой расстановки шага обучения). Доска гасится (fade-out), новая
+    /// расстановка ставится незаметно, затем проявляется (fade-in) — без «перелёта».
+    pub(crate) fade: bool,
 }
 
 /// Имя стороны для комментатора: «Игрок L» (человек) или «ИИ L» (компьютер),
@@ -310,6 +316,7 @@ pub(crate) fn apply_with_frames(
             rolling: false,
             note: None,
             pts: Vec::new(),
+            fade: false,
         });
     }
     let after = apply(&state, mv);
@@ -345,6 +352,7 @@ pub(crate) fn apply_with_frames(
                 rolling: false,
                 note: None,
                 pts: vec![(mv.checker, x, y)],
+                fade: false,
             });
         }
     }
@@ -356,6 +364,7 @@ pub(crate) fn apply_with_frames(
         rolling: false,
         note,
         pts: Vec::new(),
+        fade: false,
     });
     after
 }
@@ -387,6 +396,7 @@ pub(crate) fn commit_frames<F>(
             rolling: true,
             note: Some(format!("{} бросает кости…", side_name(side, humans))),
             pts: Vec::new(),
+            fade: false,
         });
         // …затем кости встают на результат и держатся. Если ходить нечем — дольше.
         frames.push(Frame {
@@ -400,6 +410,7 @@ pub(crate) fn commit_frames<F>(
             rolling: false,
             note: Some(roll_note(side, humans, roll, no_move)),
             pts: Vec::new(),
+            fade: false,
         });
     }
     let pre = game.state.clone();
@@ -460,6 +471,7 @@ pub(crate) fn step_through_prison(
                 rolling: false,
                 note: None,
                 pts: Vec::new(),
+                fade: false,
             });
         }
     }

@@ -63,6 +63,9 @@ pub(crate) fn App() -> impl IntoView {
     let rolling = RwSignal::new(false);
     // Покадровое переопределение точек фишек (для движения по параболе Луны).
     let anim_pts = RwSignal::new(Vec::<(usize, f64, f64)>::new());
+    // Гашение доски (fade) на кадрах-«телепортах»: смена расстановки шага обучения
+    // без «перелёта» фишек через всю доску.
+    let fading = RwSignal::new(false);
     // Текст ведущего-комментатора над доской.
     let herald = RwSignal::new(String::new());
     // Показан ли технический лог партии (кнопка в отладочной сборке).
@@ -105,6 +108,7 @@ pub(crate) fn App() -> impl IntoView {
         }
         let era = epoch.get_value();
         animating.set(true);
+        fading.set(false);
         spawn_local(async move {
             for frame in frames {
                 // Новая партия началась — бросаем эту анимацию (не трогая сигналы).
@@ -117,6 +121,16 @@ pub(crate) fn App() -> impl IntoView {
                     }
                     TimeoutFuture::new(150).await;
                 }
+                // Кадр-«телепорт»: гасим доску, ставим новую расстановку «вслепую»
+                // (CSS подавляет переход позиций, пока доска прозрачна), затем проявляем —
+                // фишки не «перелетают» через всю доску.
+                if frame.fade {
+                    fading.set(true);
+                    TimeoutFuture::new(FADE_MS).await;
+                    if epoch.get_value() != era {
+                        return;
+                    }
+                }
                 // Показываем кадр, затем держим его свою паузу (бросок — дольше шага).
                 game.update(|g| g.state = frame.state);
                 roll.set(frame.roll);
@@ -124,6 +138,11 @@ pub(crate) fn App() -> impl IntoView {
                 anim_pts.set(frame.pts);
                 if let Some(note) = frame.note {
                     herald.set(note);
+                }
+                if frame.fade {
+                    // Дать расстановке встать «вслепую», затем проявить доску.
+                    TimeoutFuture::new(FADE_MS).await;
+                    fading.set(false);
                 }
                 TimeoutFuture::new(frame.hold).await;
             }
@@ -133,6 +152,7 @@ pub(crate) fn App() -> impl IntoView {
             anim_pts.set(Vec::new());
             rolling.set(false);
             animating.set(false);
+            fading.set(false);
         });
     };
 
@@ -172,6 +192,7 @@ pub(crate) fn App() -> impl IntoView {
             rolling: false,
             note: None,
             pts: Vec::new(),
+            fade: false,
         });
         play(frames);
     });
@@ -246,6 +267,7 @@ pub(crate) fn App() -> impl IntoView {
                         rolling: false,
                         note: None,
                         pts: Vec::new(),
+                        fade: false,
                     }]);
                     return;
                 }
@@ -305,6 +327,7 @@ pub(crate) fn App() -> impl IntoView {
             rolling: false,
             note: burn_note,
             pts: Vec::new(),
+            fade: false,
         });
         turns.set(Vec::new());
         prefix.set(Vec::new());
@@ -481,6 +504,7 @@ pub(crate) fn App() -> impl IntoView {
             rolling: false,
             note: Some("Демо завершено.".to_string()),
             pts: Vec::new(),
+            fade: false,
         });
         play(frames);
     };
@@ -689,6 +713,11 @@ pub(crate) fn App() -> impl IntoView {
                             // хода для непрерывных шагов; для отдельных — переход к новой).
                             let nb = ls[cur + 1].before.clone();
                             next_commit = ls[cur + 1].commit;
+                            // Шаг-«телепорт» (расстановка задана вручную): помечаем первый
+                            // кадр перехода на fade — доска погаснет, сменится и проявится,
+                            // чтобы фишки не «перелетали» через всю доску.
+                            let teleport = ls[cur + 1].teleport;
+                            let mark = frames.len();
                             match ls[cur + 1].roll {
                                 Some(nr) => {
                                     frames.extend(roll_only_frames(&nb, nr));
@@ -702,7 +731,10 @@ pub(crate) fn App() -> impl IntoView {
                                         }
                                     }
                                 }
-                                None => frames.push(Frame { state: nb, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None, pts: Vec::new() }),
+                                None => frames.push(Frame { state: nb, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None, pts: Vec::new(), fade: false }),
+                            }
+                            if teleport && let Some(f) = frames.get_mut(mark) {
+                                f.fade = true;
                             }
                             lesson_idx.set(cur + 1);
                         }
@@ -794,7 +826,7 @@ pub(crate) fn App() -> impl IntoView {
                         }}</span>
                     </div>
                     <div class="board-area">
-                    <div class="board-wrap">
+                    <div class="board-wrap" class:faded=move || fading.get()>
                     <svg class="board" viewBox=format!(
                         "{o} {o} {s} {s}",
                         o = BOARD_MARGIN as f64 - RESERVE_PAD,
