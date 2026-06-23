@@ -15,13 +15,15 @@
       --board-bg: #0b1220; --cell: #1e293b; --cell-edge: #334155;
       --corner: #334155; --corner-edge: #475569;
       --panel: #1e293b; --panel-bg: #0f172a; --border: #334155;
+      --die-bg: #e2e8f0; --die-edge: #94a3b8;
     }
     :root[data-theme="daylight"] {
       color-scheme: light;
-      --bg: #dfe6ef; --text: #1e293b;
-      --board-bg: #b3c0d1; --cell: #eef2f7; --cell-edge: #8497ad;
-      --corner: #c4cedd; --corner-edge: #6b7c94;
-      --panel: #f1f5f9; --panel-bg: #e7edf4; --border: #b3c0d1;
+      --bg: #d6deea; --text: #1e293b;
+      --board-bg: #92a3bd; --cell: #e9eff7; --cell-edge: #6b7e9b;
+      --corner: #c4d0e0; --corner-edge: #56688a;
+      --panel: #ffffff; --panel-bg: #eef3f9; --border: #aebed4;
+      --die-bg: #ffffff; --die-edge: #475569;
     }
     :root[data-theme="forest"] {
       color-scheme: dark;
@@ -29,6 +31,7 @@
       --board-bg: #06140e; --cell: #123227; --cell-edge: #1f5c45;
       --corner: #1c4d3a; --corner-edge: #2f8060;
       --panel: #123227; --panel-bg: #0a1f17; --border: #1f5c45;
+      --die-bg: #e2e8f0; --die-edge: #94a3b8;
     }
     html, body { height: 100%; }
     body {
@@ -113,7 +116,7 @@
     .tutorial-hl { animation: hl-pulse 1.4s ease-in-out infinite; }
     .dice { display: inline-flex; gap: calc(var(--die) * .3); perspective: calc(var(--die) * 20); }
     .die { width: var(--die); height: var(--die); }
-    .die-body { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 3; }
+    .die-body { fill: var(--die-bg); stroke: var(--die-edge); stroke-width: 3; }
     .die-pip { fill: #0f172a; }
     /* Настоящий 3D-кубик: 6 граней, кувыркается при броске и встаёт нужной гранью */
     .die3d { width: var(--die); height: var(--die); perspective: calc(var(--die) * 20); }

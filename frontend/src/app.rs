@@ -1140,6 +1140,11 @@ pub(crate) fn App() -> impl IntoView {
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
                 <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
+                <button class="icon-btn" class:on=move || sound.get()
+                    title=move || if sound.get() { "Звук включён" } else { "Звук выключен" }
+                    on:click=move |_| sound.update(|s| *s = !*s)>
+                    {move || if sound.get() { "🔊" } else { "🔇" }}
+                </button>
                 <button class="icon-btn" title="Настройки" on:click=move |_| settings_open.set(true)>"⚙"</button>
                 // Технический лог партии — только в отладочной сборке.
                 {cfg!(debug_assertions).then(|| view! {
@@ -1172,15 +1177,6 @@ pub(crate) fn App() -> impl IntoView {
                                 <button class:on=move || speed.get() == s
                                     on:click=move |_| speed.set(s)>{s.label()}</button>
                             }).collect_view()}
-                        </div>
-                    </div>
-                    <div class="set-group">
-                        <span class="set-name">"Звук"</span>
-                        <div class="seg">
-                            <button class:on=move || sound.get()
-                                on:click=move |_| sound.set(true)>"Вкл"</button>
-                            <button class:on=move || !sound.get()
-                                on:click=move |_| sound.set(false)>"Выкл"</button>
                         </div>
                     </div>
                 </div>
