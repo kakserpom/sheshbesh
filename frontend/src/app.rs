@@ -785,7 +785,9 @@ pub(crate) fn App() -> impl IntoView {
                 };
                 view! {
                     <div class="status">
+                        <div class="status-left">
                         <button class="icon-btn" title="Настройки" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
+                        </div>
                         <span class="herald">{move || {
                             let i = lesson_idx.get();
                             lessons_sv.with_value(|ls| format!("Шаг {}/{total}: {}", i + 1, ls[i].title))
@@ -967,7 +969,9 @@ pub(crate) fn App() -> impl IntoView {
             // Экран разработчика: панель сценариев + демо-анимация + read-only доска.
             {move || dev.get().then(|| view! {
                 <div class="status">
+                    <div class="status-left">
                     <button class="icon-btn" title="Настройки" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); dev.set(false); }>"←"</button>
+                    </div>
                     <span class="herald" inner_html=move || herald.get()></span>
                 </div>
                 <div class="controls dev-controls">
@@ -1012,6 +1016,7 @@ pub(crate) fn App() -> impl IntoView {
             // Игровой экран после старта.
             {move || (started.get() && !rules.get()).then(|| view! {
             <div class="status">
+                <div class="status-left">
                 <button class="icon-btn" title="Закончить игру" on:click=to_settings>"⏹"</button>
                 <button class="icon-btn" class:on=move || paused.get()
                     title=move || if paused.get() { "Продолжить" } else { "Пауза" }
@@ -1023,6 +1028,7 @@ pub(crate) fn App() -> impl IntoView {
                 {cfg!(debug_assertions).then(|| view! {
                     <button class="icon-btn" title="Лог партии" on:click=move |_| show_log.set(true)>"📋"</button>
                 })}
+                </div>
                 <span class="herald" inner_html=move || herald.get()></span>
             </div>
 
