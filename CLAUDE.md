@@ -108,6 +108,14 @@ TUI (интерактивный ratatui + потоковая ANSI-анимаци
   (`commit_frames`, флаг `roll_anim`). Доска **масштабируется под окно**. Ход —
   **кликами** (фишка → клетка/зона) по одной кости с подсветкой; сопоставление —
   через `sheshbesh::checker_cell`. Вид — CSS-классы в `index.html`. Сборка — Trunk.
+  **Настройки на лету** (`settings.rs`, кнопка «⚙» в партии, панель `settings-pop` —
+  не прерывает игру): **тема оформления** (`Theme`: Полночь/Рассвет/Лес — CSS-
+  переменные на `:root[data-theme=…]`, применяются к `<html>` через `apply_theme`),
+  **скорость анимации** (`Speed`: множитель пауз `factor` для `frame.hold` в `play` +
+  CSS-переменная `--move-dur` для перехода фишек) и **звук** (`SoundKind`,
+  синтез Web Audio без файлов: бросок/съедание/Тюрьма/Луна/Дом/выкуп/финиш — по
+  `frame.rolling` и реплике `note_sound`). Значения хранятся в `localStorage`
+  (`load`/`save_*`). Зависимости: `web-sys` (Audio + DOM), `wasm-bindgen`.
 - `src-tauri/` (`sheshbesh-tauri`) — Tauri v2-оболочка: нативное окно вокруг
   фронтенда (IPC не используется — логика во фронтенде). Запуск: `cargo tauri dev`
   (нужен `cargo install tauri-cli`); `tauri.conf.json` сам зовёт `trunk` для сборки

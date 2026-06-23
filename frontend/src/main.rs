@@ -11,6 +11,7 @@ mod geom;
 mod lessons;
 mod model;
 mod moves_ui;
+mod settings;
 mod util;
 mod view;
 

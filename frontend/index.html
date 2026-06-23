@@ -6,12 +6,35 @@
   <title>Шеш-Беш</title>
   <link data-trunk rel="rust" />
   <style>
-    :root { color-scheme: dark; }
+    /* Тема оформления — через CSS-переменные; переключается атрибутом data-theme на
+       <html> (см. settings.rs). Скорость анимации — переменная --move-dur. */
+    :root {
+      color-scheme: dark;
+      --move-dur: .32s;
+      --bg: #0f172a; --text: #e2e8f0;
+      --board-bg: #0b1220; --cell: #1e293b; --cell-edge: #334155;
+      --corner: #334155; --corner-edge: #475569;
+      --panel: #1e293b; --panel-bg: #0f172a; --border: #334155;
+    }
+    :root[data-theme="daylight"] {
+      color-scheme: light;
+      --bg: #dfe6ef; --text: #1e293b;
+      --board-bg: #b3c0d1; --cell: #eef2f7; --cell-edge: #8497ad;
+      --corner: #c4cedd; --corner-edge: #6b7c94;
+      --panel: #f1f5f9; --panel-bg: #e7edf4; --border: #b3c0d1;
+    }
+    :root[data-theme="forest"] {
+      color-scheme: dark;
+      --bg: #0a1f17; --text: #d1fae5;
+      --board-bg: #06140e; --cell: #123227; --cell-edge: #1f5c45;
+      --corner: #1c4d3a; --corner-edge: #2f8060;
+      --panel: #123227; --panel-bg: #0a1f17; --border: #1f5c45;
+    }
     html, body { height: 100%; }
     body {
       margin: 0;
-      background: #0f172a;
-      color: #e2e8f0;
+      background: var(--bg);
+      color: var(--text);
       font-family: system-ui, sans-serif;
       display: flex;
       justify-content: center;
@@ -167,10 +190,10 @@
     .dice.double .die-body { stroke: #facc15; stroke-width: 5; }
     .dice.double { filter: drop-shadow(0 0 5px #facc15bb); }
     button {
-      background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
+      background: var(--panel); color: var(--text); border: 1px solid var(--cell-edge);
       border-radius: .4rem; padding: .35rem .7rem; cursor: pointer; font: inherit;
     }
-    button:hover { background: #334155; }
+    button:hover { background: var(--cell-edge); }
     /* Лотки резерва/плена */
     /* Основная область: лотки слева, доска справа */
     .main { display: flex; flex: 1 1 auto; min-height: 0; gap: 1rem; align-items: stretch; }
@@ -215,16 +238,16 @@
     .board-wrap.faded * { transition: none !important; }
     .board {
       width: 100%; height: 100%;
-      background: #0b1220; border-radius: .6rem;
+      background: var(--board-bg); border-radius: .6rem;
       box-sizing: border-box;
     }
     /* Кости — HTML-оверлей над доской, спозиционированный по координатам viewBox. */
     .board-dice { position: absolute; transform: translate(-50%, -50%); pointer-events: none; --die: 5cqmin; }
     /* На вертикальных сторонах (Дом слева/справа) кости разворачиваем поперёк. */
     .board-dice.vert { transform: translate(-50%, -50%) rotate(90deg); }
-    .track { fill: #1e293b; stroke: #334155; stroke-width: .03; }
-    .corner { fill: #334155; stroke: #475569; stroke-width: .03; }
-    .home-gate { fill: #1e293b; stroke-width: .06; } /* цвет рамки — через атрибут (цвет игрока) */
+    .track { fill: var(--cell); stroke: var(--cell-edge); stroke-width: .03; }
+    .corner { fill: var(--corner); stroke: var(--corner-edge); stroke-width: .03; }
+    .home-gate { fill: var(--cell); stroke-width: .06; } /* цвет рамки — через атрибут (цвет игрока) */
     .home-slot { stroke-width: .06; fill-opacity: .18; } /* цвет — через атрибут */
     .prison { fill: #2a3344; stroke: #8b9bb4; stroke-width: .05; }
     .cage { fill: #1a2230; stroke: #8b9bb4; stroke-width: .06; }
@@ -237,19 +260,31 @@
     /* Фишки: отдельный слой с плавным переходом позиции (анимация хода) */
     .piece {
       stroke: #0009; stroke-width: .05;
-      transition: cx .32s ease, cy .32s ease, opacity .2s ease;
+      transition: cx var(--move-dur) ease, cy var(--move-dur) ease, opacity .2s ease;
     }
     .piece.captive { stroke: #cbd5e1; stroke-width: .09; }
-    .cage-count { fill: #0b1220; font-size: .34px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; transition: transform .32s ease; }
+    .cage-count { fill: #0b1220; font-size: .34px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; transition: transform var(--move-dur) ease; }
     /* Подсветка ходов и кликабельные зоны */
     /* Панель технического лога партии (отладка) */
     .logbox { position: fixed; inset: 6% 4%; z-index: 50; display: flex; flex-direction: column;
-      gap: .4rem; background: #0f172a; border: 1px solid #334155; border-radius: .5rem; padding: .6rem; }
+      gap: .4rem; background: var(--panel-bg); border: 1px solid var(--border); border-radius: .5rem; padding: .6rem; }
     .logbox-head { display: flex; align-items: center; gap: .6rem; }
     .logbox-head .lead { color: #94a3b8; font-size: .85rem; flex: 1; }
     .logbox textarea { flex: 1; width: 100%; box-sizing: border-box; resize: none;
       font-family: ui-monospace, monospace; font-size: .8rem; line-height: 1.35;
       background: #020617; color: #e2e8f0; border: 1px solid #334155; border-radius: .3rem; padding: .4rem; }
+    /* Всплывающая панель настроек (тема/скорость/звук) — поверх партии. */
+    .settings-pop {
+      position: fixed; top: 3.4rem; left: 50%; transform: translateX(-50%); z-index: 60;
+      display: flex; flex-direction: column; gap: .9rem;
+      background: var(--panel-bg); border: 1px solid var(--border);
+      border-radius: .6rem; padding: 1rem 1.2rem; min-width: 18rem; box-shadow: 0 8px 30px #0007;
+    }
+    .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    .set-group { display: flex; flex-direction: column; gap: .4rem; }
+    .set-name { color: #94a3b8; font-size: .85rem; font-weight: 600; }
+    .seg { display: flex; gap: .4rem; flex-wrap: wrap; }
+    .seg button { flex: 1; min-width: 4rem; }
     .hl-src { stroke: #f59e0b; stroke-width: .07; }
     .hl-dst { stroke: #22c55e; stroke-width: .09; }
     /* Цель «за обе кости сразу» — зелёная пунктирная (отличать от одиночного хода). */

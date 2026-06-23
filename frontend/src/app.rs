@@ -3,6 +3,7 @@ use crate::geom::*;
 use crate::lessons::*;
 use crate::model::*;
 use crate::moves_ui::*;
+use crate::settings::{self, Speed, Theme};
 use crate::util::*;
 use crate::view::*;
 use gloo_timers::future::TimeoutFuture;
@@ -71,6 +72,25 @@ pub(crate) fn App() -> impl IntoView {
     // Показан ли технический лог партии (кнопка в отладочной сборке).
     let show_log = RwSignal::new(false);
 
+    // Настройки, меняемые на лету (тема/скорость/звук) — грузим сохранённые.
+    let (init_theme, init_speed, init_sound) = settings::load();
+    let theme = RwSignal::new(init_theme);
+    let speed = RwSignal::new(init_speed);
+    let sound = RwSignal::new(init_sound);
+    let settings_open = RwSignal::new(false);
+    // Применяем тему/скорость к корню документа и сохраняем при каждом изменении.
+    Effect::new(move |_| {
+        let t = theme.get();
+        settings::apply_theme(t);
+        settings::save_theme(t);
+    });
+    Effect::new(move |_| {
+        let s = speed.get();
+        settings::apply_speed(s);
+        settings::save_speed(s);
+    });
+    Effect::new(move |_| settings::save_sound(sound.get()));
+
     // Следим за финишами: запоминаем порядок финиша, а по окончании партии (с учётом
     // режима) выводим итоговую реплику.
     Effect::new(move |_| {
@@ -136,6 +156,18 @@ pub(crate) fn App() -> impl IntoView {
                 roll.set(frame.roll);
                 rolling.set(frame.rolling);
                 anim_pts.set(frame.pts);
+                // Звук: бросок костей — на кадре «кости крутятся», событийные звуки —
+                // по реплике-комментарию кадра (если звук включён в настройках).
+                if sound.get_untracked() {
+                    if frame.rolling {
+                        settings::play(settings::SoundKind::Dice);
+                    }
+                    if let Some(n) = &frame.note
+                        && let Some(k) = settings::note_sound(n)
+                    {
+                        settings::play(k);
+                    }
+                }
                 if let Some(note) = frame.note {
                     herald.set(note);
                 }
@@ -144,7 +176,9 @@ pub(crate) fn App() -> impl IntoView {
                     TimeoutFuture::new(FADE_MS).await;
                     fading.set(false);
                 }
-                TimeoutFuture::new(frame.hold).await;
+                // Пауза кадра масштабируется выбранной скоростью (меняется на лету).
+                let hold = (f64::from(frame.hold) * speed.get_untracked().factor()) as u32;
+                TimeoutFuture::new(hold).await;
             }
             if epoch.get_value() != era {
                 return;
@@ -1106,6 +1140,7 @@ pub(crate) fn App() -> impl IntoView {
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
                 <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
+                <button class="icon-btn" title="Настройки" on:click=move |_| settings_open.set(true)>"⚙"</button>
                 // Технический лог партии — только в отладочной сборке.
                 {cfg!(debug_assertions).then(|| view! {
                     <button class="icon-btn" title="Лог партии" on:click=move |_| show_log.set(true)>"📋"</button>
@@ -1113,6 +1148,43 @@ pub(crate) fn App() -> impl IntoView {
                 </div>
                 <span class="herald" inner_html=move || herald.get()></span>
             </div>
+
+            // Панель настроек, меняемых на лету (тема/скорость/звук) — не прерывает партию.
+            {move || settings_open.get().then(|| view! {
+                <div class="settings-pop">
+                    <div class="settings-head">
+                        <b>"Настройки"</b>
+                        <button class="icon-btn" title="Закрыть" on:click=move |_| settings_open.set(false)>"✕"</button>
+                    </div>
+                    <div class="set-group">
+                        <span class="set-name">"Тема"</span>
+                        <div class="seg">
+                            {Theme::ALL.into_iter().map(|t| view! {
+                                <button class:on=move || theme.get() == t
+                                    on:click=move |_| theme.set(t)>{t.label()}</button>
+                            }).collect_view()}
+                        </div>
+                    </div>
+                    <div class="set-group">
+                        <span class="set-name">"Скорость"</span>
+                        <div class="seg">
+                            {Speed::ALL.into_iter().map(|s| view! {
+                                <button class:on=move || speed.get() == s
+                                    on:click=move |_| speed.set(s)>{s.label()}</button>
+                            }).collect_view()}
+                        </div>
+                    </div>
+                    <div class="set-group">
+                        <span class="set-name">"Звук"</span>
+                        <div class="seg">
+                            <button class:on=move || sound.get()
+                                on:click=move |_| sound.set(true)>"Вкл"</button>
+                            <button class:on=move || !sound.get()
+                                on:click=move |_| sound.set(false)>"Выкл"</button>
+                        </div>
+                    </div>
+                </div>
+            })}
 
             // Панель технического лога: текст в textarea (клик — выделить всё, затем Ctrl+C).
             {move || show_log.get().then(|| {
