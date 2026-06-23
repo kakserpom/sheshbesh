@@ -848,18 +848,21 @@ pub(crate) fn App() -> impl IntoView {
                         <button class="icon-btn" title="Настройки" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
                         </div>
                         // Выпадающий список шагов — прыжок на любой шаг обучения.
-                        <select class="lesson-select"
-                            prop:value=move || lesson_idx.get().to_string()
-                            on:change=move |ev| {
-                                let i: usize = event_target_value(&ev).parse().unwrap_or(0);
-                                goto_lesson(i);
-                            }>
-                            {lessons_sv.with_value(|ls| ls.iter().enumerate().map(|(i, l)| view! {
-                                <option value=i.to_string()>
-                                    {format!("Шаг {}/{total}: {}", i + 1, l.title)}
-                                </option>
-                            }).collect_view())}
-                        </select>
+                        <div class="lesson-pick">
+                            <span class="lesson-label">"Шаг обучения"</span>
+                            <select class="lesson-select"
+                                prop:value=move || lesson_idx.get().to_string()
+                                on:change=move |ev| {
+                                    let i: usize = event_target_value(&ev).parse().unwrap_or(0);
+                                    goto_lesson(i);
+                                }>
+                                {lessons_sv.with_value(|ls| ls.iter().enumerate().map(|(i, l)| view! {
+                                    <option value=i.to_string()>
+                                        {format!("{}/{total}: {}", i + 1, l.title)}
+                                    </option>
+                                }).collect_view())}
+                            </select>
+                        </div>
                     </div>
                     <div class="board-area">
                     <div class="board-wrap" class:faded=move || fading.get()>
