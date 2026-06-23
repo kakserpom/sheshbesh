@@ -84,6 +84,15 @@
     .set-row b { min-width: 6rem; text-align: right; }
     .algo-pick { display: inline-flex; gap: .3rem; }
     .algo-pick button { font-size: .85rem; padding: .25rem .55rem; }
+    /* Выбор темы: иконка-палитра + выпадающий список (основное меню). */
+    .theme-pick { position: relative; display: inline-flex; }
+    .theme-menu {
+      position: absolute; top: calc(100% + .35rem); left: 50%; transform: translateX(-50%);
+      z-index: 60; display: flex; flex-direction: column; gap: .3rem; min-width: 8rem;
+      background: var(--panel-bg); border: 1px solid var(--border); border-radius: .5rem;
+      padding: .4rem; box-shadow: 0 8px 24px #0006;
+    }
+    .theme-menu button { width: 100%; }
     button.on { background: #2563eb; border-color: #3b82f6; color: #fff; }
     button.primary { background: #16a34a; border-color: #22c55e; color: #fff; font-size: 1.1rem; padding: .5rem 1.2rem; margin-top: .6rem; }
     .controls { display: flex; gap: .6rem; align-items: center; justify-content: center; margin: .6rem 0; }

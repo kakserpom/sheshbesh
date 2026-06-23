@@ -78,6 +78,8 @@ pub(crate) fn App() -> impl IntoView {
     let speed = RwSignal::new(init_speed);
     let sound = RwSignal::new(init_sound);
     let settings_open = RwSignal::new(false);
+    // Открыт ли выпадающий список выбора темы (в основном меню, по иконке-палитре).
+    let theme_menu = RwSignal::new(false);
     // Применяем тему/скорость к корню документа и сохраняем при каждом изменении.
     Effect::new(move |_| {
         let t = theme.get();
@@ -646,6 +648,21 @@ pub(crate) fn App() -> impl IntoView {
                         }>"🎓 Обучение"</button>
                         <button on:click=move |_| rules.set(true)>"📖 Правила"</button>
                         <button on:click=move |_| about.set(true)>"❤️ От автора"</button>
+                        // Выбор темы оформления — иконка-палитра с выпадающим списком.
+                        <div class="theme-pick">
+                            <button class="icon-btn" title="Тема оформления"
+                                on:click=move |_| theme_menu.update(|o| *o = !*o)>"🎨"</button>
+                            {move || theme_menu.get().then(|| view! {
+                                <div class="theme-menu">
+                                    {Theme::ALL.into_iter().map(|t| view! {
+                                        <button class:on=move || theme.get() == t
+                                            on:click=move |_| { theme.set(t); theme_menu.set(false); }>
+                                            {t.label()}
+                                        </button>
+                                    }).collect_view()}
+                                </div>
+                            })}
+                        </div>
                         // Режим разработчика — только в отладочной сборке.
                         {cfg!(debug_assertions).then(|| view! {
                             <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
@@ -1160,15 +1177,6 @@ pub(crate) fn App() -> impl IntoView {
                     <div class="settings-head">
                         <b>"Настройки"</b>
                         <button class="icon-btn" title="Закрыть" on:click=move |_| settings_open.set(false)>"✕"</button>
-                    </div>
-                    <div class="set-group">
-                        <span class="set-name">"Тема"</span>
-                        <div class="seg">
-                            {Theme::ALL.into_iter().map(|t| view! {
-                                <button class:on=move || theme.get() == t
-                                    on:click=move |_| theme.set(t)>{t.label()}</button>
-                            }).collect_view()}
-                        </div>
                     </div>
                     <div class="set-group">
                         <span class="set-name">"Скорость"</span>
