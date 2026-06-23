@@ -10,10 +10,13 @@
 //! Без `<поколений>` — бесконечно. Пример быстрой проверки: `… train_loop 1 500 100`.
 
 use sheshbesh::{
-    Heuristic, LinearValue, Side, TdConfig, ValueAgent, match_winrate, train_with, winrate_ffa,
+    Heuristic, MlpValue, Side, TdConfig, ValueAgent, match_winrate, train_with, winrate_ffa,
     winrate_teams,
 };
 use std::io::Write;
+
+/// Скрытых нейронов MLP (как в `export_model.rs`); используется при холодном старте.
+const HIDDEN: usize = 24;
 
 struct Mode {
     name: &'static str,
@@ -22,24 +25,24 @@ struct Mode {
     teams: bool,
 }
 
-fn clone_model(m: &LinearValue) -> LinearValue {
-    LinearValue::from_floats(&m.to_floats())
+fn clone_model(m: &MlpValue) -> MlpValue {
+    MlpValue::from_floats(&m.to_floats())
 }
 
-fn load_or_zero(path: &str) -> LinearValue {
+fn load_or_init(path: &str) -> MlpValue {
     std::fs::read(path).ok().map_or_else(
-        || LinearValue::from_floats(&[0.0_f32; sheshbesh::FEATURES + 1]),
+        || MlpValue::new(HIDDEN, 1),
         |b| {
             let f: Vec<f32> = b
                 .chunks_exact(4)
                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect();
-            LinearValue::from_floats(&f)
+            MlpValue::from_floats(&f)
         },
     )
 }
 
-fn save(path: &str, m: &LinearValue) {
+fn save(path: &str, m: &MlpValue) {
     let mut bytes = Vec::new();
     for f in m.to_floats() {
         bytes.extend_from_slice(&f.to_le_bytes());
@@ -49,7 +52,7 @@ fn save(path: &str, m: &LinearValue) {
 
 /// Сила модели = доля побед против эвристики на фиксированном `seed` (для сравнимости
 /// кандидата и лучшего на одних и тех же бросках).
-fn strength(m: &LinearValue, mode: &Mode, games: usize, seed: u64) -> f64 {
+fn strength(m: &MlpValue, mode: &Mode, games: usize, seed: u64) -> f64 {
     if mode.active.len() == 2 {
         let (w, h) = match_winrate(&mut ValueAgent(m), &mut Heuristic, games, seed, 40_000);
         return w as f64 / (w + h).max(1) as f64;
@@ -72,15 +75,39 @@ fn main() {
     let margin = 0.02_f64;
 
     let modes = [
-        Mode { name: "2p", file: "frontend/src/model.bin", active: vec![Side::A, Side::C], teams: false },
-        Mode { name: "3p", file: "frontend/src/model_3p.bin", active: vec![Side::A, Side::B, Side::C], teams: false },
-        Mode { name: "4p", file: "frontend/src/model_4p.bin", active: Side::ALL.to_vec(), teams: false },
-        Mode { name: "4p-teams", file: "frontend/src/model_4p_teams.bin", active: Side::ALL.to_vec(), teams: true },
+        Mode {
+            name: "2p",
+            file: "frontend/src/model.bin",
+            active: vec![Side::A, Side::C],
+            teams: false,
+        },
+        Mode {
+            name: "3p",
+            file: "frontend/src/model_3p.bin",
+            active: vec![Side::A, Side::B, Side::C],
+            teams: false,
+        },
+        Mode {
+            name: "4p",
+            file: "frontend/src/model_4p.bin",
+            active: Side::ALL.to_vec(),
+            teams: false,
+        },
+        Mode {
+            name: "4p-teams",
+            file: "frontend/src/model_4p_teams.bin",
+            active: Side::ALL.to_vec(),
+            teams: true,
+        },
     ];
 
-    let mut best: Vec<LinearValue> = modes.iter().map(|m| load_or_zero(m.file)).collect();
+    let mut best: Vec<MlpValue> = modes.iter().map(|m| load_or_init(m.file)).collect();
     for (md, m) in modes.iter().zip(&best) {
-        println!("[generation 0] {:>8}: старт {:.1}% против эвристики", md.name, 100.0 * strength(m, md, eval_games, 777));
+        println!(
+            "[generation 0] {:>8}: старт {:.1}% против эвристики",
+            md.name,
+            100.0 * strength(m, md, eval_games, 777)
+        );
     }
     std::io::stdout().flush().ok();
 
@@ -111,7 +138,12 @@ fn main() {
             } else {
                 "отклонена"
             };
-            println!("[generation {generation}] {:>8}: кандидат {:.1}% vs лучший {:.1}% — {mark}", md.name, 100.0 * cs, 100.0 * bs);
+            println!(
+                "[generation {generation}] {:>8}: кандидат {:.1}% vs лучший {:.1}% — {mark}",
+                md.name,
+                100.0 * cs,
+                100.0 * bs
+            );
             std::io::stdout().flush().ok();
         }
         generation += 1;

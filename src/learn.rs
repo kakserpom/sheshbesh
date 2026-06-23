@@ -221,6 +221,34 @@ impl MlpValue {
         v.push(self.b2);
         v
     }
+
+    /// Восстанавливает модель из плоского вектора `to_floats`. Число скрытых нейронов
+    /// выводится из длины: `len = hidden·FEATURES + 2·hidden + 1`.
+    ///
+    /// # Panics
+    /// Если длина не соответствует ни одному целому `hidden`.
+    pub fn from_floats(floats: &[f32]) -> MlpValue {
+        let hidden = (floats.len() - 1) / (FEATURES + 2);
+        assert_eq!(
+            hidden * FEATURES + 2 * hidden + 1,
+            floats.len(),
+            "длина весов MLP не согласована с FEATURES"
+        );
+        let mut o = 0;
+        let w1 = floats[o..o + hidden * FEATURES].to_vec();
+        o += hidden * FEATURES;
+        let b1 = floats[o..o + hidden].to_vec();
+        o += hidden;
+        let w2 = floats[o..o + hidden].to_vec();
+        o += hidden;
+        MlpValue {
+            hidden,
+            w1,
+            b1,
+            w2,
+            b2: floats[o],
+        }
+    }
 }
 
 impl Value for MlpValue {
@@ -305,6 +333,10 @@ pub struct TdConfig {
     pub active: Vec<Side>,
     /// Командный режим 2×2 (только при 4 активных): союзники A+C против B+D.
     pub teams: bool,
+    /// Размер мини-батча для параллельного self-play (фича `parallel`): столько партий
+    /// играется одновременно «замороженной» моделью, затем по ним идут TD-апдейты по
+    /// порядку (детерминированно). Без фичи игнорируется.
+    pub batch: usize,
 }
 
 impl Default for TdConfig {
@@ -320,19 +352,23 @@ impl Default for TdConfig {
             seed: 1,
             active: vec![Side::A, Side::C],
             teams: false,
+            batch: 64,
         }
     }
 }
 
+/// Результат одной self-play партии: траектория афтерстейтов `(позиция, кто ходил)`
+/// и список победителей (`z = 1`).
+type PlayedGame = (Vec<(GameState, Side)>, Vec<Side>);
+
 /// Self-play партия текущей моделью (любое число игроков, жадно по ценности).
-/// Возвращает траекторию афтерстейтов (позиция, кто ходил) и победителей (`z = 1`).
 fn play_and_record<V: Value>(
     model: &V,
     active: &[Side],
     teams: bool,
     dice: &mut impl DiceSource,
     max_turns: usize,
-) -> (Vec<(GameState, Side)>, Vec<Side>) {
+) -> PlayedGame {
     let mut state = GameState::new(active.to_vec(), active[0]);
     state.teams = teams && active.len() == 4;
     let mut game = Game::new(state);
@@ -354,18 +390,85 @@ fn play_and_record<V: Value>(
     (traj, game.winners().unwrap_or_default())
 }
 
-/// Обучает произвольную `TdModel` методом TD(λ) в self-play и возвращает её.
-pub fn train_with<M: TdModel>(mut model: M, cfg: &TdConfig) -> M {
-    let mut dice = RandomDice::from_seed(cfg.seed);
+/// Зерно ГПСЧ для отдельной партии `g` (детерминированно, независимо от числа потоков).
+fn game_seed(seed: u64, g: usize) -> u64 {
+    seed ^ (g as u64)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(0xD1B5_4A32_D192_ED03)
+}
+
+/// Обучает `TdModel` методом TD(λ) в self-play, инкрементируя `done` на каждую
+/// сыгранную партию (для индикатора прогресса). Последовательная версия.
+#[cfg(not(feature = "parallel"))]
+pub fn train_with_progress<M: TdModel>(
+    mut model: M,
+    cfg: &TdConfig,
+    done: &std::sync::atomic::AtomicUsize,
+) -> M {
+    use std::sync::atomic::Ordering;
     for g in 0..cfg.games {
+        let mut dice = RandomDice::from_seed(game_seed(cfg.seed, g));
         let (traj, winners) =
             play_and_record(&model, &cfg.active, cfg.teams, &mut dice, cfg.max_turns);
         if !winners.is_empty() {
             let alpha = cfg.alpha / (1.0 + cfg.alpha_decay * g as f32);
             model.td_update(&traj, &winners, &cfg.active, alpha, cfg.lambda);
         }
+        done.fetch_add(1, Ordering::Relaxed);
     }
     model
+}
+
+/// Обучает `TdModel` методом TD(λ) в self-play, инкрементируя `done` на каждую
+/// сыгранную партию. **Параллельная** версия (фича `parallel`): партии каждого
+/// мини-батча играются одновременно «замороженной» моделью (на всех ядрах), затем
+/// TD-апдейты применяются **по порядку** (детерминированно, как и без потоков). Это
+/// мини-батч-онлайн TD — чуть отличается от чисто онлайнового, зато даёт почти линейное
+/// ускорение по ядрам.
+#[cfg(feature = "parallel")]
+pub fn train_with_progress<M: TdModel + Sync>(
+    mut model: M,
+    cfg: &TdConfig,
+    done: &std::sync::atomic::AtomicUsize,
+) -> M {
+    use rayon::prelude::*;
+    use std::sync::atomic::Ordering;
+    let batch = cfg.batch.max(1);
+    let mut start = 0;
+    while start < cfg.games {
+        let n = batch.min(cfg.games - start);
+        // Параллельно: сыграть n партий замороженной моделью. `collect` сохраняет
+        // порядок диапазона, поэтому апдейты ниже детерминированы.
+        let played: Vec<PlayedGame> = (0..n)
+            .into_par_iter()
+            .map(|k| {
+                let mut dice = RandomDice::from_seed(game_seed(cfg.seed, start + k));
+                let r = play_and_record(&model, &cfg.active, cfg.teams, &mut dice, cfg.max_turns);
+                done.fetch_add(1, Ordering::Relaxed);
+                r
+            })
+            .collect();
+        for (k, (traj, winners)) in played.into_iter().enumerate() {
+            if !winners.is_empty() {
+                let alpha = cfg.alpha / (1.0 + cfg.alpha_decay * (start + k) as f32);
+                model.td_update(&traj, &winners, &cfg.active, alpha, cfg.lambda);
+            }
+        }
+        start += n;
+    }
+    model
+}
+
+/// Обучает `TdModel` методом TD(λ) в self-play (без индикатора прогресса).
+#[cfg(not(feature = "parallel"))]
+pub fn train_with<M: TdModel>(model: M, cfg: &TdConfig) -> M {
+    train_with_progress(model, cfg, &std::sync::atomic::AtomicUsize::new(0))
+}
+
+/// Обучает `TdModel` методом TD(λ) в self-play (без индикатора; параллельно).
+#[cfg(feature = "parallel")]
+pub fn train_with<M: TdModel + Sync>(model: M, cfg: &TdConfig) -> M {
+    train_with_progress(model, cfg, &std::sync::atomic::AtomicUsize::new(0))
 }
 
 /// Обучает линейную ценность TD(λ) в self-play.

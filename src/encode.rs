@@ -16,9 +16,16 @@
 //! - `home[4]` — занятость клеток Дома по глубине;
 //! - `moon[3]` — фишки на полях Луны 1/3/6;
 //! - `track[72]` — занятость клеток периметра в системе отсчёта `p` (контакт/блок):
-//!   сюда попадают фишки на дорожке и в Тюрьме (всё, что физически на периметре).
+//!   сюда попадают фишки на дорожке и в Тюрьме (всё, что физически на периметре);
+//! - `mobile[6]` — можно ли сыграть костью 1..6 (гибкость: «эффективно использовать
+//!   ЛЮБОЙ бросок»; для соперников этот же признак — сигнал «снижать их подвижность»);
+//! - `corner` — доля фишек на углах (безопасный анкер: на углу не едят, и им удобно
+//!   поджидать обошедшие фишки соперника).
 
-use crate::board::{HOME_DEPTH, LOCAL_MOON_EXIT, PERIMETER, PerimeterIdx, Side};
+use crate::board::{
+    CellKind, HOME_DEPTH, LOCAL_MOON_EXIT, PERIMETER, PerimeterIdx, Side, cell_kind,
+};
+use crate::moves::can_play;
 use crate::state::{GameState, MoonField, Position};
 
 // Смещения внутри блока одной относительной стороны.
@@ -29,8 +36,10 @@ const OFF_PRISON: usize = 3;
 const OFF_HOME: usize = 4; // 4 клетки Дома
 const OFF_MOON: usize = OFF_HOME + HOME_DEPTH; // 3 поля Луны
 const OFF_TRACK: usize = OFF_MOON + 3; // 72 клетки периметра
+const OFF_MOBILE: usize = OFF_TRACK + PERIMETER; // 6 — играбельность костей 1..6
+const OFF_CORNER: usize = OFF_MOBILE + 6; // 1 — доля фишек на углах
 /// Длина блока признаков одной относительной стороны.
-const PER_OWNER: usize = OFF_TRACK + PERIMETER;
+const PER_OWNER: usize = OFF_CORNER + 1;
 /// Полная длина вектора признаков (4 стороны, включая отсутствующие — нулями).
 pub const FEATURES: usize = PER_OWNER * 4;
 
@@ -90,6 +99,19 @@ pub fn encode_into(state: &GameState, p: Side, out: &mut [f32]) {
         // Контакт/блок: всё, что физически на периметре (дорожка и Тюрьма).
         if let Some(abs) = ch.pos.perimeter_cell(owner) {
             out[base + OFF_TRACK + rel_cell(p, abs)] += 1.0;
+            if cell_kind(abs) == CellKind::Corner {
+                out[base + OFF_CORNER] += 0.25; // безопасный анкер на углу
+            }
+        }
+    }
+    // Подвижность: можно ли сыграть каждой костью 1..6 (для каждой присутствующей
+    // стороны — своя; модель учится максимизировать свою и минимизировать чужую).
+    for &side in &state.active {
+        let base = rel_owner(p, side) * PER_OWNER;
+        for d in 1..=6u8 {
+            if can_play(state, side, d) {
+                out[base + OFF_MOBILE + (d - 1) as usize] = 1.0;
+            }
         }
     }
 }
