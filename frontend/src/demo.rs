@@ -1,4 +1,4 @@
-use sheshbesh::board::{LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR};
+use sheshbesh::board::LOCAL_PRISON_NEAR;
 use sheshbesh::{Checker, Game, GameState, MoonField, Position, Side};
 
 // --- Режим разработчика: демонстрационные состояния доски ---
@@ -61,16 +61,21 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
             let cell = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
             demo_state(move |_, _| Position::Prison { cell })
         }
-        // Наглядно: разное число фишек ОДНОГО цвета в Тюрьме (группируются со счётчиком,
-        // как на углу и Луне). Ближняя Тюрьма: A×4 и B×3; дальняя: C×2; остальное — резерв.
+        // Стопка на ВЫХОДЕ из Тюрьмы: освобождённые «зашёл-вышел» фишки СТОЯТ на клетке
+        // Тюрьмы (как на углу). Все на одной клетке: A×4, B×3, C×2 — одноцветные
+        // группируются со счётчиком, разные цвета разнесены наружу.
         Demo::PrisonStack => {
-            let near = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
-            let far = Side::A.local_to_perimeter(LOCAL_PRISON_FAR);
-            demo_state(move |side, k| match side {
-                Side::A => Position::Prison { cell: near },
-                Side::B if k < 3 => Position::Prison { cell: near },
-                Side::C if k < 2 => Position::Prison { cell: far },
-                _ => Position::Reserve,
+            let cell = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
+            demo_state(move |side, k| {
+                let on_cell = Position::OnTrack {
+                    progress: side.progress_of(cell),
+                };
+                match side {
+                    Side::A => on_cell,
+                    Side::B if k < 3 => on_cell,
+                    Side::C if k < 2 => on_cell,
+                    _ => Position::Reserve,
+                }
             })
         }
         // Свою фишку в плен не берут: A держит максимум — по 4 от B/C/D (12), а её

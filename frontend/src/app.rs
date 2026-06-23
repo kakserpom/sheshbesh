@@ -181,10 +181,13 @@ pub(crate) fn App() -> impl IntoView {
                         return;
                     }
                 }
+                // На максимальной скорости бросок без анимации — кости появляются
+                // мгновенно (не крутим кубик, кадр «кости крутятся» держим минимум).
+                let instant_roll = frame.rolling && speed.get_untracked() == Speed::VeryFast;
                 // Показываем кадр, затем держим его свою паузу (бросок — дольше шага).
                 game.update(|g| g.state = frame.state);
                 roll.set(frame.roll);
-                rolling.set(frame.rolling);
+                rolling.set(frame.rolling && !instant_roll);
                 anim_pts.set(frame.pts);
                 // Звук: бросок костей — на кадре «кости крутятся», событийные звуки —
                 // по реплике-комментарию кадра (если звук включён в настройках).
@@ -206,8 +209,13 @@ pub(crate) fn App() -> impl IntoView {
                     TimeoutFuture::new(FADE_MS).await;
                     fading.set(false);
                 }
-                // Пауза кадра масштабируется выбранной скоростью (меняется на лету).
-                let hold = (f64::from(frame.hold) * speed.get_untracked().factor()) as u32;
+                // Пауза кадра масштабируется выбранной скоростью (меняется на лету);
+                // мгновенный бросок держим лишь чуть-чуть.
+                let hold = if instant_roll {
+                    70
+                } else {
+                    (f64::from(frame.hold) * speed.get_untracked().factor()) as u32
+                };
                 TimeoutFuture::new(hold).await;
             }
             if epoch.get_value() != era {

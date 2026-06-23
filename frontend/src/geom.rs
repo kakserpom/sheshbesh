@@ -259,6 +259,34 @@ pub(crate) fn corner_slot_point(coord: (usize, usize), k: usize) -> (f64, f64) {
     outward_slot(center_pt(coord), k, CORNER_GAP)
 }
 
+/// Абсолютная клетка-Тюрьма, на которой СТОИТ (OnTrack) фишка — освобождённая
+/// «зашёл-вышел» или проходящая. Клетка Тюрьмы, как и угол, допускает совместное
+/// стояние разных фишек (без съедания), а одноцветные группируются со счётчиком.
+pub(crate) fn checker_on_prison(owner: Side, pos: Position) -> Option<PerimeterIdx> {
+    if let Position::OnTrack { progress } = pos {
+        let abs = owner.entry().advance(progress as usize);
+        if cell_kind(abs) == CellKind::Prison {
+            return Some(abs);
+        }
+    }
+    None
+}
+
+/// Активные стороны с фишкой, СТОЯЩЕЙ на клетке Тюрьмы `abs` (в их порядке).
+pub(crate) fn prison_cell_sides(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
+    state
+        .active
+        .iter()
+        .copied()
+        .filter(|&s| {
+            state
+                .checkers
+                .iter()
+                .any(|c| c.owner == s && checker_on_prison(c.owner, c.pos) == Some(abs))
+        })
+        .collect()
+}
+
 /// Активные стороны с фишкой на поле `field` Луны стороны `side` (в их порядке).
 pub(crate) fn moon_sides(state: &GameState, side: Side, field: MoonField) -> Vec<Side> {
     state
@@ -350,6 +378,19 @@ pub(crate) fn stack_counts(state: &GameState) -> Vec<Badge> {
                 c.owner == side && checker_corner(c.owner, c.pos) == Some(abs)
             });
             push(first, corner_slot_point(coord, k), count);
+        }
+    }
+    // Клетки Тюрьмы: одноцветные СТОЯЩИЕ на клетке (освобождённые) фишки — со счётчиком.
+    for side in Side::ALL {
+        for local in [LOCAL_PRISON_NEAR, LOCAL_PRISON_FAR] {
+            let abs = side.local_to_perimeter(local);
+            let coord = margin_coord(abs);
+            for (k, &owner) in prison_cell_sides(state, abs).iter().enumerate() {
+                let (first, count) = first_and_count(state, |c| {
+                    c.owner == owner && checker_on_prison(c.owner, c.pos) == Some(abs)
+                });
+                push(first, corner_slot_point(coord, k), count);
+            }
         }
     }
     // Поля Луны: одноцветные фишки на одном поле.
@@ -479,6 +520,15 @@ pub(crate) fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
     if let Some(abs) = checker_corner(ch.owner, ch.pos) {
         let coord = checker_cell(ch.owner, ch.pos).expect("corner cell");
         let sides = corner_sides(state, abs);
+        let k = sides.iter().position(|&s| s == ch.owner).unwrap_or(0);
+        let (x, y) = corner_slot_point(coord, k);
+        return (x, y, true);
+    }
+    // Клетка Тюрьмы со СТОЯЩИМИ на ней фишками (освобождённые «зашёл-вышел») — как на
+    // углу: одноцветные накладываются в один кружок, разные цвета разнесены наружу.
+    if let Some(abs) = checker_on_prison(ch.owner, ch.pos) {
+        let coord = checker_cell(ch.owner, ch.pos).expect("prison cell");
+        let sides = prison_cell_sides(state, abs);
         let k = sides.iter().position(|&s| s == ch.owner).unwrap_or(0);
         let (x, y) = corner_slot_point(coord, k);
         return (x, y, true);
