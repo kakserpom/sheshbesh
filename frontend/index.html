@@ -16,6 +16,7 @@
       --corner: #334155; --corner-edge: #475569;
       --panel: #1e293b; --panel-bg: #0f172a; --border: #334155;
       --die-bg: #e2e8f0; --die-edge: #94a3b8;
+      --muted: #94a3b8; --heading: #93c5fd; --hint: #fcd34d;
       /* Особые клетки доски (адаптируются под тему). */
       --moon: #60a5fa; --moon-fill: #0e2038; --moon-num: #93c5fd;
       --prison: #2a3344; --prison-edge: #8b9bb4;
@@ -28,6 +29,7 @@
       --corner: #c4d0e0; --corner-edge: #56688a;
       --panel: #ffffff; --panel-bg: #eef3f9; --border: #aebed4;
       --die-bg: #ffffff; --die-edge: #475569;
+      --muted: #51617d; --heading: #1d4ed8; --hint: #b45309;
       --moon: #1d4ed8; --moon-fill: #d4e3fb; --moon-num: #1e3a8a;
       --prison: #9aa7bd; --prison-edge: #51617d;
       --cage: #aab5c8; --cage-edge: #51617d;
@@ -71,20 +73,20 @@
       grid-column: 2; justify-self: center; min-width: 0;
       display: flex; align-items: center; gap: .5rem;
     }
-    .lesson-label { color: #94a3b8; font-size: .9rem; font-weight: 600; white-space: nowrap; }
+    .lesson-label { color: var(--muted); font-size: .9rem; font-weight: 600; white-space: nowrap; }
     .lesson-select {
       appearance: none; -webkit-appearance: none; min-width: 0; max-width: 100%;
       font-size: 1rem; font-weight: 500; padding: .35rem 2rem .35rem .7rem;
-      color: #e2e8f0; background-color: #1e293b;
-      border: 1px solid #475569; border-radius: .5rem; cursor: pointer;
+      color: var(--text); background-color: var(--panel);
+      border: 1px solid var(--cell-edge); border-radius: .5rem; cursor: pointer;
       text-overflow: ellipsis;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
       background-repeat: no-repeat; background-position: right .65rem center; background-size: .7rem;
       transition: border-color .15s ease, box-shadow .15s ease;
     }
-    .lesson-select:hover { border-color: #64748b; background-color: #243349; }
+    .lesson-select:hover { border-color: var(--corner-edge); background-color: var(--cell); }
     .lesson-select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px #3b82f655; }
-    .lesson-select option { background: #1e293b; color: #e2e8f0; }
+    .lesson-select option { background: var(--panel); color: var(--text); }
     /* Экран настроек */
     .settings { display: flex; flex-direction: column; align-items: center; gap: .8rem; margin: 2rem 0; }
     .set-row { display: flex; align-items: center; gap: .6rem; min-width: 16rem; justify-content: center; }
@@ -110,9 +112,9 @@
     .page-head { display: flex; align-items: center; gap: .5rem; }
     .page-head h2 { flex: 1; text-align: center; margin: .3rem 0; }
     .rules h2 { text-align: center; margin: .3rem 0 .2rem; }
-    .rules h3 { margin: 1.1rem 0 .3rem; color: #93c5fd; font-size: 1.05rem; }
-    .rules p, .rules li { color: #cbd5e1; }
-    .rules .lead { color: #94a3b8; font-style: italic; }
+    .rules h3 { margin: 1.1rem 0 .3rem; color: var(--heading); font-size: 1.05rem; }
+    .rules p, .rules li { color: var(--text); }
+    .rules .lead { color: var(--muted); font-style: italic; }
     .rules ul { margin: .2rem 0; padding-left: 1.2rem; }
     .rules li { margin: .25rem 0; }
     /* Фиксированная высота подвала: текст/подсказка урока меняются, но не отнимают
@@ -121,12 +123,12 @@
       flex: 0 0 7.5rem; height: 7.5rem; overflow-y: auto; width: 100%;
       display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
     }
-    .lesson-text { max-width: 40rem; margin: .4rem auto .6rem; line-height: 1.45; color: #cbd5e1; text-align: center; padding: 0 1rem; }
+    .lesson-text { max-width: 40rem; margin: .4rem auto .6rem; line-height: 1.45; color: var(--text); text-align: center; padding: 0 1rem; }
     .nav-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 2.6rem; height: 2.6rem; border-radius: 50%; font-size: 1.3rem; opacity: .85; }
     .nav-arrow.left { left: .2rem; }
     .nav-arrow.right { right: .2rem; }
     .nav-arrow:hover { opacity: 1; }
-    .lesson-hint { text-align: center; color: #fcd34d; margin: -.2rem 0 .5rem; font-size: .95rem; }
+    .lesson-hint { text-align: center; color: var(--hint); margin: -.2rem 0 .5rem; font-size: .95rem; }
     .tutorial-hl { stroke: #facc15; stroke-width: .08; opacity: .9; }
     @keyframes hl-pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
     .tutorial-hl { animation: hl-pulse 1.4s ease-in-out infinite; }
@@ -288,7 +290,7 @@
     .logbox { position: fixed; inset: 6% 4%; z-index: 50; display: flex; flex-direction: column;
       gap: .4rem; background: var(--panel-bg); border: 1px solid var(--border); border-radius: .5rem; padding: .6rem; }
     .logbox-head { display: flex; align-items: center; gap: .6rem; }
-    .logbox-head .lead { color: #94a3b8; font-size: .85rem; flex: 1; }
+    .logbox-head .lead { color: var(--muted); font-size: .85rem; flex: 1; }
     .logbox textarea { flex: 1; width: 100%; box-sizing: border-box; resize: none;
       font-family: ui-monospace, monospace; font-size: .8rem; line-height: 1.35;
       background: #020617; color: #e2e8f0; border: 1px solid #334155; border-radius: .3rem; padding: .4rem; }
@@ -301,11 +303,11 @@
     }
     .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
     .set-group { display: flex; flex-direction: column; gap: .4rem; }
-    .set-name { color: #94a3b8; font-size: .85rem; font-weight: 600; }
+    .set-name { color: var(--muted); font-size: .85rem; font-weight: 600; }
     .seg { display: flex; gap: .4rem; flex-wrap: wrap; }
     .seg button { flex: 1; min-width: 4rem; }
     .speed-slider { width: 100%; accent-color: #3b82f6; cursor: pointer; margin: .1rem 0; }
-    .speed-val { color: #94a3b8; font-size: .85rem; text-align: center; }
+    .speed-val { color: var(--muted); font-size: .85rem; text-align: center; }
     .hl-src { stroke: #f59e0b; stroke-width: .07; }
     .hl-dst { stroke: #22c55e; stroke-width: .09; }
     /* Цель «за обе кости сразу» — зелёная пунктирная (отличать от одиночного хода). */
