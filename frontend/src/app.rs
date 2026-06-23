@@ -815,15 +815,51 @@ pub(crate) fn App() -> impl IntoView {
                         }
                     });
                 };
+                // Прыжок на произвольный шаг (из выпадающего списка и стрелок ◀/▶ нет —
+                // только ◀): доска гасится/проявляется (fade), чтобы фишки не «перелетали».
+                let goto_lesson = move |i: usize| {
+                    epoch.update_value(|e| *e += 1);
+                    let era = epoch.get_value();
+                    animating.set(false);
+                    rolling.set(false);
+                    tut_sel.set(false);
+                    tut_played.set(0);
+                    tut_pick.set(None);
+                    fading.set(true);
+                    spawn_local(async move {
+                        TimeoutFuture::new(FADE_MS).await;
+                        if epoch.get_value() != era {
+                            return;
+                        }
+                        lesson_idx.set(i);
+                        lessons_sv.with_value(|ls| {
+                            game.set(Game::new(ls[i].before.clone()));
+                            roll.set(ls[i].roll);
+                        });
+                        TimeoutFuture::new(FADE_MS).await;
+                        if epoch.get_value() == era {
+                            fading.set(false);
+                        }
+                    });
+                };
                 view! {
                     <div class="status">
                         <div class="status-left">
                         <button class="icon-btn" title="Настройки" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
                         </div>
-                        <span class="herald">{move || {
-                            let i = lesson_idx.get();
-                            lessons_sv.with_value(|ls| format!("Шаг {}/{total}: {}", i + 1, ls[i].title))
-                        }}</span>
+                        // Выпадающий список шагов — прыжок на любой шаг обучения.
+                        <select class="lesson-select"
+                            prop:value=move || lesson_idx.get().to_string()
+                            on:change=move |ev| {
+                                let i: usize = event_target_value(&ev).parse().unwrap_or(0);
+                                goto_lesson(i);
+                            }>
+                            {lessons_sv.with_value(|ls| ls.iter().enumerate().map(|(i, l)| view! {
+                                <option value=i.to_string()>
+                                    {format!("Шаг {}/{total}: {}", i + 1, l.title)}
+                                </option>
+                            }).collect_view())}
+                        </select>
                     </div>
                     <div class="board-area">
                     <div class="board-wrap" class:faded=move || fading.get()>
@@ -946,19 +982,9 @@ pub(crate) fn App() -> impl IntoView {
                     // Навигация по шагам — стрелки по краям доски.
                     <button class="nav-arrow left" title="Назад"
                         on:click=move |_| {
-                            // Назад — мгновенно: ставим позицию и показываем её кости.
-                            epoch.update_value(|e| *e += 1);
-                            animating.set(false);
-                            rolling.set(false);
-                            tut_sel.set(false);
-                            tut_played.set(0);
-                            tut_pick.set(None);
+                            // Назад — через тот же fade-переход, что и выпадающий список.
                             let i = lesson_idx.get_untracked().saturating_sub(1);
-                            lesson_idx.set(i);
-                            lessons_sv.with_value(|ls| {
-                                game.set(Game::new(ls[i].before.clone()));
-                                roll.set(ls[i].roll);
-                            });
+                            goto_lesson(i);
                         }>"◀"</button>
                     <button class="nav-arrow right" title="Далее"
                         on:click=move |_| play_submoves(usize::MAX)>"▶"</button>
