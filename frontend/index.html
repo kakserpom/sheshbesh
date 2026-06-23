@@ -54,6 +54,12 @@
     .rules .lead { color: #94a3b8; font-style: italic; }
     .rules ul { margin: .2rem 0; padding-left: 1.2rem; }
     .rules li { margin: .25rem 0; }
+    /* Фиксированная высота подвала: текст/подсказка урока меняются, но не отнимают
+       высоту у доски (иначе её масштаб скакал бы между шагами). */
+    .lesson-foot {
+      flex: 0 0 7.5rem; height: 7.5rem; overflow-y: auto; width: 100%;
+      display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    }
     .lesson-text { max-width: 40rem; margin: .4rem auto .6rem; line-height: 1.45; color: #cbd5e1; text-align: center; padding: 0 1rem; }
     .nav-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 2.6rem; height: 2.6rem; border-radius: 50%; font-size: 1.3rem; opacity: .85; }
     .nav-arrow.left { left: .2rem; }
@@ -189,7 +195,7 @@
       box-sizing: border-box;
     }
     /* Кости — HTML-оверлей над доской, спозиционированный по координатам viewBox. */
-    .board-dice { position: absolute; transform: translate(-50%, -50%); pointer-events: none; --die: 6cqmin; }
+    .board-dice { position: absolute; transform: translate(-50%, -50%); pointer-events: none; --die: 5cqmin; }
     /* На вертикальных сторонах (Дом слева/справа) кости разворачиваем поперёк. */
     .board-dice.vert { transform: translate(-50%, -50%) rotate(90deg); }
     .track { fill: #1e293b; stroke: #334155; stroke-width: .03; }

@@ -62,7 +62,7 @@ pub(crate) fn moon_arc_point(side: Side, t: f64) -> (f64, f64) {
     let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
     let dir = (c - mid.0, c - mid.1);
     let len = (dir.0 * dir.0 + dir.1 * dir.1).sqrt().max(1e-3);
-    let ctrl = (mid.0 + dir.0 / len * 9.0, mid.1 + dir.1 / len * 9.0);
+    let ctrl = (mid.0 + dir.0 / len * 10.5, mid.1 + dir.1 / len * 10.5);
     bez(p0, ctrl, p2, t)
 }
 
@@ -84,7 +84,7 @@ pub(crate) fn moon_arc(side: Side) -> ArcGeom {
     let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
     let dir = (c - mid.0, c - mid.1);
     let len = (dir.0 * dir.0 + dir.1 * dir.1).sqrt().max(1e-3);
-    let ctrl = (mid.0 + dir.0 / len * 9.0, mid.1 + dir.1 / len * 9.0);
+    let ctrl = (mid.0 + dir.0 / len * 10.5, mid.1 + dir.1 / len * 10.5);
     let path = format!(
         "M {:.2} {:.2} Q {:.2} {:.2} {:.2} {:.2}",
         p0.0, p0.1, ctrl.0, ctrl.1, p2.0, p2.1

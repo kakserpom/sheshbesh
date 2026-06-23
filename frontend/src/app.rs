@@ -932,6 +932,9 @@ pub(crate) fn App() -> impl IntoView {
                         on:click=move |_| play_submoves(usize::MAX)>"▶"</button>
                     </div>
                     </div>
+                    // Подвал урока фиксированной высоты — текст/подсказка меняются, но
+                    // не отнимают высоту у доски (иначе её масштаб скакал бы).
+                    <div class="lesson-foot">
                     <p class="lesson-text">{move || {
                         // Пока кости кувыркаются — нейтральная заглушка: текст урока
                         // называет выпавшие значения и спойлерил бы ещё не вставший бросок.
@@ -963,6 +966,7 @@ pub(crate) fn App() -> impl IntoView {
                             ().into_any()
                         }
                     })}
+                    </div>
                 }
             })}
 
