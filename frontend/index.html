@@ -42,6 +42,12 @@
       --panel: #123227; --panel-bg: #0a1f17; --border: #1f5c45;
       --die-bg: #e2e8f0; --die-edge: #94a3b8;
     }
+    /* Плавная смена темы: переход только цветовых свойств — позиции фишек (cx/cy),
+       прозрачность и трансформации не затрагиваются (у них свои переходы/анимации). */
+    * {
+      transition: background-color .4s ease, color .4s ease, fill .4s ease,
+                  stroke .4s ease, border-color .4s ease;
+    }
     html, body { height: 100%; }
     body {
       margin: 0;
