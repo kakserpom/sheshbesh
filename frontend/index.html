@@ -63,12 +63,12 @@
     .tutorial-hl { stroke: #facc15; stroke-width: .08; opacity: .9; }
     @keyframes hl-pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
     .tutorial-hl { animation: hl-pulse 1.4s ease-in-out infinite; }
-    .dice { display: inline-flex; gap: .55rem; perspective: 600px; }
-    .die { width: 1.8rem; height: 1.8rem; }
+    .dice { display: inline-flex; gap: calc(var(--die) * .3); perspective: calc(var(--die) * 20); }
+    .die { width: var(--die); height: var(--die); }
     .die-body { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 3; }
     .die-pip { fill: #0f172a; }
     /* Настоящий 3D-кубик: 6 граней, кувыркается при броске и встаёт нужной гранью */
-    .die3d { width: 1.8rem; height: 1.8rem; perspective: 600px; }
+    .die3d { width: var(--die); height: var(--die); perspective: calc(var(--die) * 20); }
     /* transform-style тут, а сама анимация (вариант/длительность/задержка) —
        инлайном в die3d, чтобы каждая кость кувыркалась по-своему. */
     .cube { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; }
@@ -77,12 +77,12 @@
       backface-visibility: hidden;
     }
     .face .die { width: 100%; height: 100%; display: block; }
-    .f-front  { transform: translateZ(.9rem); }
-    .f-back   { transform: rotateY(180deg) translateZ(.9rem); }
-    .f-right  { transform: rotateY(90deg)  translateZ(.9rem); }
-    .f-left   { transform: rotateY(-90deg) translateZ(.9rem); }
-    .f-top    { transform: rotateX(90deg)  translateZ(.9rem); }
-    .f-bottom { transform: rotateX(-90deg) translateZ(.9rem); }
+    .f-front  { transform: translateZ(calc(var(--die) / 2)); }
+    .f-back   { transform: rotateY(180deg) translateZ(calc(var(--die) / 2)); }
+    .f-right  { transform: rotateY(90deg)  translateZ(calc(var(--die) / 2)); }
+    .f-left   { transform: rotateY(-90deg) translateZ(calc(var(--die) / 2)); }
+    .f-top    { transform: rotateX(90deg)  translateZ(calc(var(--die) / 2)); }
+    .f-bottom { transform: rotateX(-90deg) translateZ(calc(var(--die) / 2)); }
     /* Несколько траекторий кувырка (доп. обороты кратны 360°, поэтому итоговая
        грань не меняется); вариант выбирается случайно для каждой кости. */
     @keyframes die-roll-a {
@@ -181,6 +181,7 @@
       position: relative;
       aspect-ratio: 1 / 1; height: 100%; width: auto;
       max-width: 100%; max-height: 100%;
+      container-type: size; /* единицы cqmin для костей — масштаб вместе с доской */
     }
     .board {
       width: 100%; height: 100%;
@@ -188,7 +189,7 @@
       box-sizing: border-box;
     }
     /* Кости — HTML-оверлей над доской, спозиционированный по координатам viewBox. */
-    .board-dice { position: absolute; transform: translate(-50%, -50%); pointer-events: none; }
+    .board-dice { position: absolute; transform: translate(-50%, -50%); pointer-events: none; --die: 6cqmin; }
     /* На вертикальных сторонах (Дом слева/справа) кости разворачиваем поперёк. */
     .board-dice.vert { transform: translate(-50%, -50%) rotate(90deg); }
     .track { fill: #1e293b; stroke: #334155; stroke-width: .03; }
