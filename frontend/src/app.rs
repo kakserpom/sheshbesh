@@ -833,8 +833,21 @@ pub(crate) fn App() -> impl IntoView {
                         }
                         lesson_idx.set(i);
                         lessons_sv.with_value(|ls| {
-                            game.set(Game::new(ls[i].before.clone()));
-                            roll.set(ls[i].roll);
+                            let l = &ls[i];
+                            if l.commit {
+                                // Прыжок на шаг-выкуп: соперник УЖЕ выкупил фишку (фаза 0
+                                // неинтерактивна), сразу даём игроку фазу 1 — обязательный
+                                // ход захватчика на 6 (иначе кликать было бы не по чему).
+                                let mut st = l.before.clone();
+                                for mv in &l.moves {
+                                    st = apply(&st, *mv);
+                                }
+                                game.set(Game::new(st));
+                                tut_played.set(1);
+                            } else {
+                                game.set(Game::new(l.before.clone()));
+                            }
+                            roll.set(l.roll);
                         });
                         TimeoutFuture::new(FADE_MS).await;
                         if epoch.get_value() == era {
