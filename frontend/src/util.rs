@@ -70,7 +70,7 @@ pub(crate) const HOLD_NOMOVE_MS: u32 = 1800;
 /// Пауза на один шаг фишки по клетке, мс.
 pub(crate) const HOLD_STEP_MS: u32 = 570;
 /// Длительность гашения/проявления доски на кадре-«телепорте», мс (см. CSS `.board-wrap`).
-pub(crate) const FADE_MS: u32 = 220;
+pub(crate) const FADE_MS: u32 = 450;
 
 /// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 pub(crate) fn seed() -> u64 {
