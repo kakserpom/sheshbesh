@@ -815,9 +815,11 @@ pub(crate) fn App() -> impl IntoView {
                         }
                     });
                 };
-                // Прыжок на произвольный шаг (выпадающий список и кнопка ◀). Состояние
-                // ставим СРАЗУ (надёжно — без таймеров, которые могли «потеряться» и
-                // оставить шаг неинтерактивным), доску лишь кратко гасим для плавности.
+                // Прыжок на произвольный шаг (выпадающий список и кнопка ◀): сперва
+                // ГАСИМ доску (fade-out), затем — пока она невидима — меняем расстановку
+                // «вслепую», и только потом ПРОЯВЛЯЕМ (fade-in). Так нет «перелёта» фишек
+                // и доска не подменяется на глазах. Смену делает только АКТУАЛЬНА
+                // навигация (проверка `era`); если её сменила новая — та поставит своё.
                 let goto_lesson = move |i: usize| {
                     epoch.update_value(|e| *e += 1);
                     let era = epoch.get_value();
@@ -825,31 +827,35 @@ pub(crate) fn App() -> impl IntoView {
                     rolling.set(false);
                     tut_sel.set(false);
                     tut_pick.set(None);
-                    fading.set(true); // подавляет переход позиций — фишки не «перелетают»
-                    lesson_idx.set(i);
-                    lessons_sv.with_value(|ls| {
-                        let l = &ls[i];
-                        if l.commit {
-                            // Прыжок на шаг-выкуп: соперник УЖЕ выкупил фишку (фаза 0
-                            // неинтерактивна), сразу даём игроку фазу 1 — обязательный
-                            // ход захватчика на 6 (иначе кликать было бы не по чему).
-                            let mut st = l.before.clone();
-                            for mv in &l.moves {
-                                st = apply(&st, *mv);
-                            }
-                            game.set(Game::new(st));
-                            tut_played.set(1);
-                        } else {
-                            game.set(Game::new(l.before.clone()));
-                            tut_played.set(0);
-                        }
-                        roll.set(l.roll);
-                    });
-                    // Снимаем гашение в следующем кадре: позиции уже встали «вслепую».
+                    fading.set(true); // 1) fade-out
                     spawn_local(async move {
-                        TimeoutFuture::new(FADE_MS).await;
+                        TimeoutFuture::new(FADE_MS).await; // ждём, пока доска погаснет
+                        if epoch.get_value() != era {
+                            return; // навигацию сменила новая — она поставит своё состояние
+                        }
+                        // 2) доска невидима — меняем расстановку «вслепую».
+                        lesson_idx.set(i);
+                        lessons_sv.with_value(|ls| {
+                            let l = &ls[i];
+                            if l.commit {
+                                // Шаг-выкуп: соперник УЖЕ выкупил фишку (фаза 0 неинтерактивна),
+                                // сразу даём игроку фазу 1 — обязательный ход захватчика на 6.
+                                let mut st = l.before.clone();
+                                for mv in &l.moves {
+                                    st = apply(&st, *mv);
+                                }
+                                game.set(Game::new(st));
+                                tut_played.set(1);
+                            } else {
+                                game.set(Game::new(l.before.clone()));
+                                tut_played.set(0);
+                            }
+                            roll.set(l.roll);
+                        });
+                        // 3) даём кадр на отрисовку новой расстановки и проявляем доску.
+                        TimeoutFuture::new(30).await;
                         if epoch.get_value() == era {
-                            fading.set(false);
+                            fading.set(false); // fade-in
                         }
                     });
                 };
