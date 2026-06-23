@@ -1171,6 +1171,21 @@ pub(crate) fn App() -> impl IntoView {
                     {move || if sound.get() { "🔊" } else { "🔇" }}
                 </button>
                 <button class="icon-btn" title="Настройки" on:click=move |_| settings_open.set(true)>"⚙"</button>
+                // Тема оформления — палитра с выпадающим списком (так же, как в меню).
+                <div class="theme-pick">
+                    <button class="icon-btn" title="Тема оформления"
+                        on:click=move |_| theme_menu.update(|o| *o = !*o)>"🎨"</button>
+                    {move || theme_menu.get().then(|| view! {
+                        <div class="theme-menu">
+                            {Theme::ALL.into_iter().map(|t| view! {
+                                <button class:on=move || theme.get() == t
+                                    on:click=move |_| { theme.set(t); theme_menu.set(false); }>
+                                    {t.label()}
+                                </button>
+                            }).collect_view()}
+                        </div>
+                    })}
+                </div>
                 // Технический лог партии — только в отладочной сборке.
                 {cfg!(debug_assertions).then(|| view! {
                     <button class="icon-btn" class:on=move || show_log.get() title="Лог партии" on:click=move |_| show_log.update(|v| *v = !*v)>"📋"</button>
@@ -1188,12 +1203,14 @@ pub(crate) fn App() -> impl IntoView {
                     </div>
                     <div class="set-group">
                         <span class="set-name">"Скорость"</span>
-                        <div class="seg">
-                            {Speed::ALL.into_iter().map(|s| view! {
-                                <button class:on=move || speed.get() == s
-                                    on:click=move |_| speed.set(s)>{s.label()}</button>
-                            }).collect_view()}
-                        </div>
+                        <input type="range" class="speed-slider"
+                            min="0" max=move || (Speed::ALL.len() - 1).to_string() step="1"
+                            prop:value=move || speed.get().index().to_string()
+                            on:input=move |ev| {
+                                let i: usize = event_target_value(&ev).parse().unwrap_or(2);
+                                speed.set(Speed::from_index(i));
+                            } />
+                        <span class="speed-val">{move || speed.get().label()}</span>
                     </div>
                 </div>
             })}

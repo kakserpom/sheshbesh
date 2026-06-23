@@ -44,47 +44,73 @@ impl Theme {
 
 // --- Скорость анимации -------------------------------------------------------
 
+/// Скорость анимации — несколько дискретных положений ползунка (0 — медленнее).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Speed {
+    VerySlow,
     Slow,
     Normal,
     Fast,
+    VeryFast,
 }
 
 impl Speed {
-    pub(crate) const ALL: [Speed; 3] = [Speed::Slow, Speed::Normal, Speed::Fast];
+    pub(crate) const ALL: [Speed; 5] = [
+        Speed::VerySlow,
+        Speed::Slow,
+        Speed::Normal,
+        Speed::Fast,
+        Speed::VeryFast,
+    ];
+
+    /// Положение на ползунке (0..=4).
+    pub(crate) fn index(self) -> usize {
+        Speed::ALL.iter().position(|&s| s == self).unwrap_or(2)
+    }
+
+    pub(crate) fn from_index(i: usize) -> Speed {
+        Speed::ALL.get(i).copied().unwrap_or(Speed::Normal)
+    }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Speed::VerySlow => "Очень медленно",
             Speed::Slow => "Медленно",
             Speed::Normal => "Обычная",
             Speed::Fast => "Быстро",
+            Speed::VeryFast => "Очень быстро",
         }
     }
 
     pub(crate) fn key(self) -> &'static str {
         match self {
+            Speed::VerySlow => "vslow",
             Speed::Slow => "slow",
             Speed::Normal => "normal",
             Speed::Fast => "fast",
+            Speed::VeryFast => "vfast",
         }
     }
 
     /// Множитель пауз между кадрами (1.0 — базовая скорость).
     pub(crate) fn factor(self) -> f64 {
         match self {
-            Speed::Slow => 1.7,
+            Speed::VerySlow => 2.4,
+            Speed::Slow => 1.6,
             Speed::Normal => 1.0,
-            Speed::Fast => 0.5,
+            Speed::Fast => 0.6,
+            Speed::VeryFast => 0.32,
         }
     }
 
     /// Длительность CSS-перехода позиции фишки (`--move-dur`).
     fn move_dur(self) -> &'static str {
         match self {
-            Speed::Slow => "0.5s",
+            Speed::VerySlow => "0.7s",
+            Speed::Slow => "0.48s",
             Speed::Normal => "0.32s",
-            Speed::Fast => "0.16s",
+            Speed::Fast => "0.18s",
+            Speed::VeryFast => "0.1s",
         }
     }
 
