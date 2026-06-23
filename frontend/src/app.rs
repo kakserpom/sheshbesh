@@ -93,6 +93,14 @@ pub(crate) fn App() -> impl IntoView {
     });
     Effect::new(move |_| settings::save_sound(sound.get()));
 
+    // Escape закрывает лог партии (и панель настроек, если открыта).
+    window_event_listener(leptos::ev::keydown, move |e| {
+        if e.key() == "Escape" {
+            show_log.set(false);
+            settings_open.set(false);
+        }
+    });
+
     // Следим за финишами: запоминаем порядок финиша, а по окончании партии (с учётом
     // режима) выводим итоговую реплику.
     Effect::new(move |_| {
@@ -1165,7 +1173,7 @@ pub(crate) fn App() -> impl IntoView {
                 <button class="icon-btn" title="Настройки" on:click=move |_| settings_open.set(true)>"⚙"</button>
                 // Технический лог партии — только в отладочной сборке.
                 {cfg!(debug_assertions).then(|| view! {
-                    <button class="icon-btn" title="Лог партии" on:click=move |_| show_log.set(true)>"📋"</button>
+                    <button class="icon-btn" class:on=move || show_log.get() title="Лог партии" on:click=move |_| show_log.update(|v| *v = !*v)>"📋"</button>
                 })}
                 </div>
                 <span class="herald" inner_html=move || herald.get()></span>
