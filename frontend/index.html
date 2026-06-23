@@ -16,6 +16,10 @@
       --corner: #334155; --corner-edge: #475569;
       --panel: #1e293b; --panel-bg: #0f172a; --border: #334155;
       --die-bg: #e2e8f0; --die-edge: #94a3b8;
+      /* Особые клетки доски (адаптируются под тему). */
+      --moon: #60a5fa; --moon-fill: #0e2038; --moon-num: #93c5fd;
+      --prison: #2a3344; --prison-edge: #8b9bb4;
+      --cage: #1a2230; --cage-edge: #8b9bb4;
     }
     :root[data-theme="daylight"] {
       color-scheme: light;
@@ -24,6 +28,9 @@
       --corner: #c4d0e0; --corner-edge: #56688a;
       --panel: #ffffff; --panel-bg: #eef3f9; --border: #aebed4;
       --die-bg: #ffffff; --die-edge: #475569;
+      --moon: #1d4ed8; --moon-fill: #d4e3fb; --moon-num: #1e3a8a;
+      --prison: #9aa7bd; --prison-edge: #51617d;
+      --cage: #aab5c8; --cage-edge: #51617d;
     }
     :root[data-theme="forest"] {
       color-scheme: dark;
@@ -261,14 +268,14 @@
     .corner { fill: var(--corner); stroke: var(--corner-edge); stroke-width: .03; }
     .home-gate { fill: var(--cell); stroke-width: .06; } /* цвет рамки — через атрибут (цвет игрока) */
     .home-slot { stroke-width: .06; fill-opacity: .18; } /* цвет — через атрибут */
-    .prison { fill: #2a3344; stroke: #8b9bb4; stroke-width: .05; }
-    .cage { fill: #1a2230; stroke: #8b9bb4; stroke-width: .06; }
-    .cage-bar { stroke: #8b9bb4; stroke-width: .04; opacity: .7; }
-    .moon-end { fill: #15233b; stroke: #60a5fa; stroke-width: .05; }
-    .moon-arc { fill: none; stroke: #60a5fa; stroke-width: .05; stroke-dasharray: .25 .2; opacity: .85; }
-    .moon-arrow { fill: #60a5fa; }
-    .moon-field { fill: #0b1830; stroke: #60a5fa; stroke-width: .05; }
-    .moon-num { fill: #93c5fd; font-size: .42px; text-anchor: middle; dominant-baseline: central; }
+    .prison { fill: var(--prison); stroke: var(--prison-edge); stroke-width: .05; }
+    .cage { fill: var(--cage); stroke: var(--cage-edge); stroke-width: .06; }
+    .cage-bar { stroke: var(--cage-edge); stroke-width: .04; opacity: .7; }
+    .moon-end { fill: var(--moon-fill); stroke: var(--moon); stroke-width: .05; }
+    .moon-arc { fill: none; stroke: var(--moon); stroke-width: .06; stroke-dasharray: .25 .2; opacity: .95; }
+    .moon-arrow { fill: var(--moon); }
+    .moon-field { fill: var(--moon-fill); stroke: var(--moon); stroke-width: .05; }
+    .moon-num { fill: var(--moon-num); font-size: .42px; text-anchor: middle; dominant-baseline: central; }
     /* Фишки: отдельный слой с плавным переходом позиции (анимация хода) */
     .piece {
       stroke: #0009; stroke-width: .05;
