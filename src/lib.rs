@@ -28,7 +28,10 @@ pub use ai::Heuristic;
 pub use board::{CellKind, PerimeterIdx, Side};
 pub use dice::{DiceRoll, Die};
 pub use encode::{FEATURES, encode, encode_into, rotate_state};
-pub use eval::{match_winrate, play_game, play_game_2p, winrate_ffa, winrate_teams};
+pub use eval::{
+    match_winrate, play_game, play_game_2p, winrate_ffa, winrate_ffa_vs, winrate_teams,
+    winrate_teams_vs,
+};
 pub use learn::{
     LinearValue, MlpValue, TdConfig, TdModel, train, train_mlp, train_with, train_with_progress,
 };

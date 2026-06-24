@@ -124,6 +124,19 @@ pub fn winrate_ffa<V: Value>(
     seed: u64,
     max_turns: usize,
 ) -> (usize, usize) {
+    winrate_ffa_vs(model, &Heuristic, active, games, seed, max_turns)
+}
+
+/// Как `winrate_ffa`, но противники на остальных местах — произвольная ценность `opp`
+/// (а не обязательно эвристика). Нужно, чтобы стравливать две обучаемые модели.
+pub fn winrate_ffa_vs<V: Value, O: Value>(
+    model: &V,
+    opp: &O,
+    active: &[Side],
+    games: usize,
+    seed: u64,
+    max_turns: usize,
+) -> (usize, usize) {
     let mut wins = 0;
     for g in 0..games {
         let seat = active[g % active.len()];
@@ -132,14 +145,14 @@ pub fn winrate_ffa<V: Value>(
             if side == seat {
                 best_turn(model, st, turns)
             } else {
-                best_turn(&Heuristic, st, turns)
+                best_turn(opp, st, turns)
             }
         };
         let forced = |side: Side, st: &GameState, moves: &[Move]| {
             if side == seat {
                 best_forced(model, st, side, moves)
             } else {
-                best_forced(&Heuristic, st, side, moves)
+                best_forced(opp, st, side, moves)
             }
         };
         if play_game(active, false, &mut dice, max_turns, choose, forced).contains(&seat) {
@@ -157,6 +170,18 @@ pub fn winrate_teams<V: Value>(
     seed: u64,
     max_turns: usize,
 ) -> (usize, usize) {
+    winrate_teams_vs(model, &Heuristic, games, seed, max_turns)
+}
+
+/// Как `winrate_teams`, но вражеская команда играет произвольной ценностью `opp`
+/// (а не эвристикой). Нужно, чтобы стравливать две обучаемые модели.
+pub fn winrate_teams_vs<V: Value, O: Value>(
+    model: &V,
+    opp: &O,
+    games: usize,
+    seed: u64,
+    max_turns: usize,
+) -> (usize, usize) {
     let active = Side::ALL.to_vec();
     let mut wins = 0;
     for g in 0..games {
@@ -167,14 +192,14 @@ pub fn winrate_teams<V: Value>(
             if is_model(side) {
                 best_turn(model, st, turns)
             } else {
-                best_turn(&Heuristic, st, turns)
+                best_turn(opp, st, turns)
             }
         };
         let forced = |side: Side, st: &GameState, moves: &[Move]| {
             if is_model(side) {
                 best_forced(model, st, side, moves)
             } else {
-                best_forced(&Heuristic, st, side, moves)
+                best_forced(opp, st, side, moves)
             }
         };
         if play_game(&active, true, &mut dice, max_turns, choose, forced)
