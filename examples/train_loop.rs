@@ -5,15 +5,22 @@
 //! каждого режима сохраняются в `frontend/src/model*.bin` (после — `trunk build`, чтобы
 //! GUI подхватил их).
 //!
-//! Запуск: `cargo run --release --example train_loop`  (Ctrl+C — остановить).
+//! Запуск: `cargo run --release --example train_loop`.
 //! Аргументы (опц.): `<поколений> <партий-обучения> <партий-оценки>`.
 //! Без `<поколений>` — бесконечно. Пример быстрой проверки: `… train_loop 1 500 100`.
+//!
+//! **Штатная остановка:** Ctrl+C — доигрывает текущий режим (чтобы не бросать
+//! недосчитанную модель) и выходит из цикла; повторный Ctrl+C — выход немедленно.
+//! Сохранение **атомарное** (временный файл → `rename`), поэтому прерывание не может
+//! оставить повреждённый `.bin`.
 
 use sheshbesh::{
     Heuristic, MlpValue, Side, TdConfig, ValueAgent, match_winrate, train_with, winrate_ffa,
     winrate_teams,
 };
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Скрытых нейронов MLP (как в `export_model.rs`); используется при холодном старте.
 const HIDDEN: usize = 24;
@@ -42,12 +49,17 @@ fn load_or_init(path: &str) -> MlpValue {
     )
 }
 
+/// Атомарное сохранение: пишем во временный файл рядом, затем `rename` (на той же ФС
+/// — атомарная замена). Прерывание в любой момент оставляет либо старый, либо новый
+/// целый файл, но не обрезанный.
 fn save(path: &str, m: &MlpValue) {
     let mut bytes = Vec::new();
     for f in m.to_floats() {
         bytes.extend_from_slice(&f.to_le_bytes());
     }
-    std::fs::write(path, bytes).expect("write model");
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, &bytes).expect("write model (tmp)");
+    std::fs::rename(&tmp, path).expect("rename model into place");
 }
 
 /// Сила модели = доля побед против эвристики на фиксированном `seed` (для сравнимости
@@ -73,6 +85,22 @@ fn main() {
     // Принимаем кандидата только при перевесе НЕ меньше этого порога — иначе шум оценки
     // (винрейт в нардах гуляет на ±несколько %) гонял бы веса случайным блужданием.
     let margin = 0.02_f64;
+
+    // Штатная остановка по Ctrl+C: первый сигнал ставит флаг (цикл выйдет на ближайшей
+    // границе режима), второй — выходит немедленно.
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let stop = Arc::clone(&stop);
+        ctrlc::set_handler(move || {
+            if stop.swap(true, Ordering::SeqCst) {
+                std::process::exit(130);
+            }
+            eprintln!(
+                "\n[stop] Ctrl+C: доигрываю текущий режим и останавливаюсь (ещё раз — выход сразу)"
+            );
+        })
+        .expect("install Ctrl+C handler");
+    }
 
     let modes = [
         Mode {
@@ -112,11 +140,16 @@ fn main() {
     std::io::stdout().flush().ok();
 
     let mut generation = 1u64;
-    loop {
+    'gens: loop {
         if max_gens.is_some_and(|n| generation > n) {
             break;
         }
         for (i, md) in modes.iter().enumerate() {
+            // Остановка по Ctrl+C — на границе режима (текущий доигран и сохранён).
+            if stop.load(Ordering::SeqCst) {
+                println!("[stop] остановлено по запросу (поколение {generation})");
+                break 'gens;
+            }
             // Кандидат: продолжаем обучение из лучшей модели со свежим seed (исследование).
             let cfg = TdConfig {
                 games: train_games,
