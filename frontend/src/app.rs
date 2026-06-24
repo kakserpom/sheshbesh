@@ -12,8 +12,9 @@ use leptos::prelude::*;
 use sheshbesh::board::LOCAL_MOON;
 use sheshbesh::moves::{forced_six_moves, move_legal};
 use sheshbesh::{
-    Agent, BOARD_DIM, BOARD_MARGIN, DiceRoll, DiceSource, Die, Game, GameState, Heuristic, Move,
-    MoveKind, Position, RandomDice, Side, apply, best_forced, best_turn, legal_turns, margin_coord,
+    Agent, BOARD_DIM, BOARD_MARGIN, DEFAULT_WIDTH, DiceRoll, DiceSource, Die, Game, GameState,
+    Heuristic, Move, MoveKind, Position, RandomDice, Side, apply, best_forced, best_turn,
+    best_turn_2ply, legal_turns, margin_coord,
 };
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
@@ -299,7 +300,13 @@ pub(crate) fn App() -> impl IntoView {
         // Агент под алгоритм ходящей стороны и текущий режим (число сторон + команды).
         let algo = algos.get_untracked()[gg.state.to_move.index()];
         let m = ai_model_for(algo, gg.state.active.len(), teams.get_untracked());
-        let idx = best_turn(&m, &gg.state, &t).min(t.len() - 1);
+        // 2-плай expectiminimax поверх той же оценки, если выбран «MLP+поиск».
+        let idx = if algo.is_search() {
+            best_turn_2ply(&m, DEFAULT_WIDTH, &gg.state, &t)
+        } else {
+            best_turn(&m, &gg.state, &t)
+        }
+        .min(t.len() - 1);
         let played = t[idx].clone();
         let mut frames = Vec::new();
         commit_frames(&mut frames, &mut gg, r, played, &hs, true, |s, c, o| {

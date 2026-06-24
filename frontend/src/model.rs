@@ -14,8 +14,10 @@ pub(crate) static LIN_4P_TEAMS: &[u8] = include_bytes!("model_lin_4p_teams.bin")
 /// Алгоритм компьютера для одной стороны — выбирается в настройках.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Algo {
-    /// Однослойный перцептрон (по умолчанию, сильнейший).
+    /// Однослойный перцептрон (по умолчанию, сильнейший из «одноплайных»).
     Mlp,
+    /// MLP + 2-плай expectiminimax-поиск (сильнее, но считает дольше).
+    Search,
     /// Линейная TD(λ)-ценность (быстрее, чуть слабее).
     Linear,
     /// Жадная эвристика (без обучения).
@@ -23,14 +25,20 @@ pub(crate) enum Algo {
 }
 
 impl Algo {
-    pub(crate) const ALL: [Algo; 3] = [Algo::Mlp, Algo::Linear, Algo::Heuristic];
+    pub(crate) const ALL: [Algo; 4] = [Algo::Mlp, Algo::Search, Algo::Linear, Algo::Heuristic];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
             Algo::Mlp => "MLP",
+            Algo::Search => "MLP+поиск",
             Algo::Linear => "Linear",
             Algo::Heuristic => "Эвристика",
         }
+    }
+
+    /// Нужен ли 2-плай-поиск (а не жадный выбор по 1-плай).
+    pub(crate) fn is_search(self) -> bool {
+        self == Algo::Search
     }
 }
 
@@ -69,7 +77,8 @@ pub(crate) fn ai_model_for(algo: Algo, active_len: usize, teams: bool) -> Ai {
     };
     match algo {
         Algo::Heuristic => Ai::Heuristic(Heuristic),
-        Algo::Mlp => {
+        // 2-плай-поиск работает поверх MLP-оценки — модель та же.
+        Algo::Mlp | Algo::Search => {
             let bytes = [MODEL_2P, MODEL_3P, MODEL_4P, MODEL_4P_TEAMS][idx];
             Ai::Mlp(MlpValue::from_floats(&floats(bytes)))
         }

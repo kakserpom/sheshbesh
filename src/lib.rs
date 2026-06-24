@@ -12,6 +12,7 @@ pub mod eval;
 pub mod learn;
 pub mod moves;
 pub mod render;
+pub mod search;
 pub mod state;
 pub mod turn;
 pub mod value;
@@ -35,6 +36,7 @@ pub use moves::{Move, MoveKind, apply, legal_moves, legal_turns, max_pips};
 pub use render::{
     BOARD_DIM, BOARD_MARGIN, Glyph, board_glyphs, checker_cell, margin_coord, render,
 };
+pub use search::{DEFAULT_WIDTH, TwoPly, best_turn_2ply};
 pub use state::{Checker, GameState, MoonField, Position};
 pub use turn::{
     Agent, DiceSource, FirstChoice, Game, RandomDice, ScriptedDice, TurnOutcome, determine_first,
