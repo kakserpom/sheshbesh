@@ -6,10 +6,15 @@
 //! GUI подхватил их).
 //!
 //! Запуск: `cargo run --release --example train_loop`.
-//! Аргументы (опц.): `<поколений> <партий-обучения> <партий-оценки> <сидов-оценки>`.
+//! Аргументы (опц.): `<поколений> <партий-обучения> <партий-оценки> <сидов-оценки>
+//! <нейронов> <префикс-файлов>`.
 //! Без `<поколений>` — бесконечно. `<сидов-оценки>` (по умолчанию 4) — по скольки разным
-//! наборам бросков усредняется сила при гейтинге (надёжнее, но оценка дольше в эту же
-//! кратность). Пример быстрой проверки: `… train_loop 1 500 100 2`.
+//! наборам бросков усредняется сила при гейтинге. `<нейронов>` (по умолчанию 24) — размер
+//! скрытого слоя при ХОЛОДНОМ старте; чтобы обучить сеть другого размера, **обязательно**
+//! задай и **другой** `<префикс-файлов>` (по умолчанию `model`), иначе тёплый старт
+//! подхватит старые веса со старым размером. Пример: эксперимент с 48 нейронами в свои
+//! файлы — `… train_loop "" 10000 800 4 48 model_h48` (пустой 1-й арг = бесконечно).
+//! Быстрая проверка: `… train_loop 1 500 100 2`.
 //!
 //! **Штатная остановка:** Ctrl+C — доигрывает текущий режим (чтобы не бросать
 //! недосчитанную модель) и выходит из цикла; повторный Ctrl+C — выход немедленно.
@@ -24,23 +29,35 @@ use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Скрытых нейронов MLP (как в `export_model.rs`); используется при холодном старте.
+/// Скрытых нейронов MLP по умолчанию (как в `export_model.rs`); можно переопределить
+/// аргументом — при холодном старте сеть создаётся с этим числом нейронов.
 const HIDDEN: usize = 24;
 
 struct Mode {
     name: &'static str,
-    file: &'static str,
+    /// Суффикс файла модели режима: пусто для 2p, иначе `_3p` / `_4p` / `_4p_teams`.
+    tag: &'static str,
     active: Vec<Side>,
     teams: bool,
+}
+
+/// Путь к файлу весов: `frontend/src/{prefix}{tag}.bin`. `prefix` по умолчанию `model`
+/// (файлы GUI); для экспериментов с другим числом нейронов берётся свой prefix, чтобы
+/// не затирать базовые модели.
+fn model_path(prefix: &str, tag: &str) -> String {
+    format!("frontend/src/{prefix}{tag}.bin")
 }
 
 fn clone_model(m: &MlpValue) -> MlpValue {
     MlpValue::from_floats(&m.to_floats())
 }
 
-fn load_or_init(path: &str) -> MlpValue {
+/// Загружает модель из файла (число нейронов выводится из длины весов) либо создаёт
+/// новую с `hidden` нейронами (холодный старт). ВНИМАНИЕ: если файл существует, его
+/// `hidden` имеет приоритет — поэтому для нового размера сети нужен **новый** prefix.
+fn load_or_init(path: &str, hidden: usize) -> MlpValue {
     std::fs::read(path).ok().map_or_else(
-        || MlpValue::new(HIDDEN, 1),
+        || MlpValue::new(hidden, 1),
         |b| {
             let f: Vec<f32> = b
                 .chunks_exact(4)
@@ -140,6 +157,7 @@ fn head_to_head_avg(
         / n as f64
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let max_gens: Option<u64> = args.get(1).and_then(|s| s.parse().ok());
@@ -148,6 +166,11 @@ fn main() {
     // Сколько РАЗНЫХ наборов бросков усреднять при оценке (гейтинг тем надёжнее, чем
     // больше; цена — линейно дольше оценка). Итого на сравнение — `eval_games×eval_seeds`.
     let eval_seeds: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(4);
+    // Число нейронов скрытого слоя (для ХОЛОДНОГО старта). Эксперимент «больше нейронов»:
+    // задать другое значение И другой `prefix`, чтобы не затирать базовые модели.
+    let hidden: usize = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(HIDDEN);
+    // Префикс файлов весов (по умолчанию `model` — те, что грузит GUI).
+    let prefix: String = args.get(6).cloned().unwrap_or_else(|| "model".to_string());
     // Принимаем кандидата только при перевесе НЕ меньше этого порога — иначе шум оценки
     // (винрейт в нардах гуляет на ±несколько %) гонял бы веса случайным блужданием.
     let margin = 0.02_f64;
@@ -171,31 +194,39 @@ fn main() {
     let modes = [
         Mode {
             name: "2p",
-            file: "frontend/src/model.bin",
+            tag: "",
             active: vec![Side::A, Side::C],
             teams: false,
         },
         Mode {
             name: "3p",
-            file: "frontend/src/model_3p.bin",
+            tag: "_3p",
             active: vec![Side::A, Side::B, Side::C],
             teams: false,
         },
         Mode {
             name: "4p",
-            file: "frontend/src/model_4p.bin",
+            tag: "_4p",
             active: Side::ALL.to_vec(),
             teams: false,
         },
         Mode {
             name: "4p-teams",
-            file: "frontend/src/model_4p_teams.bin",
+            tag: "_4p_teams",
             active: Side::ALL.to_vec(),
             teams: true,
         },
     ];
 
-    let mut best: Vec<MlpValue> = modes.iter().map(|m| load_or_init(m.file)).collect();
+    let mut best: Vec<MlpValue> = modes
+        .iter()
+        .map(|m| load_or_init(&model_path(&prefix, m.tag), hidden))
+        .collect();
+    println!(
+        "[config] prefix={prefix} hidden(cold-start)={hidden} train={train_games} \
+         eval={eval_games}×{eval_seeds} сидов margin={:.0}%",
+        margin * 100.0
+    );
     for (md, m) in modes.iter().zip(&best) {
         println!(
             "[generation 0] {:>8}: старт {:.1}% против эвристики",
@@ -240,7 +271,7 @@ fn main() {
             let no_regress = cs >= bs - margin;
             let mark = if beats && no_regress {
                 best[i] = cand;
-                save(md.file, &best[i]);
+                save(&model_path(&prefix, md.tag), &best[i]);
                 "ПРИНЯТА → сохранена"
             } else {
                 "отклонена"
