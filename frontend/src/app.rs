@@ -1,4 +1,4 @@
-use crate::controls::{SoundControl, SpeedMenu, ThemeControl};
+use crate::controls::{SoundControl, SpeedControl, SpeedMenu, ThemeControl};
 use crate::demo::*;
 use crate::geom::*;
 use crate::lessons::*;
@@ -356,11 +356,22 @@ pub(crate) fn App() -> impl IntoView {
             // затем показывается результат и включается выбор хода.
             let era = epoch.get_value();
             animating.set(true);
+            // Бросок игрока уважает выбранную скорость (как у компьютера): паузы
+            // масштабируются `factor`, а на максимальной скорости бросок мгновенный
+            // (кубик не кувыркается).
+            let factor = speed.get_untracked().factor();
+            let instant = speed.get_untracked() == Speed::VeryFast;
+            let roll_ms = if instant {
+                70
+            } else {
+                (f64::from(ROLL_ANIM_MS) * factor) as u32
+            };
+            let nomove_ms = (f64::from(HOLD_NOMOVE_MS) * factor) as u32;
             spawn_local(async move {
                 herald.set(format!("{name} бросает кости…"));
                 roll.set(Some(r));
-                rolling.set(true);
-                TimeoutFuture::new(ROLL_ANIM_MS).await;
+                rolling.set(!instant);
+                TimeoutFuture::new(roll_ms).await;
                 // Новая партия началась за время броска — прекращаем.
                 if epoch.get_value() != era {
                     return;
@@ -370,7 +381,7 @@ pub(crate) fn App() -> impl IntoView {
                     // Ходить нечем: показываем бросок и САМИ пропускаем ход через паузу
                     // (без кнопки) — как это делает компьютер.
                     herald.set(format!("{name}: выпало {a} и {b}. Ходить нечем — пропуск."));
-                    TimeoutFuture::new(HOLD_NOMOVE_MS).await;
+                    TimeoutFuture::new(nomove_ms).await;
                     if epoch.get_value() != era {
                         return;
                     }
@@ -698,6 +709,8 @@ pub(crate) fn App() -> impl IntoView {
                             </button>
                         </div>
                     })}
+                    // Скорость анимации — видна сразу (ползунок, без кнопки).
+                    <div class="set-row"><SpeedControl speed/></div>
                     <button class="primary" on:click=start_game>"Начать игру"</button>
                     <div class="set-row">
                         <button on:click=move |_| {
