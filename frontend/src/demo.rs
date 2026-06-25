@@ -91,6 +91,34 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
     }
 }
 
+/// Расстановка для интерактивной проверки хода у Дома: у A (человек) две фишки вплотную
+/// к Дому (прогресс 71 и 69) и две уже в Доме (контекст; заход не завершает партию
+/// мгновенно). Бросок (1,2): фишкой с 71 можно ВСТАТЬ на ворота (1) и затем зайти в Дом,
+/// либо зайти сразу (2). Соперник C — в резерве, очередь у A.
+pub(crate) fn home_entry_test() -> GameState {
+    let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+    s.checkers.clear();
+    for progress in [71u16, 69] {
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress },
+        });
+    }
+    for depth in [2u8, 3] {
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::Home { depth },
+        });
+    }
+    for _ in 0..4 {
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::Reserve,
+        });
+    }
+    s
+}
+
 /// Партия-заготовка для демо-анимации: фишка A на дорожке съедает фишку C впереди
 /// (остальные — в Домах, чтобы не мешать). Бросок «3 и 1» делает ход однозначным.
 pub(crate) fn demo_capture() -> Game {

@@ -266,10 +266,11 @@ pub(crate) fn apply_with_frames(
     let mids: Vec<Position> = match state.checkers[mv.checker].pos {
         Position::OnTrack { progress } => {
             let target = progress + u16::from(mv.pips);
-            if target < perim {
-                // Ход по периметру (промежуточные клетки без конечной). При объединении
-                // костей фишка шагает по всем клеткам пути; спец-клетки, которые она лишь
-                // перешагивает, рисуются как обычные (`OnTrack` — на клетке, не в каземате).
+            if target <= perim {
+                // Ход по периметру (промежуточные клетки без конечной), включая остановку
+                // НА клетке входа в Дом (воротах, `target == PERIMETER`) обычным `Step`. При
+                // объединении костей фишка шагает по всем клеткам пути; спец-клетки, которые
+                // она лишь перешагивает, рисуются как обычные (`OnTrack` — на клетке).
                 let mut v: Vec<Position> = (progress + 1..target)
                     .map(|i| Position::OnTrack { progress: i })
                     .collect();
@@ -281,13 +282,15 @@ pub(crate) fn apply_with_frames(
                 }
                 v
             } else {
-                // Заход в Дом: периметр → клетка ВХОДА в Дом (ворота) → клетки Дома
-                // вглубь. Без «второго круга» по периметру.
-                let depth = (target - perim) as u8;
+                // Заход в Дом: периметр → клетка ВХОДА в Дом (ворота, progress == PERIMETER)
+                // → клетки Дома вглубь. Глубина 0 — на шаг ЗА воротами. Без «второго круга».
+                let depth = (target - perim - 1) as u8;
                 let mut v: Vec<Position> = (progress + 1..perim)
                     .map(|i| Position::OnTrack { progress: i })
                     .collect();
-                v.push(Position::OnTrack { progress: 0 }); // ворота = клетка входа
+                if progress < perim {
+                    v.push(Position::OnTrack { progress: perim }); // ворота (если не на них)
+                }
                 v.extend((0..depth).map(|d| Position::Home { depth: d }));
                 v
             }

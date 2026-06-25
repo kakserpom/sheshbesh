@@ -121,10 +121,14 @@ fn path_clear(state: &GameState, owner: Side, progress: u16, die: u8) -> bool {
             return false;
         }
     }
-    // Заход в Дом пересекает клетку ВХОДА (ворота, прогресс 0) и поворачивает внутрь;
-    // эта клетка — тоже промежуточная, её нельзя перепрыгивать (ворота — не угол).
-    // Без проверки чужая фишка, стоящая на клетке входа, «перепрыгивалась».
-    if target >= PERIMETER as u16 && occupied(state, owner.entry()) {
+    // Заход в Дом пересекает клетку ВХОДА (ворота, прогресс PERIMETER) и поворачивает
+    // внутрь; эта клетка — тоже промежуточная, её нельзя перепрыгивать (ворота — не угол).
+    // Условие именно `target > PERIMETER`: когда фишка лишь ВСТАЁТ на ворота
+    // (`target == PERIMETER`) — это её конечная клетка, а не «перепрыгивание»; а когда
+    // фишка УЖЕ на воротах (`progress == PERIMETER`) и заходит в Дом — она их не
+    // пересекает (стоит на них), поэтому собственная фишка на воротах не блокирует.
+    if target > PERIMETER as u16 && progress < PERIMETER as u16 && occupied(state, owner.entry())
+    {
         return false;
     }
     true
@@ -169,7 +173,11 @@ fn advance_on_track(state: &GameState, ci: usize, pips: u8) -> Option<Resolved> 
     if !path_clear(state, owner, progress, pips) {
         return None;
     }
-    if (target as usize) < PERIMETER {
+    // `target == PERIMETER` — это клетка ВХОДА в Дом (ворота): обычная клетка периметра,
+    // на которой можно ОСТАНОВИТЬСЯ (`advance(PERIMETER)` сворачивает на неё —
+    // `CellKind::HomeEntrance`). Сам заход в Дом — отдельный ход уже за воротами
+    // (`target > PERIMETER`), поэтому ворота — это нормальный `Step`, а не `EnterHome`.
+    if (target as usize) <= PERIMETER {
         let abs = owner.entry().advance(target as usize);
         let kind = cell_kind(abs);
         // Нельзя встать ВТОРОЙ своей фишкой на одну клетку. Исключения: угол
@@ -214,8 +222,9 @@ fn advance_on_track(state: &GameState, ci: usize, pips: u8) -> Option<Resolved> 
         // (target за пределами Дома → нелегально, и второго круга нет).
         // Дом — «коридор» вглубь: **нельзя перепрыгивать** занятые клетки
         // Дома, поэтому все клетки от входа (глубина 0) до целевой должны
-        // быть свободны.
-        let depth = (target as usize) - PERIMETER;
+        // быть свободны. Глубина 0 — на шаг за воротами (`PERIMETER + 1`): ворота —
+        // отдельная клетка периметра, на которой фишка останавливается перед Домом.
+        let depth = (target as usize) - PERIMETER - 1;
         let home_path_clear = (0..depth).all(|d| !home_depth_taken(state, owner, d as u8));
         if depth < HOME_DEPTH && !home_depth_taken(state, owner, depth as u8) && home_path_clear {
             Some(Resolved {
@@ -1086,15 +1095,16 @@ mod tests {
 
     #[test]
     fn enter_home_exact_and_occupancy() {
-        // progress 70 + 2 = 72 → Home depth 0.
+        // Ворота (клетка входа) — на progress 72; Дом начинается ЗА ними:
+        // progress 70 + 3 = 73 → Home depth 0.
         let s = state_a(&[Position::OnTrack { progress: 70 }]);
-        let mv = moves_for_die(&s, 2);
+        let mv = moves_for_die(&s, 3);
         assert!(mv.iter().any(|m| m.kind == MoveKind::EnterHome));
         assert_eq!(
             apply(&s, mv[0]).checkers[0].pos,
             Position::Home { depth: 0 }
         );
-        // Перебор (progress 71 + 6 = 77 → глубина 5) запрещён.
+        // Перебор (progress 71 + 6 = 77 → глубина 4, за Домом) запрещён.
         let s2 = state_a(&[Position::OnTrack { progress: 71 }]);
         assert!(moves_for_die(&s2, 6).is_empty());
         // Занятая клетка Дома блокирует заход на ту же глубину.
@@ -1103,9 +1113,31 @@ mod tests {
             Position::OnTrack { progress: 70 },
         ]);
         assert!(
-            !moves_for_die(&s3, 2)
+            !moves_for_die(&s3, 3)
                 .iter()
                 .any(|m| m.kind == MoveKind::EnterHome)
+        );
+    }
+
+    #[test]
+    fn stop_on_home_gate_then_enter() {
+        // Клетка входа в Дом (ворота) — обычная клетка периметра: на неё можно ВСТАТЬ
+        // (progress 71 + 1 = 72 → Step), а заход в Дом — отдельный ход уже с ворот.
+        let s = state_a(&[Position::OnTrack { progress: 71 }]);
+        let stop = moves_for_die(&s, 1);
+        assert_eq!(stop.len(), 1);
+        assert_eq!(stop[0].kind, MoveKind::Step);
+        let on_gate = apply(&s, stop[0]);
+        assert_eq!(
+            on_gate.checkers[0].pos,
+            Position::OnTrack { progress: PERIMETER as u16 }
+        );
+        // С ворот костью «1» — на глубину 0 Дома (отдельный заход).
+        let enter = moves_for_die(&on_gate, 1);
+        assert!(enter.iter().any(|m| m.kind == MoveKind::EnterHome));
+        assert_eq!(
+            apply(&on_gate, enter[0]).checkers[0].pos,
+            Position::Home { depth: 0 }
         );
     }
 
@@ -1149,8 +1181,8 @@ mod tests {
 
     #[test]
     fn max_move_uses_only_playable_die() {
-        // progress 70: «6» даёт перебор (нелегально), «2» заводит в Дом.
-        let s = state_a(&[Position::OnTrack { progress: 70 }]);
+        // progress 71: «6» даёт перебор (77 → за Домом), «2» заводит в Дом (73 → глубина 0).
+        let s = state_a(&[Position::OnTrack { progress: 71 }]);
         let turns = legal_turns(&s, roll(6, 2));
         assert_eq!(turns.len(), 1);
         assert_eq!(pips(&turns[0]), 2);
@@ -1158,13 +1190,13 @@ mod tests {
     }
     #[test]
     fn ransom_counts_toward_max_move() {
-        // A: пленник + фишка на progress 70. При 6-2 этой фишкой играется только «2»
-        // (заход в Дом; «6» — перебор за пределы Дома). Но выкуп пленника тратит «6»,
-        // поэтому правило максимального хода ОБЯЗЫВАЕТ выкупить (6) и сходить на 2 —
-        // суммарно 8 очков, а не просто 2.
+        // A: пленник + фишка на progress 71. При 6-2 этой фишкой играется только «2»
+        // (заход в Дом, 73 → глубина 0; «6» — перебор за пределы Дома). Но выкуп пленника
+        // тратит «6», поэтому правило максимального хода ОБЯЗЫВАЕТ выкупить (6) и сходить
+        // на 2 — суммарно 8 очков, а не просто 2.
         let s = state_a(&[
             Position::Captured { captor: Side::C },
-            Position::OnTrack { progress: 70 },
+            Position::OnTrack { progress: 71 },
         ]);
         assert_eq!(max_pips(&s, roll(6, 2)), 8);
         let turns = legal_turns(&s, roll(6, 2));

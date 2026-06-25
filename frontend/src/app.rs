@@ -781,6 +781,35 @@ pub(crate) fn App() -> impl IntoView {
         play(frames);
     };
 
+    // Тест входа в Дом: стартует ИНТЕРАКТИВНУЮ партию из расстановки, где фишки A стоят
+    // вплотную к Дому, с заранее заданным броском (1,2) — чтобы сразу проверить клик по
+    // клетке входа (воротам). Бросок задаём вручную, минуя авто-бросок (роль уже `Some`).
+    let home_test = move |_| {
+        epoch.update_value(|e| *e += 1);
+        animating.set(false);
+        let r = DiceRoll::new(Die::new(1).expect("1"), Die::new(2).expect("2"));
+        let st = home_entry_test();
+        let t = legal_turns(&st, r);
+        humans.set(vec![Side::A]);
+        finished.set(Vec::new());
+        dbg_log_reset();
+        dbg_log("[GAMELOG] === dev: home-entry test ===");
+        game.set(Game::new(st));
+        roll.set(Some(r));
+        turns.set(t);
+        prefix.set(Vec::new());
+        remaining.set(r.values().to_vec());
+        sel.set(None);
+        herald.set(
+            "Тест входа в Дом: клетка входа (ворота) — обычная клетка, на ней можно \
+             остановиться (Step); заход в Дом — отдельным ходом, по клетке Дома внутри."
+                .to_string(),
+        );
+        dev.set(false);
+        started.set(true);
+        kickoff();
+    };
+
     // Открыть/закрыть экран разработчика, показав состояние-заглушку.
     let open_dev = move |_| {
         epoch.update_value(|e| *e += 1);
@@ -1359,6 +1388,7 @@ pub(crate) fn App() -> impl IntoView {
                         }>{label}</button>
                     }).collect_view()}
                     <button on:click=anim_demo>"▶ Анимация: ход и съедание"</button>
+                    <button on:click=home_test>"🏠 Тест: вход в Дом (клик)"</button>
                 </div>
                 // Панель прослушивания звуков: по кнопке на каждое событие.
                 <div class="controls dev-controls">
