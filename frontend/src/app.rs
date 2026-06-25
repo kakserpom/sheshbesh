@@ -1522,6 +1522,53 @@ pub(crate) fn App() -> impl IntoView {
                     let cands = if active { step_opts(&turns.get(), &pre) } else { Vec::new() };
                     let cur = sel.get();
 
+                    // «Полный ход одной фишкой»: если все максимальные ходы ВЫБРАННОГО
+                    // источника `cur` двигают ОДНУ фишку целиком (после первого шага
+                    // продолжает та же фишка — в т.ч. «ввести из резерва и сходить введённой»),
+                    // дробить ход незачем: показываем только КОНЕЧНЫЕ клетки полного хода, а
+                    // промежуточные шаги скрываем (клик по конечной играет ход целиком через
+                    // объединение / combo-цель). Считаем «одна фишка на ход» (а не по индексу):
+                    // резервные фишки взаимозаменяемы, поэтому 4 варианта ввода — это всё ещё
+                    // «один полный ход». НЕ срабатывает, если ход можно РАЗБИТЬ на две фишки.
+                    let step = pre.len();
+                    let cur_turns: Vec<Vec<Move>> = match cur {
+                        Some(s) => turns
+                            .get()
+                            .into_iter()
+                            .filter(|t| {
+                                t.len() > step
+                                    && t[..step] == pre[..]
+                                    && move_source(&ps, t[step]) == s
+                            })
+                            .collect(),
+                        None => Vec::new(),
+                    };
+                    let forced_one = active
+                        && !cur_turns.is_empty()
+                        && cur_turns
+                            .iter()
+                            .all(|t| t[step..].iter().all(|m| m.checker == t[step].checker));
+                    let final_cells: Vec<(usize, usize)> = if forced_one {
+                        let mut v = Vec::new();
+                        for t in &cur_turns {
+                            let rest = &t[step..];
+                            let ci = rest[0].checker;
+                            let mut st = ps.clone();
+                            for &m in rest {
+                                st = apply(&st, m);
+                            }
+                            if let Sel::Cell(r, c) =
+                                sel_of(st.checkers[ci].owner, st.checkers[ci].pos)
+                                && !v.contains(&(r, c))
+                            {
+                                v.push((r, c));
+                            }
+                        }
+                        v
+                    } else {
+                        Vec::new()
+                    };
+
                     let mut srcs: Vec<(usize, usize)> = Vec::new();
                     let mut dsts: Vec<(usize, usize)> = Vec::new();
                     for &m in &cands {
@@ -1537,6 +1584,12 @@ pub(crate) fn App() -> impl IntoView {
                         {
                             dsts.push((r, c));
                         }
+                    }
+                    // Ход вынужденно одной фишкой → прячем промежуточные шаги, оставляя
+                    // только конечные клетки полного хода (combo-цели добавят те конечные,
+                    // что достижимы лишь последовательностью).
+                    if forced_one && !final_cells.is_empty() {
+                        dsts.retain(|cell| final_cells.contains(cell));
                     }
                     // «Ход сразу за обе кости» одной фишкой — конечные клетки как
                     // дополнительные цели (например, 1-1 → пройти Тюрьму насквозь на 2,
