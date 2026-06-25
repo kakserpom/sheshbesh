@@ -573,6 +573,102 @@ pub(crate) fn App() -> impl IntoView {
         play(frames);
     };
 
+    // Играет ОДНУ часть хода `m` (как клик по её цели): применяет её, при выкупе доигрывает
+    // обязательный ответ захватчика, и либо завершает ход, либо оставляет фокус на фишке.
+    // Общая для кликов и горячих клавиш; сама проверяет, что сейчас ход человека.
+    let play_part = move |m: Move| {
+        let g = game.get_untracked();
+        let hs = humans.get_untracked();
+        if animating.get_untracked()
+            || paused.get_untracked()
+            || game_over(&g.state, teams.get_untracked())
+            || !hs.contains(&g.state.to_move)
+            || roll.get_untracked().is_none()
+        {
+            return;
+        }
+        let r = roll.get_untracked().expect("roll");
+        let ps = g.state.clone();
+        let pre = prefix.get_untracked();
+        let mut frames = Vec::new();
+        let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs);
+        remaining.update(|rem| *rem = remaining_after(rem, m.pips));
+        if m.kind == MoveKind::Ransom {
+            let captor = match ps.checkers[m.checker].pos {
+                Position::Captured { captor } => captor,
+                _ => return,
+            };
+            let mut after = after;
+            let options = forced_six_moves(&after, captor);
+            if !options.is_empty() {
+                let cm = ai_model_for(
+                    algos.get_untracked()[captor.index()],
+                    after.active.len(),
+                    teams.get_untracked(),
+                );
+                let fidx = best_forced(&cm, &after, captor, &options).min(options.len() - 1);
+                after = apply_with_frames(&mut frames, after, options[fidx], r, &hs);
+                if let Some(last) = frames.last_mut() {
+                    last.note = Some(format!(
+                        "{}: обязательный ход на 6 после выкупа.",
+                        side_name(captor, &hs)
+                    ));
+                }
+            }
+            turn_start.set_value(after.clone());
+            let rem = remaining.get_untracked();
+            let new_turns = legal_turns_remaining(&after, &rem);
+            prefix.set(Vec::new());
+            sel.set(None);
+            if new_turns.iter().all(Vec::is_empty) {
+                finish(frames, after, Vec::new());
+            } else {
+                turns.set(new_turns);
+                play(frames);
+            }
+            return;
+        }
+        let mut np = pre.clone();
+        np.push(m);
+        let next_steps = step_opts(&turns.get_untracked(), &np);
+        if next_steps.is_empty() {
+            finish(frames, after, np);
+        } else {
+            let next_src = sel_of(after.checkers[m.checker].owner, after.checkers[m.checker].pos);
+            let keep = next_steps.iter().any(|&mv| move_source(&after, mv) == next_src);
+            prefix.set(np);
+            sel.set(keep.then_some(next_src));
+            play(frames);
+        }
+    };
+
+    // Играет всю последовательность `seq` одной фишкой («сразу за обе кости») и завершает
+    // ход. Без выкупов (`combo_targets` их исключает).
+    let play_full = move |seq: Vec<Move>| {
+        let g = game.get_untracked();
+        let hs = humans.get_untracked();
+        if seq.is_empty()
+            || animating.get_untracked()
+            || paused.get_untracked()
+            || game_over(&g.state, teams.get_untracked())
+            || !hs.contains(&g.state.to_move)
+            || roll.get_untracked().is_none()
+        {
+            return;
+        }
+        let r = roll.get_untracked().expect("roll");
+        let pre = prefix.get_untracked();
+        let mut frames = Vec::new();
+        let mut st = g.state.clone();
+        for &mv in &seq {
+            st = apply_with_frames(&mut frames, st, mv, r, &hs);
+            remaining.update(|rem| *rem = remaining_after(rem, mv.pips));
+        }
+        let mut played = pre.clone();
+        played.extend(seq);
+        finish(frames, st, played);
+    };
+
     // Применение выбранного ЧЕЛОВЕКОМ обязательного ответа на «6» (выкуп сделал
     // компьютер): проигрываем ответ, снимаем `forced_pick` и ПРОДОЛЖАЕМ ход компьютера
     // остатком костей (`play_computer`) — теперь компьютер решает остаток уже после ответа.
@@ -603,84 +699,16 @@ pub(crate) fn App() -> impl IntoView {
         {
             return;
         }
-        let r = roll.get_untracked().expect("roll");
         let ps = g.state.clone(); // доска уже продвинута применёнными частями хода
         let pre = prefix.get_untracked();
         let cands = step_opts(&turns.get_untracked(), &pre);
-        // Применяет выбранную часть хода `m`: проигрывает её и либо завершает ход, либо
-        // продолжает со следующей костью.
-        let apply_part = |m: Move| {
-            let mut frames = Vec::new();
-            let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs);
-            remaining.update(|rem| *rem = remaining_after(rem, m.pips));
-            // Выкуп: захватчик (компьютер) обязан тут же сходить на «6». Применяем его
-            // ответ сразу, пересчитываем остаток костей от нового состояния и даём
-            // человеку решать остаток уже после ответа (как в `play_computer`/движке).
-            if m.kind == MoveKind::Ransom {
-                let captor = match ps.checkers[m.checker].pos {
-                    Position::Captured { captor } => captor,
-                    _ => unreachable!("ransom of non-captured checker"),
-                };
-                let mut after = after;
-                let options = forced_six_moves(&after, captor);
-                if !options.is_empty() {
-                    let cm = ai_model_for(
-                        algos.get_untracked()[captor.index()],
-                        after.active.len(),
-                        teams.get_untracked(),
-                    );
-                    let fidx = best_forced(&cm, &after, captor, &options).min(options.len() - 1);
-                    after = apply_with_frames(&mut frames, after, options[fidx], r, &hs);
-                    if let Some(last) = frames.last_mut() {
-                        last.note = Some(format!(
-                            "{}: обязательный ход на 6 после выкупа.",
-                            side_name(captor, &hs)
-                        ));
-                    }
-                }
-                // Новый отсчёт хода: остаток костей от состояния после ответа.
-                turn_start.set_value(after.clone());
-                let rem = remaining.get_untracked();
-                let new_turns = legal_turns_remaining(&after, &rem);
-                prefix.set(Vec::new());
-                sel.set(None);
-                if new_turns.iter().all(Vec::is_empty) {
-                    finish(frames, after, Vec::new());
-                } else {
-                    turns.set(new_turns);
-                    play(frames);
-                }
-                return;
-            }
-            let mut np = pre.clone();
-            np.push(m);
-            // Ход завершён, когда префикс больше нечем продолжить. Длину сравнивать
-            // нельзя: объединение костей делает максимальные ходы разной длины
-            // (`[Step{a+b}]` и `[Step{a},Step{b}]` оба максимальны).
-            let next_steps = step_opts(&turns.get_untracked(), &np);
-            if next_steps.is_empty() {
-                finish(frames, after, np);
-            } else {
-                // Сохраняем фокус на той же фишке, если ею можно ходить дальше.
-                let next_src = sel_of(
-                    after.checkers[m.checker].owner,
-                    after.checkers[m.checker].pos,
-                );
-                let keep = next_steps
-                    .iter()
-                    .any(|&mv| move_source(&after, mv) == next_src);
-                prefix.set(np);
-                sel.set(keep.then_some(next_src));
-                play(frames);
-            }
-        };
         // Ход «на месте» (выход из Тюрьмы «зашёл-вышел»: источник == цель) исполняем
         // одним кликом по клетке — выбора цели нет.
         if let Some(&m) = cands
             .iter()
             .find(|&&m| move_source(&ps, m) == target && move_dest(&ps, m) == target)
         {
-            apply_part(m);
+            play_part(m);
             return;
         }
         // Ход сразу за обе кости одной фишкой: клик по конечной клетке проигрывает всю
@@ -690,15 +718,7 @@ pub(crate) fn App() -> impl IntoView {
                 .into_iter()
                 .find(|(d, _)| *d == target)
         {
-            let mut frames = Vec::new();
-            let mut st = ps.clone();
-            for &mv in &seq {
-                st = apply_with_frames(&mut frames, st, mv, r, &hs);
-                remaining.update(|rem| *rem = remaining_after(rem, mv.pips));
-            }
-            let mut played = pre.clone();
-            played.extend(seq);
-            finish(frames, st, played);
+            play_full(seq);
             return;
         }
         match sel.get_untracked() {
@@ -714,7 +734,7 @@ pub(crate) fn App() -> impl IntoView {
                     .find(|&&m| move_source(&ps, m) == src && move_dest(&ps, m) == target)
                     .copied();
                 if let Some(m) = found {
-                    apply_part(m);
+                    play_part(m);
                 } else if cands.iter().any(|&m| move_source(&ps, m) == target) {
                     sel.set(Some(target));
                 } else {
@@ -723,6 +743,119 @@ pub(crate) fn App() -> impl IntoView {
             }
         }
     };
+
+    // Горячие клавиши хода (только в партии, ход человека). Tab — следующая фишка по кругу;
+    // 1/2 — ход меньшей/большей ОСТАВШЕЙСЯ костью выбранной фишкой; 3 — обе кости выбранной
+    // фишкой; i — ввести фишку из резерва; r — выкупить свою пленную (если её держит один
+    // соперник). Используют те же `play_part`/`play_full`, что и клики.
+    window_event_listener(leptos::ev::keydown, move |e| {
+        if e.ctrl_key() || e.meta_key() || e.alt_key() {
+            return;
+        }
+        let in_field = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|el| matches!(el.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT"));
+        if in_field {
+            return;
+        }
+        let g = game.get_untracked();
+        let hs = humans.get_untracked();
+        if !started.get_untracked()
+            || tutorial.get_untracked()
+            || dev.get_untracked()
+            || animating.get_untracked()
+            || paused.get_untracked()
+            || rules.get_untracked()
+            || forced_pick.get_untracked().is_some()
+            || game_over(&g.state, teams.get_untracked())
+            || !hs.contains(&g.state.to_move)
+            || roll.get_untracked().is_none()
+        {
+            return;
+        }
+        let ps = g.state.clone();
+        let pre = prefix.get_untracked();
+        let cands = step_opts(&turns.get_untracked(), &pre);
+        let code = e.code();
+        match code.as_str() {
+            "Tab" => {
+                e.prevent_default();
+                // Источники-фишки НА ДОСКЕ (резерв/плен — отдельными клавишами i/r).
+                let mut sources: Vec<Sel> = Vec::new();
+                for &m in &cands {
+                    let s = move_source(&ps, m);
+                    if matches!(s, Sel::Cell(..)) && !sources.contains(&s) {
+                        sources.push(s);
+                    }
+                }
+                if sources.is_empty() {
+                    return;
+                }
+                let next = match sel.get_untracked() {
+                    Some(s) => sources
+                        .iter()
+                        .position(|&x| x == s)
+                        .map_or(0, |i| (i + 1) % sources.len()),
+                    None => 0,
+                };
+                sel.set(Some(sources[next]));
+            }
+            "Digit1" | "Numpad1" | "Digit2" | "Numpad2" => {
+                let Some(src) = sel.get_untracked() else {
+                    return;
+                };
+                let mut rem = remaining.get_untracked();
+                if rem.is_empty() {
+                    return;
+                }
+                rem.sort_unstable();
+                let smaller = matches!(code.as_str(), "Digit1" | "Numpad1");
+                let die = if smaller { rem[0] } else { rem[rem.len() - 1] };
+                if let Some(&m) = cands
+                    .iter()
+                    .find(|&&m| move_source(&ps, m) == src && m.pips == die)
+                {
+                    play_part(m);
+                }
+            }
+            "Digit3" | "Numpad3" => {
+                let Some(src) = sel.get_untracked() else {
+                    return;
+                };
+                if let Some((_, seq)) =
+                    combo_targets(&ps, &turns.get_untracked(), &pre, src).into_iter().next()
+                {
+                    play_full(seq);
+                }
+            }
+            "KeyI" => {
+                if let Some(&m) = cands.iter().find(|&&m| m.kind == MoveKind::Enter) {
+                    play_part(m);
+                }
+            }
+            "KeyR" => {
+                // Выкуп — только если нашу пленную фишку держит РОВНО ОДИН соперник.
+                let ransoms: Vec<Move> = cands
+                    .iter()
+                    .copied()
+                    .filter(|&m| m.kind == MoveKind::Ransom)
+                    .collect();
+                let mut captors: Vec<Side> = Vec::new();
+                for &m in &ransoms {
+                    if let Position::Captured { captor } = ps.checkers[m.checker].pos
+                        && !captors.contains(&captor)
+                    {
+                        captors.push(captor);
+                    }
+                }
+                if captors.len() == 1 {
+                    play_part(ransoms[0]);
+                }
+            }
+            _ => {}
+        }
+    });
 
     // Запуск партии по выбранным настройкам (число игроков и кто человек).
     let start_game = move |_| {
