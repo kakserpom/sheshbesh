@@ -1705,19 +1705,29 @@ pub(crate) fn App() -> impl IntoView {
                         } else {
                             None
                         };
-                        let Some(cls) = cls else { return };
+                        // КЛИКАБЕЛЬНА зона, пока она источник/цель/выбрана — даже когда
+                        // выбрана ДРУГАЯ фишка (иначе на резерв не кликнуть, не сняв фокус).
+                        // Подсветку же (рамку) рисуем только при наличии класса.
+                        let interactive = is_sel || is_dst || is_src;
+                        if !interactive {
+                            return;
+                        }
                         if boxed {
                             // Резерв обводим скруглённой рамкой по всему ряду (не кружком).
                             let (hw, hh) = res_half(side);
                             let (x, y, w, h) = (zx - hw, zy - hh, 2.0 * hw, 2.0 * hh);
-                            nodes.push(view! {
-                                <rect x=x y=y width=w height=h rx=0.28 ry=0.28 fill="none" class=cls />
-                            }.into_any());
+                            if let Some(cls) = cls {
+                                nodes.push(view! {
+                                    <rect x=x y=y width=w height=h rx=0.28 ry=0.28 fill="none" class=cls />
+                                }.into_any());
+                            }
                             nodes.push(view! {
                                 <rect x=x y=y width=w height=h class="hit" on:click=move |_| click(kind) />
                             }.into_any());
                         } else {
-                            nodes.push(ring_pt(zx, zy, cls));
+                            if let Some(cls) = cls {
+                                nodes.push(ring_pt(zx, zy, cls));
+                            }
                             nodes.push(view! {
                                 <circle cx=zx cy=zy r=1.1 class="hit" on:click=move |_| click(kind) />
                             }.into_any());
