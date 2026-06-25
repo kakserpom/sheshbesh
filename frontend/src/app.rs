@@ -71,6 +71,11 @@ pub(crate) fn App() -> impl IntoView {
     // Состояние на начало текущего хода человека (нужно для доигровки конца хода:
     // вынужденного ответа выкупа и передачи очереди), пока доска уже продвинута.
     let turn_start = StoredValue::new(game.get_untracked().state.clone());
+    // Фактически применённые ходы текущего хода КОМПЬЮТЕРА (ход игрока + ответы
+    // захватчика при выкупе) — копятся по шагам и пишутся в отладочный лог одной
+    // строкой по завершении хода (ход компьютера строится вручную, минуя `commit_turn`,
+    // поэтому `dbg_log_turn` его не покрывает). Сбрасывается в начале каждого хода ИИ.
+    let comp_applied = StoredValue::new(Vec::<Move>::new());
     // Идёт ли сейчас проигрывание анимации хода (блокирует ввод и авто-бросок).
     let animating = RwSignal::new(false);
     // Крутятся ли сейчас кости (анимация броска).
@@ -321,6 +326,7 @@ pub(crate) fn App() -> impl IntoView {
                 };
                 st = apply_with_frames(&mut frames, st, mv, roll, &hs);
                 rem = remaining_after(&rem, mv.pips);
+                comp_applied.update_value(|v| v.push(mv));
                 if let Some(captor) = captor {
                     let options = forced_six_moves(&st, captor);
                     if !options.is_empty() {
@@ -337,6 +343,7 @@ pub(crate) fn App() -> impl IntoView {
                         }
                         let fidx = best_forced(&m, &st, captor, &options).min(options.len() - 1);
                         st = apply_with_frames(&mut frames, st, options[fidx], roll, &hs);
+                        comp_applied.update_value(|v| v.push(options[fidx]));
                         if let Some(last) = frames.last_mut() {
                             last.note = Some(format!(
                                 "{}: обязательный ход на 6 после выкупа.",
@@ -351,6 +358,12 @@ pub(crate) fn App() -> impl IntoView {
             if !interrupted || rem.is_empty() {
                 break;
             }
+        }
+        // Ход компьютера завершён — пишем его в отладочный лог одной строкой (как ход
+        // человека через `dbg_log_turn`). На дубль придётся новый ход (новый бросок),
+        // он залогируется отдельной строкой.
+        if cfg!(debug_assertions) {
+            dbg_log_moves(side, roll, &comp_applied.get_value());
         }
         let again = roll.is_double() && !st.has_won(side);
         if !again {
@@ -408,6 +421,7 @@ pub(crate) fn App() -> impl IntoView {
             pts: Vec::new(),
             fade: false,
         });
+        comp_applied.set_value(Vec::new()); // новый ход компьютера — копим заново
         play_computer(frames, g.state.clone(), r.values().to_vec(), r);
     });
 
@@ -573,6 +587,7 @@ pub(crate) fn App() -> impl IntoView {
         let st = game.get_untracked().state;
         let mut frames = Vec::new();
         let st2 = apply_with_frames(&mut frames, st, fm, roll, &hs);
+        comp_applied.update_value(|v| v.push(fm)); // ответ человека — часть хода компьютера
         forced_pick.set(None);
         play_computer(frames, st2, rem, roll);
     };

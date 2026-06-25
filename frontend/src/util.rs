@@ -46,17 +46,18 @@ pub(crate) fn dbg_log_dump() -> String {
 /// сторона, бросок и ФАКТИЧЕСКИ применённые ходы (`applied` — включая ответы захватчика
 /// при выкупе). Вместе с залогированным seed этого хватает, чтобы воспроизвести партию.
 pub(crate) fn dbg_log_turn(outcome: &TurnOutcome) {
-    let [a, b] = outcome.roll.values();
-    let moves: Vec<String> = outcome
-        .applied
+    dbg_log_moves(outcome.side, outcome.roll, &outcome.applied);
+}
+
+/// То же, но из «сырых» данных хода (сторона, бросок, применённые ходы) — для путей,
+/// которые НЕ проходят через `Game::commit_turn` (по-шаговый ход компьютера в GUI).
+pub(crate) fn dbg_log_moves(side: Side, roll: DiceRoll, applied: &[Move]) {
+    let [a, b] = roll.values();
+    let moves: Vec<String> = applied
         .iter()
         .map(|m| format!("{:?}(c{},p{})", m.kind, m.checker, m.pips))
         .collect();
-    dbg_log(&format!(
-        "[GAMELOG] {:?} {a}-{b} | {}",
-        outcome.side,
-        moves.join(" ")
-    ));
+    dbg_log(&format!("[GAMELOG] {side:?} {a}-{b} | {}", moves.join(" ")));
 }
 
 /// Пауза-заставка перед первым ходом партии (мс) — чтобы старт не мелькал.
