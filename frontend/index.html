@@ -316,6 +316,22 @@
     .seg button { flex: 1; min-width: 4rem; }
     .speed-slider { width: 100%; accent-color: #3b82f6; cursor: pointer; margin: .1rem 0; }
     .speed-val { color: var(--muted); font-size: .85rem; text-align: center; }
+    /* Подсказка с горячими клавишами хода (поверх партии). */
+    .keys-hint {
+      position: fixed; top: 3.4rem; left: 50%; transform: translateX(-50%); z-index: 60;
+      display: flex; flex-direction: column; gap: .45rem;
+      background: var(--panel-bg); border: 1px solid var(--border);
+      border-radius: .6rem; padding: .8rem 1rem; min-width: 17rem; box-shadow: 0 8px 30px #0007;
+      color: var(--text); font-size: .92rem;
+    }
+    .keys-hint .logbox-head b { color: var(--heading); }
+    .keys-row { display: flex; gap: .5rem; align-items: baseline; }
+    .keys-row span { color: var(--muted); }
+    .keys-hint kbd {
+      font-family: ui-monospace, monospace; font-weight: 600; color: var(--heading);
+      border: 1px solid var(--border); border-bottom-width: 2px; border-radius: .3rem;
+      padding: .02rem .4rem; min-width: 1.1rem; text-align: center; line-height: 1.4;
+    }
     .hl-src { stroke: #f59e0b; stroke-width: .07; }
     .hl-dst { stroke: #22c55e; stroke-width: .09; }
     /* Цель «за обе кости сразу» — зелёная пунктирная (отличать от одиночного хода). */

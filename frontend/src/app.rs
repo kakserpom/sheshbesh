@@ -89,6 +89,8 @@ pub(crate) fn App() -> impl IntoView {
     let herald = RwSignal::new(String::new());
     // Показан ли технический лог партии (кнопка в отладочной сборке).
     let show_log = RwSignal::new(false);
+    // Показана ли подсказка с горячими клавишами хода (кнопка «⌨» в партии).
+    let keys_hint = RwSignal::new(false);
 
     // Настройки, меняемые на лету (тема/скорость/звук) — грузим сохранённые.
     let (init_theme, init_speed, init_sound) = settings::load();
@@ -123,12 +125,14 @@ pub(crate) fn App() -> impl IntoView {
             // Так из открытых в обучении Правил первый Escape вернёт к обучению, а второй
             // — в главное меню.
             let popup_open = show_log.get_untracked()
+                || keys_hint.get_untracked()
                 || speed_menu.get_untracked()
                 || theme_menu.get_untracked()
                 || rules.get_untracked()
                 || about.get_untracked();
             if popup_open {
                 show_log.set(false);
+                keys_hint.set(false);
                 speed_menu.set(false);
                 theme_menu.set(false);
                 rules.set(false);
@@ -1582,6 +1586,8 @@ pub(crate) fn App() -> impl IntoView {
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
                 <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
+                <button class="icon-btn" class:on=move || keys_hint.get() title="Горячие клавиши"
+                    on:click=move |_| keys_hint.update(|v| *v = !*v)>"⌨"</button>
                 <SoundControl sound/>
                 <SpeedMenu open=speed_menu speed/>
                 // Тема оформления — палитра с выпадающим списком (так же, как в меню).
@@ -1593,6 +1599,22 @@ pub(crate) fn App() -> impl IntoView {
                 </div>
                 <span class="herald" inner_html=move || herald.get()></span>
             </div>
+
+            // Подсказка с горячими клавишами хода.
+            {move || keys_hint.get().then(|| view! {
+                <div class="keys-hint">
+                    <div class="logbox-head">
+                        <b>"Горячие клавиши хода"</b>
+                        <span class="lead"></span>
+                        <button class="icon-btn" title="Закрыть" on:click=move |_| keys_hint.set(false)>"✕"</button>
+                    </div>
+                    <div class="keys-row"><kbd>"Tab"</kbd><span>"следующая фишка"</span></div>
+                    <div class="keys-row"><kbd>"1"</kbd><kbd>"2"</kbd><span>"ход меньшей / большей костью"</span></div>
+                    <div class="keys-row"><kbd>"3"</kbd><span>"обе кости выбранной фишкой"</span></div>
+                    <div class="keys-row"><kbd>"i"</kbd><span>"ввести фишку из резерва"</span></div>
+                    <div class="keys-row"><kbd>"r"</kbd><span>"выкупить пленную фишку"</span></div>
+                </div>
+            })}
 
             // Панель технического лога: текст в textarea (клик — выделить всё, затем Ctrl+C).
             {move || show_log.get().then(|| {
