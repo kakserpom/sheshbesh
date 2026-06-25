@@ -99,13 +99,15 @@ fn own_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> bool {
         .any(|c| c.owner == owner && c.pos.perimeter_cell(c.owner) == Some(cell))
 }
 
-/// Стоит ли на клетке периметра `cell` хоть одна фишка (любого игрока).
-/// Используется для правила «нельзя проходить через фишки» (и оценкой ИИ).
+/// Перекрыта ли клетка периметра `cell` для прохода (правило «нельзя проходить через
+/// фишки»; используется и оценкой ИИ). Считаются только фишки, реально СТОЯЩИЕ на клетке
+/// (`OnTrack`) — в т.ч. освобождённая «зашёл-вышел», стоящая на клетке Тюрьмы (ею и
+/// блокируют). **Пленник** (`Prison`) сидит ВНУТРИ Тюрьмы (как фишка на дорожке Луны —
+/// вне периметра) и проход НЕ перекрывает: мимо Тюрьмы с пленником пройти можно.
 pub(crate) fn occupied(state: &GameState, cell: PerimeterIdx) -> bool {
-    state
-        .checkers
-        .iter()
-        .any(|c| c.pos.perimeter_cell(c.owner) == Some(cell))
+    state.checkers.iter().any(|c| {
+        matches!(c.pos, Position::OnTrack { .. }) && c.pos.perimeter_cell(c.owner) == Some(cell)
+    })
 }
 
 /// Свободен ли путь для хода фишки `owner` из `progress` на `die` клеток:
@@ -155,9 +157,10 @@ fn resolve_move(state: &GameState, ci: usize, pips: u8) -> Option<Resolved> {
 
 /// Продвижение фишки по периметру на `pips` клеток (значение одной кости или сумма
 /// объединённых). Эффект — только у **конечной** клетки: спец-клетки на пути просто
-/// перешагиваются (они либо пусты, как клетка-вход Луны, либо — занятая Тюрьма —
-/// блокируют проход как обычная фишка). Чтобы **зайти** на спец-клетку, она должна
-/// быть конечной.
+/// перешагиваются. Клетка-вход Луны и Тюрьма с **пленником** (он сидит ВНУТРИ) для
+/// прохода пусты; блокирует лишь фишка, реально стоящая НА клетке (`OnTrack`) — в т.ч.
+/// освобождённая «зашёл-вышел» на клетке Тюрьмы. Чтобы **зайти** на спец-клетку, она
+/// должна быть конечной.
 fn advance_on_track(state: &GameState, ci: usize, pips: u8) -> Option<Resolved> {
     if pips == 0 {
         return None;
@@ -168,8 +171,8 @@ fn advance_on_track(state: &GameState, ci: usize, pips: u8) -> Option<Resolved> 
         return None;
     };
     let target = progress + pips as u16;
-    // Нельзя проходить через чужие/свои фишки (кроме стоящих на углу). Промежуточная
-    // клетка Тюрьмы, если на ней сидит пленник, блокирует — это и есть блок Тюрьмой.
+    // Нельзя проходить через чужие/свои фишки, СТОЯЩИЕ на клетке (кроме углов). Пленник
+    // в Тюрьме проход не перекрывает; блокирует лишь освобождённая фишка на клетке Тюрьмы.
     if !path_clear(state, owner, progress, pips) {
         return None;
     }
@@ -769,6 +772,44 @@ mod tests {
             Position::OnTrack {
                 progress: Side::A.progress_of(prison_abs)
             }
+        );
+    }
+
+    #[test]
+    fn imprisoned_does_not_block_but_released_does() {
+        // Тюрьма стороны B (ближняя), A-прогресс 13; фишка A на progress 11 перед ней.
+        let prison = Side::B.local_to_perimeter(LOCAL_PRISON_NEAR);
+        let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+        s.checkers.clear();
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress: 11 },
+        });
+        // ПЛЕННИК (сидит ВНУТРИ Тюрьмы) — проход не перекрывает: A идёт МИМО (2+3 = 5 очков),
+        // заход в Тюрьму (2 очка) исключён правилом максимума.
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::Prison { cell: prison },
+        });
+        let turns = legal_turns(&s, roll(2, 3));
+        assert!(turns.iter().all(|t| pips(t) == 5));
+        assert!(
+            !turns
+                .iter()
+                .flatten()
+                .any(|m| m.kind == MoveKind::EnterPrison)
+        );
+        // ОСВОБОЖДЁННАЯ фишка («зашёл-вышел», стоит НА клетке Тюрьмы) — перекрывает проход,
+        // и A вынужден зайти в Тюрьму (мимо нельзя).
+        s.checkers[1].pos = Position::OnTrack {
+            progress: Side::C.progress_of(prison),
+        };
+        let turns = legal_turns(&s, roll(2, 3));
+        assert!(
+            turns
+                .iter()
+                .flatten()
+                .any(|m| m.kind == MoveKind::EnterPrison)
         );
     }
 
