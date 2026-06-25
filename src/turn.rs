@@ -12,7 +12,9 @@
 
 use crate::board::Side;
 use crate::dice::{DiceRoll, Die};
-use crate::moves::{Move, MoveKind, apply, forced_six_moves, legal_turns, move_legal};
+use crate::moves::{
+    Move, MoveKind, apply, forced_six_moves, legal_turns_remaining, move_legal, remaining_after,
+};
 use crate::state::{GameState, Position};
 
 /// Источник бросков костей — абстракция ради тестируемости.
@@ -300,20 +302,75 @@ impl Game {
         }
     }
 
-    /// Один бросок текущего игрока: кидает кости, даёт `agent` выбрать ход и
-    /// применяет его (включая вынужденные ответы захватчиков при выкупе).
+    /// Один бросок текущего игрока: кидает кости и играет ход **по шагам**. Каждый
+    /// выкуп (`Ransom`) тут же влечёт обязательный ответ захватчика, и **только потом**
+    /// игрок (агент) решает, что делать оставшимися костями — поэтому после выкупа
+    /// состояние и остаток костей пересчитываются (`legal_turns_remaining`).
+    /// Это та же выдача (`TurnOutcome`), что и `commit_turn`, но решение принимается
+    /// уже после вынужденного ответа, а не заранее на весь ход.
     pub fn play_turn<D, A>(&mut self, dice: &mut D, agent: &mut A) -> TurnOutcome
     where
         D: DiceSource,
         A: Agent,
     {
         let roll = dice.roll();
-        let turns = legal_turns(&self.state, roll);
-        let idx = agent.choose_turn(&self.state, &turns).min(turns.len() - 1);
-        let played = turns[idx].clone();
-        self.commit_turn(roll, played, |state, captor, options| {
-            agent.choose_forced(state, captor, options)
-        })
+        let side = self.state.to_move;
+        let mut remaining: Vec<u8> = roll.values().to_vec();
+        let mut played = Vec::new();
+        let mut forced_moves = Vec::new();
+        let mut applied = Vec::new();
+        loop {
+            let turns = legal_turns_remaining(&self.state, &remaining);
+            if turns.iter().all(Vec::is_empty) {
+                break; // ходить нечем
+            }
+            let idx = agent.choose_turn(&self.state, &turns).min(turns.len() - 1);
+            // Играем выбранную последовательность по ходам, прерываясь на ПЕРВОМ выкупе:
+            // его обязательный ответ меняет доску — остаток переспросим у агента.
+            let mut interrupted = false;
+            for &mv in &turns[idx] {
+                let captor = if mv.kind == MoveKind::Ransom {
+                    match self.state.checkers[mv.checker].pos {
+                        Position::Captured { captor } => Some(captor),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                self.state = apply(&self.state, mv);
+                played.push(mv);
+                applied.push(mv);
+                remaining = remaining_after(&remaining, mv.pips);
+                if let Some(captor) = captor {
+                    let options = forced_six_moves(&self.state, captor);
+                    if !options.is_empty() {
+                        let fidx = agent
+                            .choose_forced(&self.state, captor, &options)
+                            .min(options.len() - 1);
+                        self.state = apply(&self.state, options[fidx]);
+                        forced_moves.push(options[fidx]);
+                        applied.push(options[fidx]);
+                    }
+                    interrupted = true;
+                    break;
+                }
+            }
+            if !interrupted || remaining.is_empty() {
+                break;
+            }
+        }
+        let again = roll.is_double() && !self.state.has_won(side);
+        if !again {
+            self.state.to_move = next_unfinished_active(&self.state, side);
+        }
+        TurnOutcome {
+            side,
+            roll,
+            played,
+            applied,
+            forced: forced_moves,
+            again,
+        }
     }
 
     /// Гоняет ходы до появления победителя, но не более `max_turns` бросков
@@ -356,6 +413,53 @@ mod tests {
                 .position(|t| t.iter().any(|m| m.kind == MoveKind::Ransom))
                 .unwrap_or(0)
         }
+    }
+
+    #[test]
+    fn player_decides_after_forced_reply() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        // Шпион: выбирает последовательность, НАЧИНАЮЩУЮСЯ с выкупа, и на каждый вызов
+        // фиксирует прогресс фишки захватчика (c4) — так видно, было ли применено его
+        // обязательное продвижение к моменту решения игрока.
+        struct Spy {
+            seen: Rc<RefCell<Vec<u16>>>,
+        }
+        impl Agent for Spy {
+            fn choose_turn(&mut self, state: &GameState, turns: &[Vec<Move>]) -> usize {
+                let p = match state.checkers[4].pos {
+                    Position::OnTrack { progress } => progress,
+                    _ => u16::MAX,
+                };
+                self.seen.borrow_mut().push(p);
+                turns
+                    .iter()
+                    .position(|t| t.first().is_some_and(|m| m.kind == MoveKind::Ransom))
+                    .unwrap_or(0)
+            }
+        }
+
+        let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
+        state.checkers[0].pos = Position::Captured { captor: Side::C }; // A: пленная
+        state.checkers[1].pos = Position::OnTrack { progress: 10 }; // A: на дорожке (для 2-й кости)
+        state.checkers[4].pos = Position::OnTrack { progress: 0 }; // C: единственный её 6-ход
+        state.checkers[5].pos = Position::Home { depth: 0 };
+        state.checkers[6].pos = Position::Home { depth: 1 };
+        state.checkers[7].pos = Position::Home { depth: 2 };
+        let mut game = Game::new(state);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let mut spy = Spy {
+            seen: Rc::clone(&seen),
+        };
+        // (6,3): выкуп шестёркой → обязательный ответ C → ПОТОМ A решает тройку.
+        let mut dice = ScriptedDice::new(vec![roll(6, 3)]);
+        game.play_turn(&mut dice, &mut spy);
+
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 2, "после выкупа игрока спрашивают повторно");
+        assert_eq!(seen[0], 0, "1-й раз — до ответа захватчика (c4 на 0)");
+        assert_eq!(seen[1], 6, "2-й раз — уже ПОСЛЕ ответа (c4 продвинут на 6)");
     }
 
     #[test]

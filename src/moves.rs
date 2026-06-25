@@ -500,17 +500,48 @@ fn maximal_sequences(
     }
 }
 
-/// Легальные полные ходы за один бросок с учётом правила максимального хода:
-/// возвращаются только последовательности, использующие наибольшее число очков.
+/// Легальные полные ходы из набора **оставшихся** костей `remaining` с учётом правила
+/// максимального хода: только последовательности, использующие наибольшее число очков.
+/// Если ходов нет — один пустой ход (`vec![vec![]]`). Нужно для **по-шагового** хода
+/// (после выкупа остаток костей переспрашивается у текущего состояния — см. `play_turn`).
+pub fn legal_turns_remaining(state: &GameState, remaining: &[u8]) -> Vec<Vec<Move>> {
+    let mut all = Vec::new();
+    maximal_sequences(state, remaining, &mut Vec::new(), &mut all);
+    let best = all.iter().map(|s| pips(s)).max().unwrap_or(0);
+    all.into_iter().filter(|s| pips(s) == best).collect()
+}
+
+/// Легальные полные ходы за один бросок (обе кости) — частный случай `legal_turns_remaining`.
 ///
 /// Если ни одного хода нет, возвращается один пустой ход (`vec![vec![]]`).
 /// Дубль (право на ещё один бросок) обрабатывается на уровне партии, не здесь.
 pub fn legal_turns(state: &GameState, roll: DiceRoll) -> Vec<Vec<Move>> {
-    let remaining = roll.values().to_vec();
-    let mut all = Vec::new();
-    maximal_sequences(state, &remaining, &mut Vec::new(), &mut all);
-    let best = all.iter().map(|s| pips(s)).max().unwrap_or(0);
-    all.into_iter().filter(|s| pips(s) == best).collect()
+    legal_turns_remaining(state, &roll.values())
+}
+
+/// Оставшиеся кости после хода на `pips` очков: убирает подмножество костей, сумма
+/// которого равна `pips`. Для бросков игры (две кости либо две одинаковых) такое
+/// подмножество единственно — либо одна кость со значением `pips`, либо несколько,
+/// объединённых «в один мах». Нужно по-шаговому ходу для пересчёта остатка.
+pub fn remaining_after(remaining: &[u8], pips: u8) -> Vec<u8> {
+    if let Some(i) = remaining.iter().position(|&d| d == pips) {
+        let mut r = remaining.to_vec();
+        r.remove(i);
+        return r;
+    }
+    let mut need = pips;
+    remaining
+        .iter()
+        .copied()
+        .filter(|&d| {
+            if need >= d {
+                need -= d;
+                false // тратится этим объединённым ходом
+            } else {
+                true
+            }
+        })
+        .collect()
 }
 
 /// Наибольшее число очков, которое можно использовать за данный бросок.

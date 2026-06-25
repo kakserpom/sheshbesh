@@ -35,7 +35,10 @@ pub use eval::{
 pub use learn::{
     LinearValue, MlpValue, TdConfig, TdModel, train, train_mlp, train_with, train_with_progress,
 };
-pub use moves::{Move, MoveKind, apply, legal_moves, legal_turns, max_pips};
+pub use moves::{
+    Move, MoveKind, apply, legal_moves, legal_turns, legal_turns_remaining, max_pips,
+    remaining_after,
+};
 pub use render::{
     BOARD_DIM, BOARD_MARGIN, Glyph, board_glyphs, checker_cell, margin_coord, render,
 };

@@ -14,8 +14,9 @@ use sheshbesh::moves::{forced_six_moves, move_legal};
 use sheshbesh::{
     Agent, BOARD_DIM, BOARD_MARGIN, DEFAULT_WIDTH, DiceRoll, DiceSource, Die, Game, GameState,
     Heuristic, Move, MoveKind, Position, RandomDice, Side, apply, best_forced, best_turn,
-    best_turn_2ply, legal_turns, margin_coord,
+    best_turn_2ply, legal_turns, legal_turns_remaining, margin_coord, remaining_after,
 };
+use sheshbesh::turn::next_unfinished_active;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
@@ -58,6 +59,11 @@ pub(crate) fn App() -> impl IntoView {
     let turns = RwSignal::new(Vec::<Vec<Move>>::new());
     let prefix = RwSignal::new(Vec::<Move>::new());
     let sel = RwSignal::new(None::<Sel>);
+    // Ожидание ОБЯЗАТЕЛЬНОГО ответа на «6» от ЧЕЛОВЕКА-захватчика, когда выкуп сделал
+    // компьютер: `Some((ходящая_сторона, захватчик, бросок, остаток_костей))`. Пока он
+    // стоит, автоход компьютера приостановлен — человек сам выбирает обязательный ход;
+    // после выбора компьютер ПРОДОЛЖАЕТ ход остатком костей (по-шагово).
+    let forced_pick = RwSignal::new(None::<(Side, Side, DiceRoll, Vec<u8>)>);
     // Состояние на начало текущего хода человека (нужно для доигровки конца хода:
     // вынужденного ответа выкупа и передачи очереди), пока доска уже продвинута.
     let turn_start = StoredValue::new(game.get_untracked().state.clone());
@@ -277,43 +283,77 @@ pub(crate) fn App() -> impl IntoView {
         });
     };
 
-    // Автоход компьютерных сторон: по одному ходу за срабатывание Effect. Цепочка
-    // ходов «сама себя» продолжает через сигнал `animating` (после анимации хода он
-    // снимается → Effect срабатывает снова). Пауза/победа/ход человека её прерывают.
-    Effect::new(move |_| {
-        let g = game.get();
+    // По-шаговый ход КОМПЬЮТЕРА: продолжает заполнять `frames` от состояния `st` с
+    // остатком костей `rem`. После выкупа СРАЗУ применяется обязательный ответ
+    // захватчика; если захватчик — ЧЕЛОВЕК, ставим `forced_pick` и приостанавливаемся
+    // (человек выберет ответ, затем `forced_apply` продолжит ЭТОТ ЖЕ ход остатком костей).
+    // Иначе компьютер выбирает ответ сам и идёт дальше — решение об остатке принимается
+    // уже ПОСЛЕ ответа (как и требует правило).
+    let play_computer = move |mut frames: Vec<Frame>, mut st: GameState, mut rem: Vec<u8>, roll: DiceRoll| {
+        let side = st.to_move;
         let hs = humans.get_untracked();
-        if !started.get()
-            || animating.get()
-            || paused.get()
-            || rules.get()
-            || game_over(&g.state, teams.get_untracked())
-            || hs.contains(&g.state.to_move)
-        {
-            return;
+        let algo = algos.get_untracked()[side.index()];
+        let m = ai_model_for(algo, st.active.len(), teams.get_untracked());
+        loop {
+            let turns = legal_turns_remaining(&st, &rem);
+            if turns.iter().all(Vec::is_empty) {
+                break;
+            }
+            let idx = if algo.is_search() {
+                best_turn_2ply(&m, DEFAULT_WIDTH, &st, &turns)
+            } else {
+                best_turn(&m, &st, &turns)
+            }
+            .min(turns.len() - 1);
+            let mut interrupted = false;
+            for &mv in &turns[idx] {
+                let captor = if mv.kind == MoveKind::Ransom {
+                    match st.checkers[mv.checker].pos {
+                        Position::Captured { captor } => Some(captor),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                st = apply_with_frames(&mut frames, st, mv, roll, &hs);
+                rem = remaining_after(&rem, mv.pips);
+                if let Some(captor) = captor {
+                    let options = forced_six_moves(&st, captor);
+                    if !options.is_empty() {
+                        if hs.contains(&captor) {
+                            if let Some(last) = frames.last_mut() {
+                                last.note = Some(format!(
+                                    "{}: выберите обязательный ход на 6 после выкупа.",
+                                    side_name(captor, &hs)
+                                ));
+                            }
+                            forced_pick.set(Some((side, captor, roll, rem.clone())));
+                            play(frames);
+                            return;
+                        }
+                        let fidx = best_forced(&m, &st, captor, &options).min(options.len() - 1);
+                        st = apply_with_frames(&mut frames, st, options[fidx], roll, &hs);
+                        if let Some(last) = frames.last_mut() {
+                            last.note = Some(format!(
+                                "{}: обязательный ход на 6 после выкупа.",
+                                side_name(captor, &hs)
+                            ));
+                        }
+                    }
+                    interrupted = true;
+                    break; // переспросить остаток уже от нового состояния
+                }
+            }
+            if !interrupted || rem.is_empty() {
+                break;
+            }
         }
-        let mut gg = g.clone();
-        let mut roll_v = None;
-        dice.update_value(|d| roll_v = Some(d.roll()));
-        let r = roll_v.expect("roll");
-        let t = legal_turns(&gg.state, r);
-        // Агент под алгоритм ходящей стороны и текущий режим (число сторон + команды).
-        let algo = algos.get_untracked()[gg.state.to_move.index()];
-        let m = ai_model_for(algo, gg.state.active.len(), teams.get_untracked());
-        // 2-плай expectiminimax поверх той же оценки, если выбран «MLP+поиск».
-        let idx = if algo.is_search() {
-            best_turn_2ply(&m, DEFAULT_WIDTH, &gg.state, &t)
-        } else {
-            best_turn(&m, &gg.state, &t)
+        let again = roll.is_double() && !st.has_won(side);
+        if !again {
+            st.to_move = next_unfinished_active(&st, side);
         }
-        .min(t.len() - 1);
-        let played = t[idx].clone();
-        let mut frames = Vec::new();
-        commit_frames(&mut frames, &mut gg, r, played, &hs, true, |s, c, o| {
-            best_forced(&m, s, c, o)
-        });
         frames.push(Frame {
-            state: gg.state.clone(),
+            state: st,
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
@@ -322,6 +362,49 @@ pub(crate) fn App() -> impl IntoView {
             fade: false,
         });
         play(frames);
+    };
+
+    // Автоход компьютерных сторон: бросок + по-шаговый ход (`play_computer`). Цепочка
+    // ходов «сама себя» продолжает через `animating` (после анимации он снимается →
+    // Effect срабатывает снова). Пауза/победа/ход человека/ожидание выкупа её прерывают.
+    Effect::new(move |_| {
+        let g = game.get();
+        let hs = humans.get_untracked();
+        if !started.get()
+            || animating.get()
+            || paused.get()
+            || rules.get()
+            || forced_pick.get().is_some() // ждём обязательный ответ человека на выкуп
+            || game_over(&g.state, teams.get_untracked())
+            || hs.contains(&g.state.to_move)
+        {
+            return;
+        }
+        let mut roll_v = None;
+        dice.update_value(|d| roll_v = Some(d.roll()));
+        let r = roll_v.expect("roll");
+        let side = g.state.to_move;
+        let no_move = legal_turns(&g.state, r).iter().all(Vec::is_empty);
+        let mut frames = Vec::new();
+        frames.push(Frame {
+            state: g.state.clone(),
+            roll: Some(r),
+            hold: ROLL_ANIM_MS,
+            rolling: true,
+            note: Some(format!("{} бросает кости…", side_name(side, &hs))),
+            pts: Vec::new(),
+            fade: false,
+        });
+        frames.push(Frame {
+            state: g.state.clone(),
+            roll: Some(r),
+            hold: if no_move { HOLD_NOMOVE_MS } else { HOLD_ROLL_MS },
+            rolling: false,
+            note: Some(roll_note(side, &hs, r, no_move)),
+            pts: Vec::new(),
+            fade: false,
+        });
+        play_computer(frames, g.state.clone(), r.values().to_vec(), r);
     });
 
     // Старт партии: держим паузу-заставку (видно «Игра началась»), затем снимаем
@@ -470,6 +553,24 @@ pub(crate) fn App() -> impl IntoView {
         prefix.set(Vec::new());
         sel.set(None);
         play(frames);
+    };
+
+    // Применение выбранного ЧЕЛОВЕКОМ обязательного ответа на «6» (выкуп сделал
+    // компьютер): проигрываем ответ, снимаем `forced_pick` и ПРОДОЛЖАЕМ ход компьютера
+    // остатком костей (`play_computer`) — теперь компьютер решает остаток уже после ответа.
+    let forced_apply = move |fm: Move| {
+        if animating.get_untracked() {
+            return;
+        }
+        let Some((_side, _captor, roll, rem)) = forced_pick.get_untracked() else {
+            return;
+        };
+        let hs = humans.get_untracked();
+        let st = game.get_untracked().state;
+        let mut frames = Vec::new();
+        let st2 = apply_with_frames(&mut frames, st, fm, roll, &hs);
+        forced_pick.set(None);
+        play_computer(frames, st2, rem, roll);
     };
 
     let click = move |target: Sel| {
@@ -1532,6 +1633,28 @@ pub(crate) fn App() -> impl IntoView {
                     }
                     nodes
                 }}
+                // Выбор человеком обязательного хода на «6» после выкупа компьютером:
+                // подсвечиваем каждую фишку захватчика, способную сходить на 6, и её
+                // клетку-цель; клик по цели играет этот ход.
+                {move || forced_pick.get().map(|(_side, captor, _r, _rem)| {
+                    let st = game.get().state;
+                    let mut nodes: Vec<AnyView> = Vec::new();
+                    if !animating.get() {
+                        let mut shown: Vec<usize> = Vec::new();
+                        for mv in forced_six_moves(&st, captor) {
+                            if shown.contains(&mv.checker) {
+                                continue;
+                            }
+                            shown.push(mv.checker);
+                            let (sx, sy, _) = checker_xy(&st, mv.checker);
+                            nodes.push(view! { <circle cx=sx cy=sy r=0.47 fill="none" class="hl-src" /> }.into_any());
+                            let (tx, ty, _) = checker_xy(&apply(&st, mv), mv.checker);
+                            nodes.push(view! { <circle cx=tx cy=ty r=0.47 fill="none" class="hl-dst" /> }.into_any());
+                            nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| forced_apply(mv) /> }.into_any());
+                        }
+                    }
+                    nodes
+                })}
             </svg>
             // Кости — HTML-оверлей над доской, у Дома ходящей стороны (дальше плена).
             {move || {
