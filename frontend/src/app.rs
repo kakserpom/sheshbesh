@@ -731,7 +731,9 @@ pub(crate) fn App() -> impl IntoView {
                     sel.set(Some(target));
                 }
             }
-            Some(src) if src == target => sel.set(None),
+            // Фишка всегда выбрана по умолчанию: клик по самой выбранной фишке или мимо
+            // НЕ снимает выбор (раньше снимал) — переключиться можно кликом по другой.
+            Some(src) if src == target => {}
             Some(src) => {
                 let found = cands
                     .iter()
@@ -741,8 +743,6 @@ pub(crate) fn App() -> impl IntoView {
                     play_part(m);
                 } else if cands.iter().any(|&m| move_source(&ps, m) == target) {
                     sel.set(Some(target));
-                } else {
-                    sel.set(None);
                 }
             }
         }
@@ -858,6 +858,44 @@ pub(crate) fn App() -> impl IntoView {
                 }
             }
             _ => {}
+        }
+    });
+
+    // Авто-фокус: если идёт ход человека и фишка ещё не выбрана — выбираем по умолчанию
+    // (первую фишку-источник НА ДОСКЕ; иначе первый источник — напр. резерв при вводе).
+    // Так не нужно кликать «выбрать», особенно когда ходить можно одной фишкой; жёлтые
+    // круги остальных вариантов остаются видны (см. подсветку источников).
+    Effect::new(move |_| {
+        if sel.get().is_some()
+            || !started.get()
+            || animating.get()
+            || paused.get()
+            || rules.get()
+            || forced_pick.get().is_some()
+        {
+            return;
+        }
+        let g = game.get();
+        if game_over(&g.state, teams.get_untracked())
+            || !humans.get_untracked().contains(&g.state.to_move)
+            || roll.get().is_none()
+        {
+            return;
+        }
+        let cands = step_opts(&turns.get(), &prefix.get());
+        let mut sources: Vec<Sel> = Vec::new();
+        for &m in &cands {
+            let s = move_source(&g.state, m);
+            if !sources.contains(&s) {
+                sources.push(s);
+            }
+        }
+        if let Some(&s) = sources
+            .iter()
+            .find(|s| matches!(s, Sel::Cell(..)))
+            .or_else(|| sources.first())
+        {
+            sel.set(Some(s));
         }
     });
 
@@ -1804,8 +1842,11 @@ pub(crate) fn App() -> impl IntoView {
                     for &(_, (cx, cy)) in &combo_dsts {
                         nodes.push(ring_pt(cx, cy, "hl-combo"));
                     }
-                    if cur.is_none() {
-                        for &rc in &srcs {
+                    // Жёлтые круги вариантов-источников показываем ВСЕГДА (даже когда фишка
+                    // уже выбрана) — кроме самой выбранной (она с рамкой `hl-sel`), чтобы
+                    // было видно, на какую другую фишку можно переключиться.
+                    for &rc in &srcs {
+                        if sel_cell != Some(rc) {
                             nodes.push(pt_hl(rc, "hl-src"));
                         }
                     }
@@ -1855,7 +1896,9 @@ pub(crate) fn App() -> impl IntoView {
                             Some("hl-sel")
                         } else if is_dst {
                             Some("hl-dst")
-                        } else if is_src && cur.is_none() {
+                        } else if is_src {
+                            // Источник подсвечиваем всегда (жёлтым), даже при выбранной
+                            // другой фишке — чтобы было видно вариант переключения.
                             Some("hl-src")
                         } else {
                             None
