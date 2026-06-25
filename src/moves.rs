@@ -638,6 +638,35 @@ mod tests {
     }
 
     #[test]
+    fn moon_advances_twice_in_one_turn() {
+        // Сдвоенный ход по Луне за один бросок: с поля «1» бросок 1-3 ведёт сразу на «6»
+        // ([MoonAdvance(1), MoonAdvance(3)]); с поля «3» бросок 3-6 — сразу выход
+        // ([MoonAdvance(3), MoonExit(6)]). Раньше GUI не показывал такую связку.
+        let s = state_a(&[Position::Moon {
+            side: Side::B,
+            field: MoonField::One,
+        }]);
+        let turns = legal_turns(&s, roll(1, 3));
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].iter().map(|m| m.kind).collect::<Vec<_>>(),
+            vec![MoveKind::MoonAdvance, MoveKind::MoonAdvance]
+        );
+        assert!(turns[0].iter().all(|m| m.checker == 0)); // одна и та же фишка → связка
+
+        let s3 = state_a(&[Position::Moon {
+            side: Side::B,
+            field: MoonField::Three,
+        }]);
+        let turns = legal_turns(&s3, roll(3, 6));
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].iter().map(|m| m.kind).collect::<Vec<_>>(),
+            vec![MoveKind::MoonAdvance, MoveKind::MoonExit]
+        );
+    }
+
+    #[test]
     fn cannot_stack_two_own_on_plain_cell() {
         // Своя фишка A на progress 12 (обычная клетка). Второй своей фишкой (с 10) на
         // неё встать НЕЛЬЗЯ; на пустую клетку 14 — можно.

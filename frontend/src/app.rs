@@ -1348,13 +1348,24 @@ pub(crate) fn App() -> impl IntoView {
                         }
                     }
                     // «Ход сразу за обе кости» одной фишкой — конечные клетки как
-                    // дополнительные цели (например, 1-1 → пройти Тюрьму насквозь на 2).
-                    let combo_dsts: Vec<(usize, usize)> = cur
+                    // дополнительные цели (например, 1-1 → пройти Тюрьму насквозь на 2,
+                    // или 1-3 на Луне → сразу на поле «6»). Точку подсветки берём по
+                    // РЕАЛЬНОМУ конечному положению фишки (для Луны — на дуге), а не по
+                    // центру клетки-сетки, иначе цель «улетала» бы с дуги Луны.
+                    let combo_dsts: Vec<((usize, usize), (f64, f64))> = cur
                         .map(|s| combo_targets(&ps, &turns.get(), &pre, s))
                         .unwrap_or_default()
                         .into_iter()
-                        .filter_map(|(d, _)| match d {
-                            Sel::Cell(r, c) if !dsts.contains(&(r, c)) => Some((r, c)),
+                        .filter_map(|(d, seq)| match d {
+                            Sel::Cell(r, c) if !dsts.contains(&(r, c)) => {
+                                let ci = seq[0].checker;
+                                let mut st = ps.clone();
+                                for &m in &seq {
+                                    st = apply(&st, m);
+                                }
+                                let (x, y, _) = checker_xy(&st, ci);
+                                Some(((r, c), (x, y)))
+                            }
                             _ => None,
                         })
                         .collect();
@@ -1428,8 +1439,7 @@ pub(crate) fn App() -> impl IntoView {
                         nodes.push(ring_pt(cx, cy, "hl-dst"));
                     }
                     // Цель «за обе кости сразу» — пунктиром, чтобы отличать от одиночной.
-                    for &rc in &combo_dsts {
-                        let (cx, cy) = center_pt(rc);
+                    for &(_, (cx, cy)) in &combo_dsts {
                         nodes.push(ring_pt(cx, cy, "hl-combo"));
                     }
                     if cur.is_none() {
@@ -1458,8 +1468,7 @@ pub(crate) fn App() -> impl IntoView {
                             <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
                         }.into_any());
                     }
-                    for &(r, c) in &combo_dsts {
-                        let (cx, cy) = center_pt((r, c));
+                    for &((r, c), (cx, cy)) in &combo_dsts {
                         nodes.push(view! {
                             <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
                         }.into_any());
