@@ -59,6 +59,10 @@ pub(crate) fn App() -> impl IntoView {
     let turns = RwSignal::new(Vec::<Vec<Move>>::new());
     let prefix = RwSignal::new(Vec::<Move>::new());
     let sel = RwSignal::new(None::<Sel>);
+    // Оставшиеся кости текущего хода человека (по-шагово). После выкупа человеком
+    // обязательный ответ захватчика применяется сразу, остаток костей пересчитывается,
+    // а решение об остатке принимается уже после ответа.
+    let remaining = RwSignal::new(Vec::<u8>::new());
     // Ожидание ОБЯЗАТЕЛЬНОГО ответа на «6» от ЧЕЛОВЕКА-захватчика, когда выкуп сделал
     // компьютер: `Some((ходящая_сторона, захватчик, бросок, остаток_костей))`. Пока он
     // стоит, автоход компьютера приостановлен — человек сам выбирает обязательный ход;
@@ -500,6 +504,7 @@ pub(crate) fn App() -> impl IntoView {
                 turns.set(t);
                 prefix.set(Vec::new());
                 sel.set(None);
+                remaining.set(r.values().to_vec());
                 animating.set(false);
             });
         }
@@ -522,13 +527,11 @@ pub(crate) fn App() -> impl IntoView {
         }
         let _ = scratch;
         // Если использованы не все очки броска — остаток сыграть нечем, он «сгорает».
-        // Очки могли быть объединены в один ход, поэтому считаем по сумме `pips`, а не
-        // по числу ходов. Сообщаем об этом (особенно при дубле, где иначе переброс
-        // выглядит внезапным).
-        let [a, b] = r.values();
-        let used: u8 = outcome.played.iter().map(|m| m.pips).sum();
-        let burn_note = (!outcome.played.is_empty() && used < a + b).then(|| {
-            let burned = a + b - used;
+        // Берём фактический остаток костей хода (`remaining`): после выкупа человеком
+        // обязательный ответ и пересчёт меняют картину, и по `played` судить нельзя.
+        let rem = remaining.get_untracked();
+        let burn_note = (!rem.is_empty()).then(|| {
+            let burned: u8 = rem.iter().sum();
             let name = side_name(outcome.side, &hs);
             if outcome.again {
                 format!("{name}: сыграть {burned} больше нечем — дубль, переброс!")
@@ -552,6 +555,7 @@ pub(crate) fn App() -> impl IntoView {
         turns.set(Vec::new());
         prefix.set(Vec::new());
         sel.set(None);
+        remaining.set(Vec::new());
         play(frames);
     };
 
@@ -591,10 +595,50 @@ pub(crate) fn App() -> impl IntoView {
         // Применяет выбранную часть хода `m`: проигрывает её и либо завершает ход, либо
         // продолжает со следующей костью.
         let apply_part = |m: Move| {
-            let mut np = pre.clone();
-            np.push(m);
             let mut frames = Vec::new();
             let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs);
+            remaining.update(|rem| *rem = remaining_after(rem, m.pips));
+            // Выкуп: захватчик (компьютер) обязан тут же сходить на «6». Применяем его
+            // ответ сразу, пересчитываем остаток костей от нового состояния и даём
+            // человеку решать остаток уже после ответа (как в `play_computer`/движке).
+            if m.kind == MoveKind::Ransom {
+                let captor = match ps.checkers[m.checker].pos {
+                    Position::Captured { captor } => captor,
+                    _ => unreachable!("ransom of non-captured checker"),
+                };
+                let mut after = after;
+                let options = forced_six_moves(&after, captor);
+                if !options.is_empty() {
+                    let cm = ai_model_for(
+                        algos.get_untracked()[captor.index()],
+                        after.active.len(),
+                        teams.get_untracked(),
+                    );
+                    let fidx = best_forced(&cm, &after, captor, &options).min(options.len() - 1);
+                    after = apply_with_frames(&mut frames, after, options[fidx], r, &hs);
+                    if let Some(last) = frames.last_mut() {
+                        last.note = Some(format!(
+                            "{}: обязательный ход на 6 после выкупа.",
+                            side_name(captor, &hs)
+                        ));
+                    }
+                }
+                // Новый отсчёт хода: остаток костей от состояния после ответа.
+                turn_start.set_value(after.clone());
+                let rem = remaining.get_untracked();
+                let new_turns = legal_turns_remaining(&after, &rem);
+                prefix.set(Vec::new());
+                sel.set(None);
+                if new_turns.iter().all(Vec::is_empty) {
+                    finish(frames, after, Vec::new());
+                } else {
+                    turns.set(new_turns);
+                    play(frames);
+                }
+                return;
+            }
+            let mut np = pre.clone();
+            np.push(m);
             // Ход завершён, когда префикс больше нечем продолжить. Длину сравнивать
             // нельзя: объединение костей делает максимальные ходы разной длины
             // (`[Step{a+b}]` и `[Step{a},Step{b}]` оба максимальны).
@@ -635,6 +679,7 @@ pub(crate) fn App() -> impl IntoView {
             let mut st = ps.clone();
             for &mv in &seq {
                 st = apply_with_frames(&mut frames, st, mv, r, &hs);
+                remaining.update(|rem| *rem = remaining_after(rem, mv.pips));
             }
             let mut played = pre.clone();
             played.extend(seq);

@@ -62,7 +62,12 @@ pub(crate) fn combo_targets(
         }
         let rest = &t[step..];
         let ci = rest[0].checker;
-        if !rest.iter().all(|m| m.checker == ci) || move_source(ps, rest[0]) != src {
+        // Выкуп играем только по одной кости (за ним сразу идёт обязательный ответ
+        // захватчика, и остаток решается уже после него), поэтому в «обе сразу» не сводим.
+        if !rest.iter().all(|m| m.checker == ci)
+            || rest.iter().any(|m| m.kind == MoveKind::Ransom)
+            || move_source(ps, rest[0]) != src
+        {
             continue;
         }
         // Состояние перед ПОСЛЕДНЕЙ частью — чтобы взять её `move_dest` (клетку входа).
