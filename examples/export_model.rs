@@ -4,7 +4,7 @@ use sheshbesh::{Side, TdConfig, train_mlp};
 use std::io::Write;
 
 /// Число скрытых нейронов MLP. GUI выводит его из длины весов (`MlpValue::from_floats`).
-const HIDDEN: usize = 24;
+const HIDDEN: usize = 48;
 
 fn export(path: &str, active: Vec<Side>, teams: bool) {
     let model = train_mlp(

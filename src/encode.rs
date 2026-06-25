@@ -20,7 +20,12 @@
 //! - `mobile[6]` — можно ли сыграть костью 1..6 (гибкость: «эффективно использовать
 //!   ЛЮБОЙ бросок»; для соперников этот же признак — сигнал «снижать их подвижность»);
 //! - `corner` — доля фишек на углах (безопасный анкер: на углу не едят, и им удобно
-//!   поджидать обошедшие фишки соперника).
+//!   поджидать обошедшие фишки соперника);
+//! - `blots` — доля своих **блотов**: одиночных фишек на бьющихся клетках (обычная /
+//!   вход в Дом — там едят; угол/Луна/Тюрьма безопасны). Прямой сигнал уязвимости;
+//! - `contact` — доля блотов **под боем**: позади которых (в 1..6 по ходу) стоит
+//!   вражеская (не союзная) фишка, способная съесть их прямым броском. Дистиллированный
+//!   сигнал контакта/непосредственной угрозы (точную «стрельбу» сеть добирает из `track`).
 
 use crate::board::{
     CellKind, HOME_DEPTH, LOCAL_MOON_EXIT, PERIMETER, PerimeterIdx, Side, cell_kind,
@@ -38,8 +43,10 @@ const OFF_MOON: usize = OFF_HOME + HOME_DEPTH; // 3 поля Луны
 const OFF_TRACK: usize = OFF_MOON + 3; // 72 клетки периметра
 const OFF_MOBILE: usize = OFF_TRACK + PERIMETER; // 6 — играбельность костей 1..6
 const OFF_CORNER: usize = OFF_MOBILE + 6; // 1 — доля фишек на углах
+const OFF_BLOTS: usize = OFF_CORNER + 1; // 1 — доля своих блотов (уязвимых одиночек)
+const OFF_CONTACT: usize = OFF_BLOTS + 1; // 1 — доля блотов под прямым боем врага
 /// Длина блока признаков одной относительной стороны.
-const PER_OWNER: usize = OFF_CORNER + 1;
+const PER_OWNER: usize = OFF_CONTACT + 1;
 /// Полная длина вектора признаков (4 стороны, включая отсутствующие — нулями).
 pub const FEATURES: usize = PER_OWNER * 4;
 
@@ -112,6 +119,38 @@ pub fn encode_into(state: &GameState, p: Side, out: &mut [f32]) {
             if can_play(state, side, d) {
                 out[base + OFF_MOBILE + (d - 1) as usize] = 1.0;
             }
+        }
+    }
+    // Контакт и блоты. «Блот» — фишка на бьющейся клетке (обычная / вход в Дом; на углу,
+    // Луне и в Тюрьме не едят). На таких клетках двух своих не бывает, так что каждая —
+    // одиночка-блот. «Под боем» — позади блота (в 1..6 клеток по ходу) стоит фишка не-
+    // союзного соперника: прямой бросок может её съесть. Путь/точную кость не проверяем
+    // (это `Heuristic::shots_to`) — дешёвый дистиллированный сигнал, остальное сеть
+    // добирает из `track`. Сначала соберём абсолютные клетки всех фишек на периметре.
+    let perim: Vec<(Side, usize)> = state
+        .checkers
+        .iter()
+        .filter_map(|c| c.pos.perimeter_cell(c.owner).map(|abs| (c.owner, abs.get())))
+        .collect();
+    for c in &state.checkers {
+        let owner = c.owner;
+        let Some(abs) = c.pos.perimeter_cell(owner) else {
+            continue;
+        };
+        if !matches!(cell_kind(abs), CellKind::Plain | CellKind::HomeEntrance) {
+            continue; // угол/Луна/Тюрьма — не блот (там не едят)
+        }
+        let base = rel_owner(p, owner) * PER_OWNER;
+        out[base + OFF_BLOTS] += 0.25;
+        let t = abs.get();
+        let under_fire = perim.iter().any(|&(eo, e)| {
+            eo != owner && !state.are_allied(owner, eo) && {
+                let d = (t + PERIMETER - e) % PERIMETER; // вперёд от врага к блоту
+                (1..=6).contains(&d)
+            }
+        });
+        if under_fire {
+            out[base + OFF_CONTACT] += 0.25;
         }
     }
 }
@@ -223,6 +262,33 @@ mod tests {
             let rot = encode(&sr, Side::from_index(Side::A.index() + r));
             assert_eq!(base, rot, "вектор должен быть инвариантен к повороту r={r}");
         }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // значения кратны 0.25 — точны
+    fn blots_and_contact() {
+        // A на обычной клетке (progress 10 = abs 19, обычная) — это блот.
+        let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+        s.checkers.clear();
+        s.checkers.push(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress: 10 },
+        });
+        let v = encode(&s, Side::A);
+        assert_eq!(v[OFF_BLOTS], 0.25, "одна своя фишка на обычной клетке — блот");
+        assert_eq!(v[OFF_CONTACT], 0.0, "врагов рядом нет — не под боем");
+
+        // Враг C в 3 клетках ПОЗАДИ блота A (по ходу) — прямой бой.
+        let a_abs = Side::A.entry().advance(10); // клетка блота
+        let behind = a_abs.advance(PERIMETER - 3); // на 3 позади (по ходу к блоту)
+        s.checkers.push(Checker {
+            owner: Side::C,
+            pos: Position::OnTrack {
+                progress: Side::C.progress_of(behind),
+            },
+        });
+        let v = encode(&s, Side::A);
+        assert_eq!(v[OFF_CONTACT], 0.25, "блот A под прямым боем врага в 3 клетках");
     }
 
     #[test]

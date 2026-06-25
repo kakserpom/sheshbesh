@@ -23,8 +23,8 @@
 //! оставить повреждённый `.bin`.
 
 use sheshbesh::{
-    Heuristic, MlpValue, Side, TdConfig, ValueAgent, match_winrate, train_with, winrate_ffa,
-    winrate_ffa_vs, winrate_teams, winrate_teams_vs,
+    FEATURES, Heuristic, MlpValue, Side, TdConfig, ValueAgent, match_winrate, train_with,
+    winrate_ffa, winrate_ffa_vs, winrate_teams, winrate_teams_vs,
 };
 use std::io::Write;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Скрытых нейронов MLP по умолчанию (как в `export_model.rs`); можно переопределить
 /// аргументом — при холодном старте сеть создаётся с этим числом нейронов.
-const HIDDEN: usize = 24;
+const HIDDEN: usize = 48;
 
 struct Mode {
     name: &'static str,
@@ -54,19 +54,21 @@ fn clone_model(m: &MlpValue) -> MlpValue {
 }
 
 /// Загружает модель из файла (число нейронов выводится из длины весов) либо создаёт
-/// новую с `hidden` нейронами (холодный старт). ВНИМАНИЕ: если файл существует, его
-/// `hidden` имеет приоритет — поэтому для нового размера сети нужен **новый** prefix.
+/// новую с `hidden` нейронами (холодный старт). Файл **несовместимой** длины (напр. после
+/// изменения числа признаков в `encode.rs`) молча игнорируется — холодный старт вместо
+/// паники в `from_floats`. ВНИМАНИЕ: совместимый файл задаёт свой `hidden` (тёплый старт);
+/// для нового размера сети нужен **новый** prefix.
 fn load_or_init(path: &str, hidden: usize) -> MlpValue {
-    std::fs::read(path).ok().map_or_else(
-        || MlpValue::new(hidden, 1),
-        |b| {
-            let f: Vec<f32> = b
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect();
-            MlpValue::from_floats(&f)
-        },
-    )
+    let from_file = std::fs::read(path).ok().and_then(|b| {
+        let f: Vec<f32> = b
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        // Совместим ли файл с ТЕКУЩИМ FEATURES? len = h·FEATURES + 2·h + 1.
+        let h = f.len().checked_sub(1)? / (FEATURES + 2);
+        (h > 0 && h * FEATURES + 2 * h + 1 == f.len()).then(|| MlpValue::from_floats(&f))
+    });
+    from_file.unwrap_or_else(|| MlpValue::new(hidden, 1))
 }
 
 /// Атомарное сохранение: пишем во временный файл рядом, затем `rename` (на той же ФС

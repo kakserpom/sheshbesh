@@ -20,7 +20,7 @@ use sheshbesh::{
     winrate_ffa, winrate_teams,
 };
 
-const HIDDEN: usize = 24;
+const HIDDEN: usize = 48;
 
 struct Mode {
     name: &'static str,
