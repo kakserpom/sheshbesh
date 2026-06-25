@@ -341,6 +341,9 @@ pub(crate) fn App() -> impl IntoView {
                                     side_name(captor, &hs)
                                 ));
                             }
+                            // Подсветка по умолчанию для выбора с клавиатуры (Tab/Enter):
+                            // первый вариант обязательного хода.
+                            sel.set(Some(move_source(&st, options[0])));
                             forced_pick.set(Some((side, captor, roll, rem.clone())));
                             play(frames);
                             return;
@@ -761,6 +764,50 @@ pub(crate) fn App() -> impl IntoView {
             .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
             .is_some_and(|el| matches!(el.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT"));
         if in_field {
+            return;
+        }
+        // Выбор обязательного ответа на выкуп (человек-захватчик): Tab — следующий вариант,
+        // Enter/Space/цифра — сыграть выбранный (или единственный). Это ход компьютера, но
+        // отвечает человек, поэтому обрабатываем ДО обычных проверок «ход человека».
+        if let Some((_s, captor, _r, _rem)) = forced_pick.get_untracked() {
+            if animating.get_untracked() || paused.get_untracked() {
+                return;
+            }
+            let st = game.get_untracked().state;
+            let mut opts: Vec<Move> = Vec::new();
+            let mut seen: Vec<usize> = Vec::new();
+            for mv in forced_six_moves(&st, captor) {
+                if !seen.contains(&mv.checker) {
+                    seen.push(mv.checker);
+                    opts.push(mv);
+                }
+            }
+            if opts.is_empty() {
+                return;
+            }
+            match e.code().as_str() {
+                "Tab" => {
+                    e.prevent_default();
+                    let cur = sel.get_untracked();
+                    let i = opts
+                        .iter()
+                        .position(|mv| Some(move_source(&st, *mv)) == cur)
+                        .unwrap_or(0);
+                    sel.set(Some(move_source(&st, opts[(i + 1) % opts.len()])));
+                }
+                "Enter" | "NumpadEnter" | "Space" | "Digit1" | "Numpad1" | "Digit2"
+                | "Numpad2" | "Digit3" | "Numpad3" => {
+                    e.prevent_default();
+                    let cur = sel.get_untracked();
+                    let chosen = opts
+                        .iter()
+                        .copied()
+                        .find(|mv| Some(move_source(&st, *mv)) == cur)
+                        .unwrap_or(opts[0]);
+                    forced_apply(chosen);
+                }
+                _ => {}
+            }
             return;
         }
         let g = game.get_untracked();
@@ -1952,6 +1999,7 @@ pub(crate) fn App() -> impl IntoView {
                 // клетку-цель; клик по цели играет этот ход.
                 {move || forced_pick.get().map(|(_side, captor, _r, _rem)| {
                     let st = game.get().state;
+                    let cur = sel.get(); // выбранный с клавиатуры вариант (Tab) — белой рамкой
                     let mut nodes: Vec<AnyView> = Vec::new();
                     if !animating.get() {
                         let mut shown: Vec<usize> = Vec::new();
@@ -1961,7 +2009,8 @@ pub(crate) fn App() -> impl IntoView {
                             }
                             shown.push(mv.checker);
                             let (sx, sy, _) = checker_xy(&st, mv.checker);
-                            nodes.push(view! { <circle cx=sx cy=sy r=0.47 fill="none" class="hl-src" /> }.into_any());
+                            let src_cls = if cur == Some(move_source(&st, mv)) { "hl-sel" } else { "hl-src" };
+                            nodes.push(view! { <circle cx=sx cy=sy r=0.47 fill="none" class=src_cls /> }.into_any());
                             let (tx, ty, _) = checker_xy(&apply(&st, mv), mv.checker);
                             nodes.push(view! { <circle cx=tx cy=ty r=0.47 fill="none" class="hl-dst" /> }.into_any());
                             nodes.push(view! { <circle cx=tx cy=ty r=0.5 class="hit" on:click=move |_| forced_apply(mv) /> }.into_any());
