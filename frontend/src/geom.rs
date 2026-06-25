@@ -3,8 +3,8 @@ use sheshbesh::board::{
     LOCAL_MOON, LOCAL_MOON_EXIT, LOCAL_PRISON_FAR, LOCAL_PRISON_NEAR, cell_kind,
 };
 use sheshbesh::{
-    BOARD_DIM, CellKind, Checker, Game, GameState, MoonField, PerimeterIdx, Position, Side,
-    checker_cell, margin_coord,
+    BOARD_DIM, BOARD_MARGIN, CellKind, Checker, Game, GameState, MoonField, PerimeterIdx, Position,
+    Side, checker_cell, margin_coord,
 };
 
 // --- Геометрия ---
@@ -259,6 +259,32 @@ pub(crate) fn corner_slot_point(coord: (usize, usize), k: usize) -> (f64, f64) {
     outward_slot(center_pt(coord), k, CORNER_GAP)
 }
 
+/// Единичный вектор «наружу» (перпендикуляр к стороне доски) для клетки периметра `coord`
+/// (координаты сетки `margin_coord`): от того края квадрата, на котором лежит клетка.
+fn perp_outward((row, col): (usize, usize)) -> (f64, f64) {
+    let lo = BOARD_MARGIN;
+    let hi = BOARD_DIM - BOARD_MARGIN - 1;
+    if row == lo {
+        (0.0, -1.0) // верхняя сторона (C) → вверх
+    } else if row == hi {
+        (0.0, 1.0) // нижняя (A) → вниз
+    } else if col == lo {
+        (-1.0, 0.0) // левая (D) → влево
+    } else {
+        (1.0, 0.0) // правая (B) → вправо
+    }
+}
+
+/// Точка слота `k` фишки, СТОЯЩЕЙ на клетке Тюрьмы: разнос как на углу (одноцветные —
+/// в один кружок со счётчиком), но строго **перпендикулярно стороне** (наружу), без
+/// диагонального наклона «к центру», как у углов — клетка Тюрьмы лежит на стороне.
+pub(crate) fn prison_cell_slot_point(coord: (usize, usize), k: usize) -> (f64, f64) {
+    let base = center_pt(coord);
+    let (dx, dy) = perp_outward(coord);
+    let off = k as f64 * CORNER_GAP;
+    (base.0 + dx * off, base.1 + dy * off)
+}
+
 /// Абсолютная клетка-Тюрьма, на которой СТОИТ (OnTrack) фишка — освобождённая
 /// «зашёл-вышел» или проходящая. Клетка Тюрьмы, как и угол, допускает совместное
 /// стояние разных фишек (без съедания), а одноцветные группируются со счётчиком.
@@ -389,7 +415,7 @@ pub(crate) fn stack_counts(state: &GameState) -> Vec<Badge> {
                 let (first, count) = first_and_count(state, |c| {
                     c.owner == owner && checker_on_prison(c.owner, c.pos) == Some(abs)
                 });
-                push(first, corner_slot_point(coord, k), count);
+                push(first, prison_cell_slot_point(coord, k), count);
             }
         }
     }
@@ -530,7 +556,7 @@ pub(crate) fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
         let coord = checker_cell(ch.owner, ch.pos).expect("prison cell");
         let sides = prison_cell_sides(state, abs);
         let k = sides.iter().position(|&s| s == ch.owner).unwrap_or(0);
-        let (x, y) = corner_slot_point(coord, k);
+        let (x, y) = prison_cell_slot_point(coord, k);
         return (x, y, true);
     }
     // Поле Луны — тоже стопка из разных фишек: так же, как на углу.
