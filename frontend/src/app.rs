@@ -173,6 +173,8 @@ pub(crate) fn App() -> impl IntoView {
     // трогает (его переключит собственный обработчик), но закрывает СОСЕДНЕЕ меню;
     // клик вне обоих — закрывает оба. (Эмиттится после on:click кнопки — всплытие.)
     window_event_listener(leptos::ev::click, move |e| {
+        // Разбудить AudioContext по жесту пользователя (iOS без этого не играет).
+        settings::warm_audio();
         let el = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
         let inside = |sel: &str| {
             el.as_ref()

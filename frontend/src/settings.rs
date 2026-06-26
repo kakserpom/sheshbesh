@@ -305,6 +305,13 @@ fn noise(c: &AudioContext, start: f64, dur: f64, vol: f32, center: f64, q: f64) 
     let _ = src.start_with_when(t0);
 }
 
+/// Разбудить AudioContext (вызвать из жеста пользователя для iOS).
+/// На iOS AudioContext можно создать/возобновить только из обработчика жеста;
+/// без этого `play()` из асинхронного таймера не издаст звука.
+pub(crate) fn warm_audio() {
+    let _ = ctx();
+}
+
 /// Проигрывает короткий звук события (если звук включён — проверяет вызывающий).
 pub(crate) fn play(kind: SoundKind) {
     let Some(c) = ctx() else { return };
