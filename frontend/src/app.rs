@@ -473,6 +473,9 @@ fn GameApp() -> impl IntoView {
                 return;
             }
             rolling.set(false);
+            // Показываем результат броска — до расчёта хода ИИ и анимации (иначе
+            // herald перескочил бы с «AI rolls...» сразу на сообщение следующего хода).
+            herald.set(roll_note(side, &hs, r, no_move, i18n));
             // Пауза — не начинаем расчёт, пока пользователь не снимет.
             while paused.get_untracked() {
                 TimeoutFuture::new(150).await;
