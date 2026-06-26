@@ -1,6 +1,7 @@
-use crate::controls::{SpeedControl, ThemeControl};
+use crate::controls::{LocaleControl, SpeedControl, ThemeControl};
 use crate::demo::*;
 use crate::geom::*;
+use crate::i18n::*;
 use crate::lessons::*;
 use crate::model::*;
 use crate::moves_ui::*;
@@ -9,19 +10,41 @@ use crate::util::*;
 use crate::view::*;
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use leptos_meta::Title;
 use sheshbesh::board::LOCAL_MOON;
 use sheshbesh::moves::{forced_six_moves, move_legal};
 use sheshbesh::{
     Agent, BOARD_DIM, BOARD_MARGIN, DEFAULT_WIDTH, DiceRoll, DiceSource, Die, Game, GameState,
-    Heuristic, Move, MoveKind, Position, RandomDice, Side, apply, best_forced, best_turn,
-    best_turn_2ply, legal_turns, legal_turns_remaining, margin_coord, remaining_after,
+    Heuristic, MoonField, Move, MoveKind, Position, RandomDice, Side, apply, best_forced,
+    best_turn, best_turn_2ply, legal_turns, legal_turns_remaining, margin_coord, remaining_after,
 };
 use sheshbesh::turn::next_unfinished_active;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
-#[component]
 pub(crate) fn App() -> impl IntoView {
+    view! {
+        <I18nContextProvider>
+            <GameApp />
+        </I18nContextProvider>
+    }
+}
+
+#[component]
+fn GameApp() -> impl IntoView {
+    let i18n = use_i18n();
+    // Restore locale from localStorage on startup
+    if let Some(window) = web_sys::window() {
+        if let Ok(Some(s)) = window.local_storage() {
+            if let Ok(Some(saved)) = s.get_item("locale") {
+                    if saved == "en" {
+                        i18n.set_locale(Locale::en);
+                    } else if saved == "ru" {
+                        i18n.set_locale(Locale::ru);
+                    }
+                }
+            }
+        }
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
     // Поколение партии: растёт при старте/остановке игры. Любая запущенная анимация
     // (spawn_local) запоминает своё поколение и прекращается, когда оно устарело, —
@@ -41,7 +64,7 @@ pub(crate) fn App() -> impl IntoView {
     let about = RwSignal::new(false);
     let tutorial = RwSignal::new(false);
     let lesson_idx = RwSignal::new(0usize);
-    let lessons_sv = StoredValue::new(lessons());
+    let lessons_sv = StoredValue::new(lessons(i18n));
     // Выбрана ли демонстрационная фишка (первый клик хода в туториале).
     let tut_sel = RwSignal::new(false);
     // Сколько под-ходов текущего шага сыграно (ход = последовательность по костям;
@@ -101,6 +124,8 @@ pub(crate) fn App() -> impl IntoView {
     let hamburger = RwSignal::new(false);
     // Открыт ли выпадающий ползунок скорости (по иконке «⏩»).
     let speed_menu = RwSignal::new(false);
+    // Открыт ли выпадающий список выбора языка (по иконке 🌐).
+    let locale_menu = RwSignal::new(false);
     // Открыт ли выпадающий список выбора темы (в основном меню, по иконке-палитре).
     let theme_menu = RwSignal::new(false);
     // Применяем тему/скорость к корню документа и сохраняем при каждом изменении.
@@ -130,6 +155,7 @@ pub(crate) fn App() -> impl IntoView {
                 || keys_hint.get_untracked()
                 || speed_menu.get_untracked()
                 || theme_menu.get_untracked()
+                || locale_menu.get_untracked()
                 || hamburger.get_untracked()
                 || rules.get_untracked()
                 || about.get_untracked();
@@ -138,6 +164,7 @@ pub(crate) fn App() -> impl IntoView {
                 keys_hint.set(false);
                 speed_menu.set(false);
                 theme_menu.set(false);
+                locale_menu.set(false);
                 hamburger.set(false);
                 rules.set(false);
                 about.set(false);
@@ -184,18 +211,23 @@ pub(crate) fn App() -> impl IntoView {
         if outside_hamburger && hamburger.get_untracked() {
             hamburger.set(false);
         }
-        let (close_theme, close_speed) = if inside(".speed-pick, .hamburger-speed-menu") {
-            (true, false)
+        let (close_theme, close_speed, close_locale) = if inside(".speed-pick, .hamburger-speed-menu") {
+            (true, false, true)
         } else if inside(".theme-pick, .hamburger-theme-menu") {
-            (false, true)
+            (false, true, true)
+        } else if inside(".locale-pick, .locale-menu, .hamburger-locale-btn") {
+            (true, true, false)
         } else {
-            (true, true)
+            (true, true, true)
         };
         if close_theme && theme_menu.get_untracked() {
             theme_menu.set(false);
         }
         if close_speed && speed_menu.get_untracked() {
             speed_menu.set(false);
+        }
+        if close_locale && locale_menu.get_untracked() {
+            locale_menu.set(false);
         }
     });
 
@@ -223,6 +255,7 @@ pub(crate) fn App() -> impl IntoView {
             &finished.get_untracked(),
             teams.get_untracked(),
             &humans.get_untracked(),
+            i18n,
         ) {
             herald.set(msg);
         }
@@ -273,9 +306,7 @@ pub(crate) fn App() -> impl IntoView {
                     if frame.rolling {
                         settings::play(settings::SoundKind::Dice);
                     }
-                    if let Some(n) = &frame.note
-                        && let Some(k) = settings::note_sound(n)
-                    {
+                    if let Some(k) = frame.sound {
                         settings::play(k);
                     }
                 }
@@ -338,7 +369,7 @@ pub(crate) fn App() -> impl IntoView {
                 } else {
                     None
                 };
-                st = apply_with_frames(&mut frames, st, mv, roll, &hs);
+                st = apply_with_frames(&mut frames, st, mv, roll, &hs, i18n);
                 rem = remaining_after(&rem, mv.pips);
                 comp_applied.update_value(|v| v.push(mv));
                 if let Some(captor) = captor {
@@ -346,10 +377,7 @@ pub(crate) fn App() -> impl IntoView {
                     if !options.is_empty() {
                         if hs.contains(&captor) {
                             if let Some(last) = frames.last_mut() {
-                                last.note = Some(format!(
-                                    "{}: выберите обязательный ход на 6 после выкупа.",
-                                    side_name(captor, &hs)
-                                ));
+                                last.note = Some(t_string!(i18n, forced_pick_msg, who = side_name(captor, &hs, i18n)).to_string());
                             }
                             // Подсветка по умолчанию для выбора с клавиатуры (Tab/Enter):
                             // первый вариант обязательного хода.
@@ -359,13 +387,10 @@ pub(crate) fn App() -> impl IntoView {
                             return;
                         }
                         let fidx = best_forced(&m, &st, captor, &options).min(options.len() - 1);
-                        st = apply_with_frames(&mut frames, st, options[fidx], roll, &hs);
+                        st = apply_with_frames(&mut frames, st, options[fidx], roll, &hs, i18n);
                         comp_applied.update_value(|v| v.push(options[fidx]));
                         if let Some(last) = frames.last_mut() {
-                            last.note = Some(format!(
-                                "{}: обязательный ход на 6 после выкупа.",
-                                side_name(captor, &hs)
-                            ));
+                            last.note = Some(t_string!(i18n, forced_reply, who = side_name(captor, &hs, i18n)).to_string());
                         }
                     }
                     interrupted = true;
@@ -394,6 +419,7 @@ pub(crate) fn App() -> impl IntoView {
             note: None,
             pts: Vec::new(),
             fade: false,
+            sound: None,
         });
         play(frames);
     };
@@ -425,18 +451,20 @@ pub(crate) fn App() -> impl IntoView {
             roll: Some(r),
             hold: ROLL_ANIM_MS,
             rolling: true,
-            note: Some(format!("{} бросает кости…", side_name(side, &hs))),
+            note: Some(t_string!(i18n, herald_roll, who = side_name(side, &hs, i18n)).to_string()),
             pts: Vec::new(),
             fade: false,
+            sound: None,
         });
         frames.push(Frame {
             state: g.state.clone(),
             roll: Some(r),
             hold: if no_move { HOLD_NOMOVE_MS } else { HOLD_ROLL_MS },
             rolling: false,
-            note: Some(roll_note(side, &hs, r, no_move)),
+            note: Some(roll_note(side, &hs, r, no_move, i18n)),
             pts: Vec::new(),
             fade: false,
+            sound: None,
         });
         comp_applied.set_value(Vec::new()); // новый ход компьютера — копим заново
         play_computer(frames, g.state.clone(), r.values().to_vec(), r);
@@ -476,7 +504,7 @@ pub(crate) fn App() -> impl IntoView {
             let t = legal_turns(&g.state, r);
             let no_move = t.first().is_none_or(Vec::is_empty);
             let [a, b] = r.values();
-            let name = side_name(g.state.to_move, &hs);
+            let name = side_name(g.state.to_move, &hs, i18n);
             // Анимируем бросок игрока так же, как у компьютера: кубики кувыркаются,
             // затем показывается результат и включается выбор хода.
             let era = epoch.get_value();
@@ -493,7 +521,7 @@ pub(crate) fn App() -> impl IntoView {
             };
             let nomove_ms = (f64::from(HOLD_NOMOVE_MS) * factor) as u32;
             spawn_local(async move {
-                herald.set(format!("{name} бросает кости…"));
+                herald.set(t_string!(i18n, herald_roll, who = &name).to_string());
                 roll.set(Some(r));
                 rolling.set(!instant);
                 TimeoutFuture::new(roll_ms).await;
@@ -505,7 +533,7 @@ pub(crate) fn App() -> impl IntoView {
                 if no_move {
                     // Ходить нечем: показываем бросок и САМИ пропускаем ход через паузу
                     // (без кнопки) — как это делает компьютер.
-                    herald.set(format!("{name}: выпало {a} и {b}. Ходить нечем — пропуск."));
+                    herald.set(t_string!(i18n, herald_no_move, who = &name, a = a, b = b).to_string());
                     TimeoutFuture::new(nomove_ms).await;
                     if epoch.get_value() != era {
                         return;
@@ -524,13 +552,14 @@ pub(crate) fn App() -> impl IntoView {
                         note: None,
                         pts: Vec::new(),
                         fade: false,
+                        sound: None,
                     }]);
                     return;
                 }
                 herald.set(if r.is_double() {
-                    format!("{name}: выпало {a} и {b}. Дубль — ещё ход!")
+                    t_string!(i18n, herald_double, who = &name, a = a, b = b).to_string()
                 } else {
-                    format!("{name}: выпало {a} и {b}. Выберите ход.")
+                    t_string!(i18n, herald_wait_move, who = &name, a = a, b = b).to_string()
                 });
                 turns.set(t);
                 prefix.set(Vec::new());
@@ -554,7 +583,7 @@ pub(crate) fn App() -> impl IntoView {
         }
         let mut scratch = after;
         for &fm in &outcome.forced {
-            scratch = apply_with_frames(&mut frames, scratch, fm, r, &hs);
+            scratch = apply_with_frames(&mut frames, scratch, fm, r, &hs, i18n);
         }
         let _ = scratch;
         // Если использованы не все очки броска — остаток сыграть нечем, он «сгорает».
@@ -563,11 +592,11 @@ pub(crate) fn App() -> impl IntoView {
         let rem = remaining.get_untracked();
         let burn_note = (!rem.is_empty()).then(|| {
             let burned: u8 = rem.iter().sum();
-            let name = side_name(outcome.side, &hs);
+            let name = side_name(outcome.side, &hs, i18n);
             if outcome.again {
-                format!("{name}: сыграть {burned} больше нечем — дубль, переброс!")
+                t_string!(i18n, burn_double, who = &name, n = burned as u16).to_string()
             } else {
-                format!("{name}: сыграть {burned} нечем — кость сгорает.")
+                t_string!(i18n, burn_pip, who = &name, n = burned as u16).to_string()
             }
         });
         frames.push(Frame {
@@ -582,6 +611,7 @@ pub(crate) fn App() -> impl IntoView {
             note: burn_note,
             pts: Vec::new(),
             fade: false,
+            sound: None,
         });
         turns.set(Vec::new());
         prefix.set(Vec::new());
@@ -608,7 +638,7 @@ pub(crate) fn App() -> impl IntoView {
         let ps = g.state.clone();
         let pre = prefix.get_untracked();
         let mut frames = Vec::new();
-        let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs);
+        let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs, i18n);
         remaining.update(|rem| *rem = remaining_after(rem, m.pips));
         if m.kind == MoveKind::Ransom {
             let captor = match ps.checkers[m.checker].pos {
@@ -624,12 +654,9 @@ pub(crate) fn App() -> impl IntoView {
                     teams.get_untracked(),
                 );
                 let fidx = best_forced(&cm, &after, captor, &options).min(options.len() - 1);
-                after = apply_with_frames(&mut frames, after, options[fidx], r, &hs);
+                after = apply_with_frames(&mut frames, after, options[fidx], r, &hs, i18n);
                 if let Some(last) = frames.last_mut() {
-                    last.note = Some(format!(
-                        "{}: обязательный ход на 6 после выкупа.",
-                        side_name(captor, &hs)
-                    ));
+                    last.note = Some(t_string!(i18n, forced_reply, who = side_name(captor, &hs, i18n)).to_string());
                 }
             }
             turn_start.set_value(after.clone());
@@ -678,7 +705,7 @@ pub(crate) fn App() -> impl IntoView {
         let mut frames = Vec::new();
         let mut st = g.state.clone();
         for &mv in &seq {
-            st = apply_with_frames(&mut frames, st, mv, r, &hs);
+            st = apply_with_frames(&mut frames, st, mv, r, &hs, i18n);
             remaining.update(|rem| *rem = remaining_after(rem, mv.pips));
         }
         let mut played = pre.clone();
@@ -699,7 +726,7 @@ pub(crate) fn App() -> impl IntoView {
         let hs = humans.get_untracked();
         let st = game.get_untracked().state;
         let mut frames = Vec::new();
-        let st2 = apply_with_frames(&mut frames, st, fm, roll, &hs);
+        let st2 = apply_with_frames(&mut frames, st, fm, roll, &hs, i18n);
         comp_applied.update_value(|v| v.push(fm)); // ответ человека — часть хода компьютера
         forced_pick.set(None);
         play_computer(frames, st2, rem, roll);
@@ -977,10 +1004,7 @@ pub(crate) fn App() -> impl IntoView {
             active.len()
         ));
         let g = fresh(dice, active, teams_on);
-        herald.set(format!(
-            "Игра началась! Ходит {}.",
-            side_name(g.state.to_move, &hs)
-        ));
+        herald.set(t_string!(i18n, herald_game_on, who = side_name(g.state.to_move, &hs, i18n)).to_string());
         game.set(g);
         started.set(true);
         kickoff();
@@ -1015,15 +1039,16 @@ pub(crate) fn App() -> impl IntoView {
         let mut frames = Vec::new();
         commit_frames(&mut frames, &mut gg, r, played, &[], true, |s, c, o| {
             Heuristic.choose_forced(s, c, o)
-        });
+        }, i18n);
         frames.push(Frame {
             state: gg.state.clone(),
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
-            note: Some("Демо завершено.".to_string()),
+            note: Some(t_string!(i18n, demo_complete).to_string()),
             pts: Vec::new(),
             fade: false,
+            sound: None,
         });
         play(frames);
     };
@@ -1047,11 +1072,7 @@ pub(crate) fn App() -> impl IntoView {
         prefix.set(Vec::new());
         remaining.set(r.values().to_vec());
         sel.set(None);
-        herald.set(
-            "Тест входа в Дом: клетка входа (ворота) — обычная клетка, на ней можно \
-             остановиться (Step); заход в Дом — отдельным ходом, по клетке Дома внутри."
-                .to_string(),
-        );
+        herald.set(t_string!(i18n, home_test_herald).to_string());
         dev.set(false);
         started.set(true);
         kickoff();
@@ -1063,7 +1084,7 @@ pub(crate) fn App() -> impl IntoView {
         animating.set(false);
         game.set(Game::new(demo_game(Demo::Reserve)));
         roll.set(None);
-        herald.set("Режим разработчика: выберите сценарий.".to_string());
+        herald.set(t_string!(i18n, dev_title).to_string());
         dev.set(true);
     };
 
@@ -1079,16 +1100,17 @@ pub(crate) fn App() -> impl IntoView {
     };
 
     view! {
+        <Title text=t_string!(i18n, app_title) />
         <div class="wrap">
             // Заголовок — только на экране настроек; в партии/обучении он лишь крал бы
             // высоту у доски.
             {move || (!started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get())
-                .then(|| view! { <h1>"Шеш-Беш"</h1> })}
+                .then(|| view! { <h1>{t_string!(i18n, app_title)}</h1> })}
             // Экран настроек до старта партии: число игроков и тип каждой стороны.
-            {move || (!started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get()).then(|| view! {
+                    {move || (!started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get()).then(|| view! {
                 <div class="settings">
                     <div class="set-row">
-                        <span>"Игроков:"</span>
+                        <span>{t!(i18n, settings_players)}</span>
                         {[2usize, 3, 4].into_iter().map(|n| view! {
                             <button
                                 class:on=move || players.get() == n
@@ -1103,10 +1125,10 @@ pub(crate) fn App() -> impl IntoView {
                             view! {
                                 <div class="set-row">
                                     <b style=format!("color:{}", side_color(s))>
-                                        {format!("Сторона {}", s.letter())}
+                                        {t_string!(i18n, settings_side, letter = s.letter().to_string())}
                                     </b>
                                     <button class:on=is_h on:click=move |_| toggle_human(s)>
-                                        {move || if is_h() { "Человек" } else { "Компьютер" }}
+                                        {move || if is_h() { t_string!(i18n, settings_human).to_string() } else { t_string!(i18n, settings_computer).to_string() }}
                                     </button>
                                     // Для компьютера — выбор алгоритма (MLP/Linear/эвристика).
                                     {move || (!is_h()).then(|| view! {
@@ -1116,7 +1138,7 @@ pub(crate) fn App() -> impl IntoView {
                                                 view! {
                                                     <button class:on=on
                                                         on:click=move |_| algos.update(|arr| arr[s.index()] = a)>
-                                                        {a.label()}
+                                                        {a.label(i18n)}
                                                     </button>
                                                 }
                                             }).collect_view()}
@@ -1129,18 +1151,18 @@ pub(crate) fn App() -> impl IntoView {
                     // Режим вчетвером: команды 2×2 (A+C vs B+D) или каждый сам за себя.
                     {move || (players.get() == 4).then(|| view! {
                         <div class="set-row">
-                            <span>"Режим:"</span>
+                            <span>{t!(i18n, settings_mode)}</span>
                             <button class:on=move || teams.get() on:click=move |_| teams.set(true)>
-                                "Команды 2×2"
+                                {t!(i18n, settings_teams)}
                             </button>
                             <button class:on=move || !teams.get() on:click=move |_| teams.set(false)>
-                                "Каждый сам"
+                                {t!(i18n, settings_ffa)}
                             </button>
                         </div>
                     })}
                     // Скорость анимации — видна сразу (ползунок, без кнопки).
-                    <div class="set-row"><SpeedControl speed/></div>
-                    <button class="primary" on:click=start_game>"Начать игру"</button>
+                    <div class="set-row"><SpeedControl speed i18n=i18n/></div>
+                    <button class="primary" on:click=start_game>{t!(i18n, settings_start)}</button>
                     <div class="set-row">
                         <button on:click=move |_| {
                             epoch.update_value(|e| *e += 1);
@@ -1159,14 +1181,16 @@ pub(crate) fn App() -> impl IntoView {
                                 }
                             });
                             tutorial.set(true);
-                        }>"🎓 Обучение"</button>
-                        <button on:click=move |_| rules.set(true)>"📖 Правила"</button>
-                        <button on:click=move |_| about.set(true)>"❤️ От автора"</button>
+                        }>{t!(i18n, settings_tutorial)}</button>
+                        <button on:click=move |_| rules.set(true)>{t!(i18n, settings_rules)}</button>
+                        <button on:click=move |_| about.set(true)>{t!(i18n, settings_about)}</button>
+                        // Переключение языка — выпадающее меню как у темы.
+                        <LocaleControl i18n menu_open=locale_menu/>
                         // Выбор темы оформления — иконка-палитра с выпадающим списком.
-                        <ThemeControl theme menu_open=theme_menu/>
+                        <ThemeControl theme menu_open=theme_menu i18n=i18n/>
                         // Режим разработчика — только в отладочной сборке.
                         {cfg!(debug_assertions).then(|| view! {
-                            <button class="icon-btn" title="Режим разработчика" on:click=open_dev>"🛠"</button>
+                            <button class="icon-btn" title=t_string!(i18n, settings_dev) on:click=open_dev>"🛠"</button>
                         })}
                     </div>
                 </div>
@@ -1176,51 +1200,51 @@ pub(crate) fn App() -> impl IntoView {
             {move || rules.get().then(|| view! {
                 <div class="rules">
                     <div class="page-head">
-                        <button class="icon-btn" title="Назад" on:click=move |_| rules.set(false)>"←"</button>
-                        <h2>"Шеш-Беш — правила"</h2>
+                        <button class="icon-btn" title=t_string!(i18n, tutorial_back) on:click=move |_| rules.set(false)>"←"</button>
+                        <h2 inner_html=t_string!(i18n, rules_title) />
                     </div>
-                    <p class="lead">"Самобытный вариант нард. Играют вдвоём (противоположные стороны) или вчетвером; каждый владеет одной стороной квадрата и её Домом. Вчетвером можно играть командами 2×2 (союзники — противоположные стороны) или каждый сам за себя (FFA)."</p>
+                    <p class="lead" inner_html=t_string!(i18n, rules_lead) />
 
-                    <h3>"Цель"</h3>
-                    <p>"Провести все 4 свои фишки полный круг по доске (против часовой стрелки) и завести их в свой Дом. Чужие фишки в Дом попасть не могут. Вдвоём победил тот, кто первым собрал Дом. В командах 2×2 победа, когда обе стороны команды завели все фишки. В FFA партия идёт, пока не финишируют все, кроме одного (последний — проигравший)."</p>
+                    <h3 inner_html=t_string!(i18n, rules_goal_title) />
+                    <p inner_html=t_string!(i18n, rules_goal_text) />
 
-                    <h3>"Право первого хода"</h3>
-                    <p>"Активные стороны по очереди кидают кости; начинает тот, кто первым выбросил 6."</p>
+                    <h3 inner_html=t_string!(i18n, rules_first_title) />
+                    <p inner_html=t_string!(i18n, rules_first_text) />
 
-                    <h3>"Доска"</h3>
+                    <h3 inner_html=t_string!(i18n, rules_board_title) />
                     <ul>
-                        <li>"Квадрат; у каждой из 4 сторон — 19 клеток (углы общие для двух сторон). Против часовой стрелки."</li>
-                        <li>"Посередине каждой стороны — "<b>"Дом"</b>" из 4 клеток, идущих внутрь квадрата."</li>
-                        <li>"Все фишки стартуют в резерве у своего Дома и вводятся в игру."</li>
+                        <li inner_html=t_string!(i18n, rules_board_l1) />
+                        <li inner_html=t_string!(i18n, rules_board_l2) />
+                        <li inner_html=t_string!(i18n, rules_board_l3) />
                     </ul>
 
-                    <h3>"Ход"</h3>
+                    <h3 inner_html=t_string!(i18n, rules_move_title) />
                     <ul>
-                        <li>"За ход бросают две кости. Значения можно отнести к двум разным фишкам (по значению на каждую) или объединить на одну («в один мах»)."</li>
-                        <li>"«Выбросить число» всегда значит значение на "<b>"одной"</b>" кости, а не сумму."</li>
-                        <li>"Объединять кости можно только при ходе по периметру. Для спец-действий (ввод, выкуп, Луна, Тюрьма, Дом) нужна ровно одна кость нужного значения."</li>
-                        <li>"Ввод фишки в игру — по "<b>"6"</b>". На точку входа нельзя поставить вторую свою фишку; чужую там можно съесть."</li>
-                        <li>"Дубль даёт право на ещё один полный ход."</li>
-                        <li>"Правило максимального хода: из вариантов выбирают тот, что использует больше очков (в идеале — все)."</li>
-                        <li>"Нельзя проходить через занятые клетки — исключение только углы (через занятый угол проходить можно). Свою и чужую фишку на пути перешагнуть нельзя."</li>
+                        <li inner_html=t_string!(i18n, rules_move_l1) />
+                        <li inner_html=t_string!(i18n, rules_move_l2) />
+                        <li inner_html=t_string!(i18n, rules_move_l3) />
+                        <li inner_html=t_string!(i18n, rules_move_l4) />
+                        <li inner_html=t_string!(i18n, rules_move_l5) />
+                        <li inner_html=t_string!(i18n, rules_move_l6) />
+                        <li inner_html=t_string!(i18n, rules_move_l7) />
                     </ul>
 
-                    <h3>"Особые клетки"</h3>
+                    <h3 inner_html=t_string!(i18n, rules_special_title) />
                     <ul>
-                        <li><b style="color:#93c5fd">"Луна"</b>" (2-я клетка от угла) — короткий путь. Фишка улетает на внутреннюю дорожку полей 1·3·6: с «1» — на «3», с «3» — на «6», с «6» — обратно на доску (на 2-ю клетку от следующего угла). Если на выходе стоит чужая фишка, она съедается. Луна полностью безопасна (и вход, и дорожка). Чужие Луны срезают путь вперёд, своя Луна (у самого Дома) выбрасывает фишку в начало круга — это второй круг."</li>
-                        <li><b>"Тюрьма"</b>" (4-я клетка от угла) — изолирует фишку: выйти можно только выбросив 4 (фишка освобождается и остаётся на месте, никуда не продвигаясь). Удобно блокировать чужие фишки. Фишка попадает в Тюрьму, только если клетка Тюрьмы — конечная цель хода; если лишь перешагивает её (объединённый ход или большая кость), Тюрьма не срабатывает. Пленник внутри Тюрьмы не мешает проходу — перекрывает клетку только освобождённая фишка, стоящая на ней."</li>
-                        <li><b>"Углы"</b>" — общие клетки; на них фишки не едят друг друга, и через занятый угол можно проходить."</li>
+                        <li inner_html=t_string!(i18n, rules_special_l1) />
+                        <li inner_html=t_string!(i18n, rules_special_l2) />
+                        <li inner_html=t_string!(i18n, rules_special_l3) />
                     </ul>
 
-                    <h3>"Съедание, плен и выкуп"</h3>
+                    <h3 inner_html=t_string!(i18n, rules_capture_title) />
                     <ul>
-                        <li>"Встав на клетку с чужой фишкой, вы её съедаете — она попадает к вам в плен. В командах 2×2 союзники не едят друг друга."</li>
-                        <li>"Съедания нет на углах, Луне и в Тюрьме."</li>
-                        <li>"Чтобы вернуть пленную фишку, нужно выбросить 6 (выкуп). Соперник не вправе отказать — он обязан сделать ответный ход на 6 клеток (если есть легальный ход на 6; иначе — пропуск). После этого нужна ещё одна 6 для повторного ввода фишки."</li>
+                        <li inner_html=t_string!(i18n, rules_capture_l1) />
+                        <li inner_html=t_string!(i18n, rules_capture_l2) />
+                        <li inner_html=t_string!(i18n, rules_capture_l3) />
                     </ul>
 
-                    <h3>"Дом"</h3>
-                    <p>"Заход в Дом — ровно по броску, по одной фишке в клетку; перепрыгивать занятые клетки Дома нельзя (но фишка в Доме может идти глубже, освобождая место). Перебор за пределы Дома нелегален. Второй круг возможен через Луну: своя Луна стоит у самого Дома, и фишка с неё выходит в начало круга — приходится идти ещё один полный круг."</p>
+                    <h3 inner_html=t_string!(i18n, rules_home_title) />
+                    <p inner_html=t_string!(i18n, rules_home_text) />
                 </div>
             })}
 
@@ -1228,13 +1252,13 @@ pub(crate) fn App() -> impl IntoView {
             {move || about.get().then(|| view! {
                 <div class="rules">
                     <div class="page-head">
-                        <button class="icon-btn" title="Назад" on:click=move |_| about.set(false)>"←"</button>
-                        <h2>"От автора"</h2>
+                        <button class="icon-btn" title=t_string!(i18n, tutorial_back) on:click=move |_| about.set(false)>"←"</button>
+                        <h2 inner_html=t_string!(i18n, about_title) />
                     </div>
-                    <p>"Эта настольная игра ещё в 70-е годы была известна среди студентов МИФИ под названием «Шеш-Беш», «Шиш-Беш» или просто «Шишка». Мой отец играл в неё с одногруппниками."</p>
-                    <p>"В 90-е годы я был маленьким и в один из дней мы с отцом купили в книжном магазине лист ватмана и он расчертил на нём поле. Мы стали играть вечерами, сидя на ковре. К нам присоединялись его школьные и студенческие друзья. Было здорово."</p>
-                    <p>"Вспоминая эти моменты с теплотой, я решил воссоздать игру на компьютере."</p>
-                    <p>"Упоминаний этого варианта игры в Интернете мне найти так и не удалось, находил лишь похожую настолку под названием «Шеш-Беш», но выглядит она несколько иначе: поле в виде креста, без Луны и Тюрьмы."</p>
+                    <p inner_html=t_string!(i18n, about_p1) />
+                    <p inner_html=t_string!(i18n, about_p2) />
+                    <p inner_html=t_string!(i18n, about_p3) />
+                    <p inner_html=t_string!(i18n, about_p4) />
                 </div>
             })}
 
@@ -1255,7 +1279,7 @@ pub(crate) fn App() -> impl IntoView {
                                 st.to_move = Side::C;
                                 frames.extend(roll_only_frames(&st, opp.roll));
                                 for mv in &opp.moves {
-                                    st = apply_with_frames(frames, st, *mv, opp.roll, &[]);
+                                    st = apply_with_frames(frames, st, *mv, opp.roll, &[], i18n);
                                 }
                                 st.to_move = Side::A; // вернули очередь игроку
                                 st
@@ -1282,11 +1306,11 @@ pub(crate) fn App() -> impl IntoView {
                                     if next_commit {
                                         let mut s = nb;
                                         for mv in &ls[cur + 1].moves {
-                                            s = apply_with_frames(frames, s, *mv, nr, &[]);
+                                            s = apply_with_frames(frames, s, *mv, nr, &[], i18n);
                                         }
                                     }
                                 }
-                                None => frames.push(Frame { state: nb, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None, pts: Vec::new(), fade: false }),
+                                None => frames.push(Frame { state: nb, roll: None, hold: HOLD_STEP_MS, rolling: false, note: None, pts: Vec::new(), fade: false, sound: None }),
                             }
                             if teleport && let Some(f) = frames.get_mut(mark) {
                                 f.fade = true;
@@ -1325,7 +1349,7 @@ pub(crate) fn App() -> impl IntoView {
                                 let mut frames = Vec::new();
                                 let mut s = st;
                                 for mv in &ls[cur].moves {
-                                    s = apply_with_frames(&mut frames, s, *mv, r, &[]);
+                                    s = apply_with_frames(&mut frames, s, *mv, r, &[], i18n);
                                 }
                                 tut_sel.set(false);
                                 tut_played.set(1); // дальше — выбор хода на 6
@@ -1335,7 +1359,7 @@ pub(crate) fn App() -> impl IntoView {
                                 let opts = forced_six_moves(&st, Side::A);
                                 let mut frames = Vec::new();
                                 let end = match opts.first() {
-                                    Some(mv) => apply_with_frames(&mut frames, st, *mv, r, &[]),
+                                    Some(mv) => apply_with_frames(&mut frames, st, *mv, r, &[], i18n),
                                     None => st,
                                 };
                                 tut_sel.set(false);
@@ -1353,7 +1377,7 @@ pub(crate) fn App() -> impl IntoView {
                                 let mut state = game.get_untracked().state.clone();
                                 let mut frames = Vec::new();
                                 for mv in &chosen[k..end] {
-                                    state = apply_with_frames(&mut frames, state, *mv, r, &[]);
+                                    state = apply_with_frames(&mut frames, state, *mv, r, &[], i18n);
                                 }
                                 tut_sel.set(false);
                                 if end >= chosen.len() {
@@ -1426,44 +1450,72 @@ pub(crate) fn App() -> impl IntoView {
                 view! {
                     <div class="status">
                         <div class="status-left">
-                        <button class="icon-btn" title="Назад в меню" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
+                        <button class="icon-btn" title=t_string!(i18n, tutorial_back) on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
                         <button class="icon-btn hamburger-btn" class:on=move || hamburger.get()
-                            title="Меню" on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
+                            title=t_string!(i18n, hamburger_menu) on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
                         <div class="hamburger-content" class:open=move || hamburger.get()>
-                        <button class="hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">"Правила"</span></button>
+                        <button class="hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">{t_string!(i18n, hamburger_rules)}</span></button>
                         <button class="hamburger-item" on:click=move |_| sound.update(|s| *s = !*s)>
-                            {move || if sound.get() { "🔊" } else { "🔇" }}<span class="hamburger-label">"Звук"</span>
+                            {move || if sound.get() { "🔊" } else { "🔇" }}<span class="hamburger-label">{t_string!(i18n, hamburger_sound)}</span>
                         </button>
-                        <button class="hamburger-item" on:click=move |_| speed_menu.update(|o| *o = !*o)>
-                            "⏩" <span class="hamburger-label">"Скорость"</span>
+                        <div class="hamburger-item-wrap">
+                        <button class="hamburger-item hamburger-locale-btn" on:click=move |_| locale_menu.update(|o| *o = !*o)>
+                            "🌐" <span class="hamburger-label">{t_string!(i18n, settings_lang)}</span>
+                        </button>
+                        {move || locale_menu.get().then(|| view! {
+                            <div class="hamburger-submenu">
+                                <button class:on=move || i18n.get_locale() == Locale::ru
+                                    on:click=move |_| {
+                                        let _ = web_sys::window().and_then(|w| w.local_storage().ok().flatten().map(|s| s.set_item("locale", "ru").ok()));
+                                        i18n.set_locale(Locale::ru);
+                                        locale_menu.set(false);
+                                    }>{t_string!(i18n, locale_ru)}</button>
+                                <button class:on=move || i18n.get_locale() == Locale::en
+                                    on:click=move |_| {
+                                        let _ = web_sys::window().and_then(|w| w.local_storage().ok().flatten().map(|s| s.set_item("locale", "en").ok()));
+                                        i18n.set_locale(Locale::en);
+                                        locale_menu.set(false);
+                                    }>{t_string!(i18n, locale_en)}</button>
+                            </div>
+                        })}
+                        </div>
+                        <div class="hamburger-item-wrap">
+                        <button class="hamburger-item hamburger-speed-menu" on:click=move |_| speed_menu.update(|o| *o = !*o)>
+                            "⏩" <span class="hamburger-label">{t_string!(i18n, hamburger_speed)}</span>
                         </button>
                         {move || speed_menu.get().then(|| view! {
                             <div class="hamburger-submenu hamburger-speed-menu">
-                                <SpeedControl speed/>
+<SpeedControl speed i18n=i18n/>
                             </div>
                         })}
-                        <button class="hamburger-item" on:click=move |_| theme_menu.update(|o| *o = !*o)>
-                            "🎨" <span class="hamburger-label">"Тема"</span>
+                        </div>
+                        <div class="hamburger-item-wrap">
+                        <button class="hamburger-item hamburger-theme-menu" on:click=move |_| theme_menu.update(|o| *o = !*o)>
+                            "🎨" <span class="hamburger-label">{t_string!(i18n, hamburger_theme)}</span>
                         </button>
                         {move || theme_menu.get().then(|| view! {
                             <div class="hamburger-submenu hamburger-theme-menu">
-                                <div class="hamburger-theme-row">
-                                    {Theme::ALL.into_iter().map(|t| {
-                                        let on = move || theme.get() == t;
-                                        view! {
-                                            <button class:on=on on:click=move |_| theme.set(t)>
-                                                {t.label()}
-                                            </button>
-                                        }
-                                    }).collect_view()}
-                                </div>
+                                {Theme::ALL.into_iter().map(|t| {
+                                    let on = move || theme.get() == t;
+                                    view! {
+                                        <button class:on=on on:click=move |_| theme.set(t)>
+                                            {move || match t {
+                                                Theme::Midnight => t_string!(i18n, theme_midnight),
+                                                Theme::Dusk => t_string!(i18n, theme_dusk),
+                                                Theme::Daylight => t_string!(i18n, theme_daylight),
+                                                Theme::Forest => t_string!(i18n, theme_forest),
+                                            }}
+                                        </button>
+                                    }
+                                }).collect_view()}
                             </div>
                         })}
+                        </div>
                         </div>
                         </div>
                         // Выпадающий список шагов — прыжок на любой шаг обучения.
                         <div class="lesson-pick">
-                            <span class="lesson-label">"Шаг обучения"</span>
+                            <span class="lesson-label">{t_string!(i18n, tutorial_lesson)}</span>
                             <select class="lesson-select"
                                 prop:value=move || lesson_idx.get().to_string()
                                 on:change=move |ev| {
@@ -1568,7 +1620,7 @@ pub(crate) fn App() -> impl IntoView {
                                                     if animating.get_untracked() { return; }
                                                     let st = game.get_untracked().state.clone();
                                                     let mut frames = Vec::new();
-                                                    let end = apply_with_frames(&mut frames, st, mv, r, &[]);
+                                                    let end = apply_with_frames(&mut frames, st, mv, r, &[], i18n);
                                                     tut_pick.set(None);
                                                     finish_step(&mut frames, &end, cur);
                                                     play(frames);
@@ -1600,13 +1652,13 @@ pub(crate) fn App() -> impl IntoView {
                         view! { <div class="board-dice" class:vert=vertical style=format!("left:{fx:.2}%;top:{fy:.2}%")>{inner}</div> }
                     })}
                     // Навигация по шагам — стрелки по краям доски.
-                    <button class="nav-arrow left" title="Назад"
+                    <button class="nav-arrow left" title=t_string!(i18n, tutorial_prev)
                         on:click=move |_| {
                             // Назад — через тот же fade-переход, что и выпадающий список.
                             let i = lesson_idx.get_untracked().saturating_sub(1);
                             goto_lesson(i);
                         }>"◀"</button>
-                    <button class="nav-arrow right" title="Далее"
+                    <button class="nav-arrow right" title=t_string!(i18n, tutorial_next)
                         on:click=move |_| play_submoves(usize::MAX)>"▶"</button>
                     </div>
                     </div>
@@ -1619,9 +1671,9 @@ pub(crate) fn App() -> impl IntoView {
                         // Кости противника (ход C) подписываем отдельно.
                         if rolling.get() {
                             if game.get().state.to_move == Side::A {
-                                "🎲 Бросаем кости…".to_string()
+                                t_string!(i18n, tutorial_hint_roll).to_string()
                             } else {
-                                "🎲 Противник бросает кости…".to_string()
+                                t_string!(i18n, tutorial_hint_opp_roll).to_string()
                             }
                         } else {
                             lessons_sv.with_value(|ls| ls[lesson_idx.get().min(total - 1)].text.to_string())
@@ -1634,11 +1686,11 @@ pub(crate) fn App() -> impl IntoView {
                             ().into_any()
                         } else if ls[cur].commit {
                             (tut_played.get() == 1).then(|| view! {
-                                <p class="lesson-hint">"👆 Выберите, какой фишкой сделать обязательный ход на 6: нажмите фишку, затем её клетку."</p>
+                                <p class="lesson-hint">{t_string!(i18n, tutorial_hint_ransom)}</p>
                             }).into_any()
                         } else if ls[cur].roll.is_some() {
                             view! {
-                                <p class="lesson-hint">"👆 Сделайте ход сами: нажмите на фишку, затем на подсвеченную клетку. Или жмите ▶."</p>
+                                <p class="lesson-hint">{t_string!(i18n, tutorial_hint_move)}</p>
                             }.into_any()
                         } else {
                             ().into_any()
@@ -1652,27 +1704,40 @@ pub(crate) fn App() -> impl IntoView {
             {move || dev.get().then(|| view! {
                 <div class="status">
                     <div class="status-left">
-                    <button class="icon-btn" title="Настройки" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); dev.set(false); }>"←"</button>
+                    <button class="icon-btn" title=t_string!(i18n, dev_back) on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); dev.set(false); }>"←"</button>
                     </div>
                     <span class="herald" inner_html=move || herald.get()></span>
                 </div>
                 <div class="controls dev-controls">
-                    {DEMOS.iter().map(|&(d, label)| view! {
-                        <button on:click=move |_| {
-                            // Обрываем демо-анимацию, если идёт, и показываем сценарий.
-                            epoch.update_value(|e| *e += 1);
-                            animating.set(false);
-                            game.set(Game::new(demo_game(d)));
-                            roll.set(None);
-                            herald.set(label.to_string());
-                        }>{label}</button>
+                    {DEMOS.iter().map(|d| {
+                        let demo_label = move || match d {
+                            Demo::Reserve => t_string!(i18n, demo_reserve),
+                            Demo::Moon(MoonField::One) => t_string!(i18n, demo_moon_1),
+                            Demo::Moon(MoonField::Three) => t_string!(i18n, demo_moon_3),
+                            Demo::Moon(MoonField::Six) => t_string!(i18n, demo_moon_6),
+                            Demo::Cell => t_string!(i18n, demo_cell),
+                            Demo::Prison => t_string!(i18n, demo_prison),
+                            Demo::PrisonStack => t_string!(i18n, demo_prison_stack),
+                            Demo::Captured => t_string!(i18n, demo_captured),
+                            Demo::Homes => t_string!(i18n, demo_homes),
+                        };
+                        let demo = *d;
+                        view! {
+                            <button on:click=move |_| {
+                                epoch.update_value(|e| *e += 1);
+                                animating.set(false);
+                                game.set(Game::new(demo_game(demo)));
+                                roll.set(None);
+                                herald.set(demo_label().to_string());
+                            }>{demo_label().to_string()}</button>
+                        }
                     }).collect_view()}
-                    <button on:click=anim_demo>"▶ Анимация: ход и съедание"</button>
-                    <button on:click=home_test>"🏠 Тест: вход в Дом (клик)"</button>
+                    <button on:click=anim_demo>{t!(i18n, demo_anim)}</button>
+                    <button on:click=home_test>{t!(i18n, demo_home_test)}</button>
                 </div>
                 // Панель прослушивания звуков: по кнопке на каждое событие.
                 <div class="controls dev-controls">
-                    <span class="set-name">"Звуки:"</span>
+                    <span class="set-name">{t_string!(i18n, dev_sounds)}</span>
                     {settings::SoundKind::ALL.iter().map(|&(kind, label)| view! {
                         <button on:click=move |_| settings::play(kind)>{label}</button>
                     }).collect_view()}
@@ -1707,47 +1772,75 @@ pub(crate) fn App() -> impl IntoView {
             {move || (started.get() && !rules.get()).then(|| view! {
             <div class="status">
                 <div class="status-left">
-                <button class="icon-btn" title="Закончить игру" on:click=to_settings>"⏹"</button>
+                <button class="icon-btn" title=t_string!(i18n, game_stop) on:click=to_settings>"⏹"</button>
                 <button class="icon-btn" class:on=move || paused.get()
-                    title=move || if paused.get() { "Продолжить" } else { "Пауза" }
+                    title=move || if paused.get() { t_string!(i18n, game_resume) } else { t_string!(i18n, game_pause) }
                     on:click=move |_| paused.update(|p| *p = !*p)>
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
                 <button class="icon-btn hamburger-btn" class:on=move || hamburger.get()
-                    title="Меню" on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
+                    title=t_string!(i18n, hamburger_menu) on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
                 <div class="hamburger-content" class:open=move || hamburger.get()>
-                <button class="hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">"Правила"</span></button>
-                <button class="hamburger-item" on:click=move |_| { keys_hint.update(|v| *v = !*v); hamburger.set(false); }>"⌨" <span class="hamburger-label">"Горячие клавиши"</span></button>
+                <button class="hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">{t_string!(i18n, hamburger_rules)}</span></button>
+                <button class="hamburger-item" on:click=move |_| { keys_hint.update(|v| *v = !*v); hamburger.set(false); }>"⌨" <span class="hamburger-label">{t_string!(i18n, hamburger_keys)}</span></button>
                 <button class="hamburger-item" on:click=move |_| sound.update(|s| *s = !*s)>
-                    {move || if sound.get() { "🔊" } else { "🔇" }}<span class="hamburger-label">"Звук"</span>
+                    {move || if sound.get() { "🔊" } else { "🔇" }}<span class="hamburger-label">{t_string!(i18n, hamburger_sound)}</span>
                 </button>
-                <button class="hamburger-item" on:click=move |_| speed_menu.update(|o| *o = !*o)>
-                    "⏩" <span class="hamburger-label">"Скорость"</span>
+                <div class="hamburger-item-wrap">
+                <button class="hamburger-item hamburger-locale-btn" on:click=move |_| locale_menu.update(|o| *o = !*o)>
+                    "🌐" <span class="hamburger-label">{t_string!(i18n, settings_lang)}</span>
+                </button>
+                {move || locale_menu.get().then(|| view! {
+                    <div class="hamburger-submenu">
+                        <button class:on=move || i18n.get_locale() == Locale::ru
+                            on:click=move |_| {
+                                let _ = web_sys::window().and_then(|w| w.local_storage().ok().flatten().map(|s| s.set_item("locale", "ru").ok()));
+                                i18n.set_locale(Locale::ru);
+                                locale_menu.set(false);
+                            }>{t_string!(i18n, locale_ru)}</button>
+                        <button class:on=move || i18n.get_locale() == Locale::en
+                            on:click=move |_| {
+                                let _ = web_sys::window().and_then(|w| w.local_storage().ok().flatten().map(|s| s.set_item("locale", "en").ok()));
+                                i18n.set_locale(Locale::en);
+                                locale_menu.set(false);
+                            }>{t_string!(i18n, locale_en)}</button>
+                    </div>
+                })}
+                </div>
+                <div class="hamburger-item-wrap">
+                <button class="hamburger-item hamburger-speed-menu" on:click=move |_| speed_menu.update(|o| *o = !*o)>
+                    "⏩" <span class="hamburger-label">{t_string!(i18n, hamburger_speed)}</span>
                 </button>
                 {move || speed_menu.get().then(|| view! {
                     <div class="hamburger-submenu hamburger-speed-menu">
-                        <SpeedControl speed/>
+                        <SpeedControl speed i18n=i18n/>
                     </div>
                 })}
-                <button class="hamburger-item" on:click=move |_| theme_menu.update(|o| *o = !*o)>
-                    "🎨" <span class="hamburger-label">"Тема"</span>
+                </div>
+                <div class="hamburger-item-wrap">
+                <button class="hamburger-item hamburger-theme-menu" on:click=move |_| theme_menu.update(|o| *o = !*o)>
+                    "🎨" <span class="hamburger-label">{t_string!(i18n, hamburger_theme)}</span>
                 </button>
                 {move || theme_menu.get().then(|| view! {
                     <div class="hamburger-submenu hamburger-theme-menu">
-                        <div class="hamburger-theme-row">
-                            {Theme::ALL.into_iter().map(|t| {
-                                let on = move || theme.get() == t;
-                                view! {
-                                    <button class:on=on on:click=move |_| theme.set(t)>
-                                        {t.label()}
-                                    </button>
-                                }
-                            }).collect_view()}
-                        </div>
+                        {Theme::ALL.into_iter().map(|t| {
+                            let on = move || theme.get() == t;
+                            view! {
+                                <button class:on=on on:click=move |_| theme.set(t)>
+                                    {move || match t {
+                                        Theme::Midnight => t_string!(i18n, theme_midnight),
+                                        Theme::Dusk => t_string!(i18n, theme_dusk),
+                                        Theme::Daylight => t_string!(i18n, theme_daylight),
+                                        Theme::Forest => t_string!(i18n, theme_forest),
+                                    }}
+                                </button>
+                            }
+                        }).collect_view()}
                     </div>
                 })}
+                </div>
                 {cfg!(debug_assertions).then(|| view! {
-                    <button class="hamburger-item" on:click=move |_| { show_log.update(|v| *v = !*v); hamburger.set(false); }>"📋" <span class="hamburger-label">"Лог партии"</span></button>
+                    <button class="hamburger-item" on:click=move |_| { show_log.update(|v| *v = !*v); hamburger.set(false); }>"📋" <span class="hamburger-label">{t_string!(i18n, hamburger_log)}</span></button>
                 })}
                 </div>
                 </div>
@@ -1758,15 +1851,15 @@ pub(crate) fn App() -> impl IntoView {
             {move || keys_hint.get().then(|| view! {
                 <div class="keys-hint">
                     <div class="logbox-head">
-                        <b>"Горячие клавиши хода"</b>
+                        <b>{t_string!(i18n, game_keys_title)}</b>
                         <span class="lead"></span>
-                        <button class="icon-btn" title="Закрыть" on:click=move |_| keys_hint.set(false)>"✕"</button>
+                        <button class="icon-btn" title=t_string!(i18n, game_log_close) on:click=move |_| keys_hint.set(false)>"✕"</button>
                     </div>
-                    <div class="keys-row"><kbd>"Tab"</kbd><span>"следующая фишка"</span></div>
-                    <div class="keys-row"><kbd>"1"</kbd><kbd>"2"</kbd><span>"ход меньшей / большей костью"</span></div>
-                    <div class="keys-row"><kbd>"3"</kbd><span>"обе кости выбранной фишкой"</span></div>
-                    <div class="keys-row"><kbd>"i"</kbd><span>"ввести фишку из резерва"</span></div>
-                    <div class="keys-row"><kbd>"r"</kbd><span>"выкупить пленную фишку"</span></div>
+                    <div class="keys-row"><kbd>"Tab"</kbd><span>{t_string!(i18n, game_keys_tab)}</span></div>
+                    <div class="keys-row"><kbd>"1"</kbd><kbd>"2"</kbd><span>{t_string!(i18n, game_keys_1_2)}</span></div>
+                    <div class="keys-row"><kbd>"3"</kbd><span>{t_string!(i18n, game_keys_3)}</span></div>
+                    <div class="keys-row"><kbd>"i"</kbd><span>{t_string!(i18n, game_keys_i)}</span></div>
+                    <div class="keys-row"><kbd>"r"</kbd><span>{t_string!(i18n, game_keys_r)}</span></div>
                 </div>
             })}
 
@@ -1776,9 +1869,9 @@ pub(crate) fn App() -> impl IntoView {
                 view! {
                     <div class="logbox">
                         <div class="logbox-head">
-                            <b>"Лог партии"</b>
-                            <span class="lead">"Клик по тексту — выделить всё, затем Ctrl/Cmd+C"</span>
-                            <button class="icon-btn" title="Закрыть" on:click=move |_| show_log.set(false)>"✕"</button>
+                            <b>{t_string!(i18n, game_log_title)}</b>
+                            <span class="lead">{t_string!(i18n, game_log_hint)}</span>
+                            <button class="icon-btn" title=t_string!(i18n, game_log_close) on:click=move |_| show_log.set(false)>"✕"</button>
                         </div>
                         <textarea node_ref=log_ref readonly
                             on:click=move |_| { if let Some(t) = log_ref.get() { t.select(); } }

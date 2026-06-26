@@ -1,5 +1,8 @@
 use crate::geom::{moon_arc_point, moon_field_t};
+use crate::i18n::*;
+use crate::settings::SoundKind;
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use sheshbesh::board::PERIMETER;
 use sheshbesh::{
     DiceRoll, Game, GameState, Move, MoveKind, Position, RandomDice, Side, TurnOutcome, apply,
@@ -7,11 +10,9 @@ use sheshbesh::{
 
 #[cfg(debug_assertions)]
 thread_local! {
-    /// Накопленный технический лог текущей партии (для кнопки «показать лог»).
     static GAME_LOG: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
-/// Пишет строку в технический лог партии — в консоль и в накопитель (только отладка).
 #[cfg(debug_assertions)]
 pub(crate) fn dbg_log(line: &str) {
     leptos::logging::log!("{line}");
@@ -24,7 +25,6 @@ pub(crate) fn dbg_log(line: &str) {
 #[cfg(not(debug_assertions))]
 pub(crate) fn dbg_log(_line: &str) {}
 
-/// Очищает лог (в начале новой партии).
 #[cfg(debug_assertions)]
 pub(crate) fn dbg_log_reset() {
     GAME_LOG.with(|g| g.borrow_mut().clear());
@@ -32,7 +32,6 @@ pub(crate) fn dbg_log_reset() {
 #[cfg(not(debug_assertions))]
 pub(crate) fn dbg_log_reset() {}
 
-/// Текущий накопленный лог партии (для отображения и копирования).
 #[cfg(debug_assertions)]
 pub(crate) fn dbg_log_dump() -> String {
     GAME_LOG.with(|g| g.borrow().clone())
@@ -42,15 +41,10 @@ pub(crate) fn dbg_log_dump() -> String {
     String::new()
 }
 
-/// Технический лог одного хода для воспроизведения багов (только в отладочной сборке):
-/// сторона, бросок и ФАКТИЧЕСКИ применённые ходы (`applied` — включая ответы захватчика
-/// при выкупе). Вместе с залогированным seed этого хватает, чтобы воспроизвести партию.
 pub(crate) fn dbg_log_turn(outcome: &TurnOutcome) {
     dbg_log_moves(outcome.side, outcome.roll, &outcome.applied);
 }
 
-/// То же, но из «сырых» данных хода (сторона, бросок, применённые ходы) — для путей,
-/// которые НЕ проходят через `Game::commit_turn` (по-шаговый ход компьютера в GUI).
 pub(crate) fn dbg_log_moves(side: Side, roll: DiceRoll, applied: &[Move]) {
     let [a, b] = roll.values();
     let moves: Vec<String> = applied
@@ -60,25 +54,17 @@ pub(crate) fn dbg_log_moves(side: Side, roll: DiceRoll, applied: &[Move]) {
     dbg_log(&format!("[GAMELOG] {side:?} {a}-{b} | {}", moves.join(" ")));
 }
 
-/// Пауза-заставка перед первым ходом партии (мс) — чтобы старт не мелькал.
 pub(crate) const INTRO_MS: u32 = 1800;
-/// Пауза кадра броска: 3D-кувырок длится до ~2.2с (см. `die3d`) + запас, мс.
 pub(crate) const ROLL_ANIM_MS: u32 = 2400;
-/// Пауза на кадр «результат броска» — кости остановились (мс).
 pub(crate) const HOLD_ROLL_MS: u32 = 1100;
-/// Пауза, когда ходов нет: дольше показываем бросок, прежде чем отдать ход.
 pub(crate) const HOLD_NOMOVE_MS: u32 = 1800;
-/// Пауза на один шаг фишки по клетке, мс.
 pub(crate) const HOLD_STEP_MS: u32 = 570;
-/// Длительность гашения/проявления доски на кадре-«телепорте», мс (см. CSS `.board-wrap`).
 pub(crate) const FADE_MS: u32 = 450;
 
-/// Зерно ГПСЧ из времени браузера (на wasm `SystemTime` недоступен).
 pub(crate) fn seed() -> u64 {
     (js_sys::Date::now() as u64) ^ 0x9E37_79B9_7F4A_7C15
 }
 
-/// Что выбрано как источник/цель: клетка доски, лоток резерва или плена.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Sel {
     Cell(usize, usize),
@@ -95,10 +81,8 @@ pub(crate) fn side_color(s: Side) -> &'static str {
     }
 }
 
-// --- Логика ходов ---
+// --- Frame / herald helpers ---
 
-/// Один кадр анимации: показываемое состояние доски, (опц.) выпавшие кости, пауза
-/// перед его показом (мс), флаг «кости крутятся» и (опц.) реплика комментатора.
 #[derive(Clone)]
 pub(crate) struct Frame {
     pub(crate) state: GameState,
@@ -106,23 +90,16 @@ pub(crate) struct Frame {
     pub(crate) hold: u32,
     pub(crate) rolling: bool,
     pub(crate) note: Option<String>,
-    /// Переопределение точки отрисовки фишки `(индекс, x, y)` — для движения по
-    /// параболе Луны (иначе keyed-кружок шёл бы по прямой между полями).
+    pub(crate) sound: Option<SoundKind>,
     pub(crate) pts: Vec<(usize, f64, f64)>,
-    /// Кадр-«телепорт»: позиция меняется скачком (не продолжение хода — например,
-    /// загрузка новой расстановки шага обучения). Доска гасится (fade-out), новая
-    /// расстановка ставится незаметно, затем проявляется (fade-in) — без «перелёта».
     pub(crate) fade: bool,
 }
 
-/// Имя стороны для комментатора: «Игрок L» (человек) или «ИИ L» (компьютер),
-/// окрашенное в цвет стороны. Статус рисуется как HTML (`inner_html`), поэтому
-/// возвращаем `<b>`-спан с цветом; текст наш — инъекций не бывает.
-pub(crate) fn side_name(side: Side, humans: &[Side]) -> String {
+pub(crate) fn side_name(side: Side, humans: &[Side], i18n: I18nContext<Locale>) -> String {
     let who = if humans.contains(&side) {
-        "Игрок"
+        t_string!(i18n, side_human)
     } else {
-        "ИИ"
+        t_string!(i18n, side_ai)
     };
     format!(
         "<b style=\"color:{}\">{who} {}</b>",
@@ -131,68 +108,75 @@ pub(crate) fn side_name(side: Side, humans: &[Side]) -> String {
     )
 }
 
-/// Реплика об одном применённом ходе (съедание/Дом/Луна/Тюрьма/выкуп). Для
-/// обычного шага по периметру реплики нет (`None`) — чтобы не засорять ленту.
 pub(crate) fn move_note(
     before: &GameState,
     after: &GameState,
     mv: Move,
     humans: &[Side],
+    i18n: I18nContext<Locale>,
 ) -> Option<String> {
     let owner = before.checkers[mv.checker].owner;
-    let name = side_name(owner, humans);
-    // Финиш: этим ходом сторона завела ВСЕ фишки в Дом.
+    let name = side_name(owner, humans, i18n);
     if !before.has_won(owner) && after.has_won(owner) {
-        return Some(format!("{name}: все фишки в Доме — финиш!"));
+        return Some(t_string!(i18n, note_finish, who = name));
     }
     if mv.kind == MoveKind::Ransom {
-        return Some(format!("{name}: выкуп пленной фишки."));
+        return Some(t_string!(i18n, note_ransom, who = name));
     }
-    // Съедание: чья-то фишка стала пленённой именно этим ходом.
     let victim = after.checkers.iter().enumerate().find(|(j, c)| {
         matches!(c.pos, Position::Captured { .. })
             && !matches!(before.checkers[*j].pos, Position::Captured { .. })
     });
     if let Some((j, _)) = victim {
-        let v = side_name(before.checkers[j].owner, humans);
-        return Some(format!("{name} съедает фишку: {v}!"));
+        let v = side_name(before.checkers[j].owner, humans, i18n);
+        return Some(t_string!(i18n, note_capture, who = name, victim = v));
     }
     let event = match mv.kind {
-        MoveKind::Enter => "ввод фишки в игру.",
-        MoveKind::EnterMoon => "фишка взлетает на Луну!",
-        MoveKind::MoonAdvance => "продвижение по дорожке Луны.",
-        MoveKind::MoonExit => "сход с Луны.",
-        MoveKind::EnterPrison => "фишка угодила в Тюрьму!",
-        MoveKind::PrisonRelease => "выход из Тюрьмы.",
-        MoveKind::EnterHome => "заход фишки в Дом!",
-        MoveKind::HomeAdvance => "фишка идёт вглубь Дома.",
-        // Обычный шаг и выкуп репликой не сопровождаем (шум).
-        MoveKind::Step | MoveKind::Ransom => return None,
+        MoveKind::Enter => Some(t_string!(i18n, note_enter)),
+        MoveKind::EnterMoon => Some(t_string!(i18n, note_moon_enter)),
+        MoveKind::MoonAdvance => Some(t_string!(i18n, note_moon_advance)),
+        MoveKind::MoonExit => Some(t_string!(i18n, note_moon_exit)),
+        MoveKind::EnterPrison => Some(t_string!(i18n, note_prison_enter)),
+        MoveKind::PrisonRelease => Some(t_string!(i18n, note_prison_release)),
+        MoveKind::EnterHome => Some(t_string!(i18n, note_home_enter)),
+        MoveKind::HomeAdvance => Some(t_string!(i18n, note_home_advance)),
+        MoveKind::Step | MoveKind::Ransom => None,
     };
-    Some(format!("{name}: {event}"))
+    event.map(|e| format!("{name}: {e}"))
 }
 
-/// Реплика о броске: что выпало, дубль и отсутствие ходов.
-pub(crate) fn roll_note(side: Side, humans: &[Side], roll: DiceRoll, no_move: bool) -> String {
+pub(crate) fn roll_note(side: Side, humans: &[Side], roll: DiceRoll, no_move: bool, i18n: I18nContext<Locale>) -> String {
+    let name = side_name(side, humans, i18n);
     let [a, b] = roll.values();
-    let mut s = format!("{}: выпало {a} и {b}.", side_name(side, humans));
-    if roll.is_double() {
-        s.push_str(" Дубль — ещё ход!");
-    }
     if no_move {
-        s.push_str(" Ходить нечем.");
+        return t_string!(i18n, herald_no_move, who = name, a = a.to_string(), b = b.to_string());
     }
-    s
+    if roll.is_double() {
+        t_string!(i18n, herald_double, who = name, a = a.to_string(), b = b.to_string())
+    } else {
+        t_string!(i18n, herald_wait_move, who = name, a = a.to_string(), b = b.to_string())
+    }
 }
 
-/// Команда стороны при игре 2×2 (противоположные стороны — союзники): 0 = A/C, 1 = B/D.
+/// Определяет звук по виду хода (без проверки захвата — может быть перекрыт).  
+/// Если произошло съедание, колл-центр выставляет `SoundKind::Capture` отдельно.
+pub(crate) fn kind_sound(kind: MoveKind) -> Option<SoundKind> {
+    match kind {
+        MoveKind::Step => None,
+        MoveKind::Enter => Some(SoundKind::Enter),
+        MoveKind::EnterMoon | MoveKind::MoonAdvance | MoveKind::MoonExit => Some(SoundKind::Moon),
+        MoveKind::EnterPrison => Some(SoundKind::PrisonIn),
+        MoveKind::PrisonRelease => Some(SoundKind::PrisonOut),
+        MoveKind::EnterHome => Some(SoundKind::Home),
+        MoveKind::HomeAdvance => None,
+        MoveKind::Ransom => Some(SoundKind::Ransom),
+    }
+}
+
 pub(crate) fn team_of(s: Side) -> usize {
     s.index() % 2
 }
 
-/// Окончена ли партия с учётом режима (считается напрямую из состояния): 2×2 — когда
-/// обе стороны команды финишировали; каждый-сам-за-себя — когда остался один не
-/// финишировавший (FFA до `n-1` финишей).
 pub(crate) fn game_over(state: &GameState, teams: bool) -> bool {
     if teams && state.active.len() == 4 {
         (0..2).any(|t| {
@@ -205,13 +189,12 @@ pub(crate) fn game_over(state: &GameState, teams: bool) -> bool {
     }
 }
 
-/// Итоговая реплика партии (если окончена): победившая команда либо места по порядку
-/// финиша (`finished` — порядок финиша). До конца партии — `None`.
 pub(crate) fn result_msg(
     state: &GameState,
     finished: &[Side],
     teams: bool,
     humans: &[Side],
+    i18n: I18nContext<Locale>,
 ) -> Option<String> {
     if !game_over(state, teams) {
         return None;
@@ -230,7 +213,7 @@ pub(crate) fn result_msg(
             .filter(|&&s| team_of(s) == t)
             .map(|s| s.letter().to_string())
             .collect();
-        Some(format!("Команда {} победила! Игра окончена.", ms.join("+")))
+        Some(t_string!(i18n, result_team_wins, team = ms.join("+")))
     } else {
         let mut order = finished.to_vec();
         for &s in &state.active {
@@ -241,62 +224,47 @@ pub(crate) fn result_msg(
         let places: Vec<String> = order
             .iter()
             .enumerate()
-            .map(|(i, s)| format!("{}) {}", i + 1, side_name(*s, humans)))
+            .map(|(i, s)| format!("{}) {}", i + 1, side_name(*s, humans, i18n)))
             .collect();
-        Some(format!(
-            "Победил {}! Места: {}.",
-            side_name(order[0], humans),
-            places.join(", ")
+        Some(t_string!(i18n, result_full,
+            who = side_name(order[0], humans, i18n),
+            places = places.join(", ")
         ))
     }
 }
 
-/// Применяет ход `mv` к `state`, попутно добавляя кадры. Если фишка идёт по дорожке,
-/// эмитится по кадру на **каждую промежуточную клетку** (фишка «шагает», а не
-/// перепрыгивает сразу на конечную). Возвращает состояние после хода.
 pub(crate) fn apply_with_frames(
     frames: &mut Vec<Frame>,
     state: GameState,
     mv: Move,
     roll: DiceRoll,
     humans: &[Side],
+    i18n: I18nContext<Locale>,
 ) -> GameState {
-    // Промежуточные клетки пути (без конечной — её даёт `apply`), чтобы фишка
-    // «шагала», а не перепрыгивала.
     let perim = PERIMETER as u16;
     let mids: Vec<Position> = match state.checkers[mv.checker].pos {
         Position::OnTrack { progress } => {
             let target = progress + u16::from(mv.pips);
             if target <= perim {
-                // Ход по периметру (промежуточные клетки без конечной), включая остановку
-                // НА клетке входа в Дом (воротах, `target == PERIMETER`) обычным `Step`. При
-                // объединении костей фишка шагает по всем клеткам пути; спец-клетки, которые
-                // она лишь перешагивает, рисуются как обычные (`OnTrack` — на клетке).
                 let mut v: Vec<Position> = (progress + 1..target)
                     .map(|i| Position::OnTrack { progress: i })
                     .collect();
-                // Заход на Луну / в Тюрьму (спец-клетка — КОНЕЧНАЯ): фишка сперва ВСТАЁТ
-                // на саму клетку (ворота), а затем улетает на дугу Луны / в каземат. Иначе
-                // конечный кадр (Луна/Тюрьма рисуются вне клетки) «проглатывал» эту клетку.
                 if matches!(mv.kind, MoveKind::EnterMoon | MoveKind::EnterPrison) {
                     v.push(Position::OnTrack { progress: target });
                 }
                 v
             } else {
-                // Заход в Дом: периметр → клетка ВХОДА в Дом (ворота, progress == PERIMETER)
-                // → клетки Дома вглубь. Глубина 0 — на шаг ЗА воротами. Без «второго круга».
                 let depth = (target - perim - 1) as u8;
                 let mut v: Vec<Position> = (progress + 1..perim)
                     .map(|i| Position::OnTrack { progress: i })
                     .collect();
                 if progress < perim {
-                    v.push(Position::OnTrack { progress: perim }); // ворота (если не на них)
+                    v.push(Position::OnTrack { progress: perim });
                 }
                 v.extend((0..depth).map(|d| Position::Home { depth: d }));
                 v
             }
         }
-        // Продвижение вглубь Дома — по клеткам Дома.
         Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => {
             (depth + 1..depth + mv.pips)
                 .map(|d| Position::Home { depth: d })
@@ -313,13 +281,12 @@ pub(crate) fn apply_with_frames(
             hold: HOLD_STEP_MS,
             rolling: false,
             note: None,
+            sound: None,
             pts: Vec::new(),
             fade: false,
         });
     }
     let after = apply(&state, mv);
-    // Движение по параболе Луны: вход (→поле 1), переход между полями и сход —
-    // фишку ведём по дуге через кадры с переопределённой точкой `pts`.
     let moon_seg = match (
         mv.kind,
         after.checkers[mv.checker].pos,
@@ -349,18 +316,29 @@ pub(crate) fn apply_with_frames(
                 hold: HOLD_STEP_MS / 7,
                 rolling: false,
                 note: None,
+                sound: None,
                 pts: vec![(mv.checker, x, y)],
                 fade: false,
             });
         }
     }
-    let note = move_note(&state, &after, mv, humans);
+    let note = move_note(&state, &after, mv, humans, i18n);
+    let capture_sound = state.checkers.iter().enumerate().any(|(j, _c)| {
+        matches!(after.checkers[j].pos, Position::Captured { .. })
+            && !matches!(state.checkers[j].pos, Position::Captured { .. })
+    });
+    let sound = if capture_sound {
+        Some(SoundKind::Capture)
+    } else {
+        kind_sound(mv.kind)
+    };
     frames.push(Frame {
         state: after.clone(),
         roll: Some(roll),
         hold: HOLD_STEP_MS,
         rolling: false,
         note,
+        sound,
         pts: Vec::new(),
         fade: false,
     });
@@ -378,25 +356,23 @@ pub(crate) fn commit_frames<F>(
     humans: &[Side],
     roll_anim: bool,
     forced: F,
+    i18n: I18nContext<Locale>,
 ) where
     F: FnMut(&GameState, Side, &[Move]) -> usize,
 {
     let side = game.state.to_move;
     let no_move = played.is_empty();
-    // Анимация броска нужна, когда кости ещё не показаны (ход ИИ). У игрока-человека
-    // бросок уже анимирован в начале его хода — тут только продвигаем фишки.
     if roll_anim {
-        // Кадр броска: кубики кувыркаются в 3D (анимация в статусе) и встают на грань.
         frames.push(Frame {
             state: game.state.clone(),
             roll: Some(roll),
             hold: ROLL_ANIM_MS,
             rolling: true,
-            note: Some(format!("{} бросает кости…", side_name(side, humans))),
+            note: Some(t_string!(i18n, herald_roll, who = side_name(side, humans, i18n))),
+            sound: Some(SoundKind::Dice),
             pts: Vec::new(),
             fade: false,
         });
-        // …затем кости встают на результат и держатся. Если ходить нечем — дольше.
         frames.push(Frame {
             state: game.state.clone(),
             roll: Some(roll),
@@ -406,7 +382,8 @@ pub(crate) fn commit_frames<F>(
                 HOLD_ROLL_MS
             },
             rolling: false,
-            note: Some(roll_note(side, humans, roll, no_move)),
+            note: Some(roll_note(side, humans, roll, no_move, i18n)),
+            sound: None,
             pts: Vec::new(),
             fade: false,
         });
@@ -416,17 +393,14 @@ pub(crate) fn commit_frames<F>(
     if cfg!(debug_assertions) {
         dbg_log_turn(&outcome);
     }
-    // Анимируем в порядке применения (`applied`): ход игрока, а сразу за выкупом —
-    // обязательный ответ захватчика (его фишка — не текущей ходящей стороны).
     let applied = &outcome.applied;
     let mut scratch = pre;
     for &mv in applied {
         let forced_resp = scratch.checkers[mv.checker].owner != side;
-        scratch = apply_with_frames(frames, scratch, mv, roll, humans);
+        scratch = apply_with_frames(frames, scratch, mv, roll, humans, i18n);
         if forced_resp && let Some(last) = frames.last_mut() {
-            last.note = Some(format!(
-                "{}: обязательный ход на 6 после выкупа.",
-                side_name(scratch.checkers[mv.checker].owner, humans)
+            last.note = Some(t_string!(i18n, forced_reply,
+                who = side_name(scratch.checkers[mv.checker].owner, humans, i18n)
             ));
         }
     }
@@ -440,7 +414,6 @@ pub(crate) fn fresh(dice: StoredValue<RandomDice>, active: Vec<Side>, teams: boo
     game
 }
 
-/// Активные стороны для `n` игроков: 2 — противоположные, 3 — A/B/C, 4 — все.
 pub(crate) fn active_for(n: usize) -> Vec<Side> {
     match n {
         2 => vec![Side::A, Side::A.opposite()],

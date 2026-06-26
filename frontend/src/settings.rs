@@ -19,15 +19,6 @@ pub(crate) enum Theme {
 impl Theme {
     pub(crate) const ALL: [Theme; 4] = [Theme::Midnight, Theme::Dusk, Theme::Daylight, Theme::Forest];
 
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Theme::Midnight => "Полночь",
-            Theme::Daylight => "Рассвет",
-            Theme::Forest => "Лес",
-            Theme::Dusk => "Сумерки",
-        }
-    }
-
     pub(crate) fn key(self) -> &'static str {
         match self {
             Theme::Midnight => "midnight",
@@ -79,16 +70,6 @@ impl Speed {
 
     pub(crate) fn from_index(i: usize) -> Speed {
         Speed::ALL.get(i).copied().unwrap_or(Speed::Normal)
-    }
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Speed::VerySlow => "Очень медленно",
-            Speed::Slow => "Медленно",
-            Speed::Normal => "Обычная",
-            Speed::Fast => "Быстро",
-            Speed::VeryFast => "Очень быстро",
-        }
     }
 
     pub(crate) fn key(self) -> &'static str {
@@ -380,25 +361,4 @@ pub(crate) fn play(kind: SoundKind) {
     }
 }
 
-/// Какому звуку соответствует реплика-комментарий кадра (`Frame.note`).
-pub(crate) fn note_sound(note: &str) -> Option<SoundKind> {
-    if note.contains("съедает") {
-        Some(SoundKind::Capture)
-    } else if note.contains("финиш") {
-        Some(SoundKind::Win)
-    } else if note.contains("в Тюрьму") {
-        Some(SoundKind::PrisonIn)
-    } else if note.contains("из Тюрьмы") {
-        Some(SoundKind::PrisonOut)
-    } else if note.contains("Луну") || note.contains("Луны") {
-        Some(SoundKind::Moon)
-    } else if note.contains("Дом") {
-        Some(SoundKind::Home)
-    } else if note.contains("выкуп") {
-        Some(SoundKind::Ransom)
-    } else if note.contains("ввод") {
-        Some(SoundKind::Enter)
-    } else {
-        None
-    }
-}
+

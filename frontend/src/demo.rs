@@ -15,17 +15,17 @@ pub(crate) enum Demo {
     Homes,
 }
 
-/// Список сценариев и их подписи для панели разработчика.
-pub(crate) const DEMOS: &[(Demo, &str)] = &[
-    (Demo::Reserve, "Резерв (старт)"),
-    (Demo::Moon(MoonField::One), "16 фишек на Луне — поле 1"),
-    (Demo::Moon(MoonField::Three), "16 фишек на Луне — поле 3"),
-    (Demo::Moon(MoonField::Six), "16 фишек на Луне — поле 6"),
-    (Demo::Cell, "16 фишек на углу"),
-    (Demo::Prison, "16 фишек в одной Тюрьме"),
-    (Demo::PrisonStack, "Тюрьма: стопки одного цвета"),
-    (Demo::Captured, "12 фишек в плену (макс)"),
-    (Demo::Homes, "Дома заполнены"),
+/// Список сценариев (без подписей — локализация в app.rs через i18n).
+pub(crate) const DEMOS: &[Demo] = &[
+    Demo::Reserve,
+    Demo::Moon(MoonField::One),
+    Demo::Moon(MoonField::Three),
+    Demo::Moon(MoonField::Six),
+    Demo::Cell,
+    Demo::Prison,
+    Demo::PrisonStack,
+    Demo::Captured,
+    Demo::Homes,
 ];
 
 /// Состояние со всеми четырьмя сторонами; позиция каждой фишки задаётся
@@ -50,8 +50,6 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
             field,
         }),
         Demo::Cell => {
-            // Все 16 на одном углу (углы и Тюрьма — единственные клетки с разными
-            // фишками): у каждой стороны свой прогресс до этой абсолютной клетки.
             let corner = Side::A.start_corner();
             demo_state(move |side, _| Position::OnTrack {
                 progress: side.progress_of(corner),
@@ -61,9 +59,6 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
             let cell = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
             demo_state(move |_, _| Position::Prison { cell })
         }
-        // Стопка на ВЫХОДЕ из Тюрьмы: освобождённые «зашёл-вышел» фишки СТОЯТ на клетке
-        // Тюрьмы (как на углу). Все на одной клетке: A×4, B×3, C×2 — одноцветные
-        // группируются со счётчиком, разные цвета разнесены наружу.
         Demo::PrisonStack => {
             let cell = Side::A.local_to_perimeter(LOCAL_PRISON_NEAR);
             demo_state(move |side, k| {
@@ -78,8 +73,6 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
                 }
             })
         }
-        // Свою фишку в плен не берут: A держит максимум — по 4 от B/C/D (12), а её
-        // собственные 4 фишки остаются в резерве.
         Demo::Captured => demo_state(|side, _| {
             if side == Side::A {
                 Position::Reserve
@@ -91,10 +84,7 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
     }
 }
 
-/// Расстановка для интерактивной проверки хода у Дома: у A (человек) две фишки вплотную
-/// к Дому (прогресс 71 и 69) и две уже в Доме (контекст; заход не завершает партию
-/// мгновенно). Бросок (1,2): фишкой с 71 можно ВСТАТЬ на ворота (1) и затем зайти в Дом,
-/// либо зайти сразу (2). Соперник C — в резерве, очередь у A.
+/// Расстановка для интерактивной проверки хода у Дома.
 pub(crate) fn home_entry_test() -> GameState {
     let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
     s.checkers.clear();
@@ -119,8 +109,7 @@ pub(crate) fn home_entry_test() -> GameState {
     s
 }
 
-/// Партия-заготовка для демо-анимации: фишка A на дорожке съедает фишку C впереди
-/// (остальные — в Домах, чтобы не мешать). Бросок «3 и 1» делает ход однозначным.
+/// Партия-заготовка для демо-анимации.
 pub(crate) fn demo_capture() -> Game {
     let target = Side::A.entry().advance(3);
     let mut s = GameState::new(vec![Side::A, Side::C], Side::A);

@@ -8,21 +8,24 @@
 //! лист — `V(позиция, мы)`.
 //!
 //! Приближения (осознанные, ради скорости и простоты):
-//! - моделируется ОДИН ход соперника на бросок; **дубль-переброс не раскрывается**;
-//! - вынужденные ответы при выкупе не моделируются (как и в `best_turn`);
+//! - дубль-переброс раскрывается (рекурсия с пределом [`MAX_UNFOLD`] = 2);
+//! - вынужденные ответы при выкупе моделируются для captor = `me`;
 //! - учитывается лишь **ближайший** соперник — для 3/4 игроков поиск приближён;
 //! - свои ходы предварительно отсеиваются по 1-плай-оценке (top-`width`), чтобы не
 //!   разворачивать соперника для заведомо слабых вариантов.
 
 use crate::board::Side;
 use crate::dice::{DiceRoll, Die};
-use crate::moves::{Move, legal_turns};
-use crate::state::GameState;
+use crate::moves::{Move, MoveKind, apply, forced_six_moves, legal_turns};
+use crate::state::{GameState, Position};
 use crate::turn::{Agent, next_unfinished_active};
 use crate::value::{Value, apply_sequence, best_forced};
 
 /// По умолчанию углубляем столько лучших по 1-плай ходов.
 pub const DEFAULT_WIDTH: usize = 8;
+
+/// Сколько дополнительных уровней дубль-переброса раскрывать (0 = не раскрывать).
+const MAX_UNFOLD: usize = 2;
 
 /// Все 21 различных броска с весами (вероятность × 36): дубль — вес 1, прочие — 2
 /// (порядок костей не важен, поэтому несимметричные пары встречаются вдвое чаще).
@@ -40,11 +43,14 @@ fn weighted_rolls() -> Vec<(DiceRoll, f32)> {
 /// Ценность позиции `after` (наш афтерстейт, `to_move` — всё ещё мы) с просмотром на
 /// один полу-ход соперника вперёд: матожидание по броскам соперника от его лучшего
 /// (для него) ответа, оценённого НАШИМИ глазами.
+///
+/// `depth` — текущая глубина раскрытия дубль-переброса (0 = первый вызов).
 fn opponent_reply_value<V: Value>(
     v: &V,
     after: &GameState,
     me: Side,
     rolls: &[(DiceRoll, f32)],
+    depth: usize,
 ) -> f32 {
     let opp = next_unfinished_active(after, me);
     if opp == me {
@@ -61,11 +67,42 @@ fn opponent_reply_value<V: Value>(
         let mut best_for_opp = f32::NEG_INFINITY;
         let mut leaf_for_me = 0.0;
         for seq in legal_turns(&board, roll) {
-            let reply = apply_sequence(&board, &seq);
-            let ov = v.value(&reply, opp);
-            if ov > best_for_opp {
-                best_for_opp = ov;
-                leaf_for_me = v.value(&reply, me);
+            // Применяем последовательность пошагово, вставляя вынужденные ответы
+            // при выкупе (если captor = мы).
+            let mut reply = board.clone();
+            for &mv in &seq {
+                // Захватчик известен ДО применения выкупа.
+                let captor = if mv.kind == MoveKind::Ransom {
+                    match reply.checkers[mv.checker].pos {
+                        Position::Captured { captor } if captor == me => Some(captor),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                reply = apply(&reply, mv);
+                // Вынужденный ответный ход захватчика (только если captor = мы).
+                if let Some(captor) = captor {
+                    let forced = forced_six_moves(&reply, captor);
+                    if !forced.is_empty() {
+                        let fidx = best_forced(v, &reply, captor, &forced);
+                        reply = apply(&reply, forced[fidx]);
+                    }
+                }
+            }
+            // Дубль: соперник получает ещё один ход.
+            if roll.is_double() && depth < MAX_UNFOLD {
+                let ov = v.value(&reply, opp);
+                if ov > best_for_opp {
+                    best_for_opp = ov;
+                    leaf_for_me = opponent_reply_value(v, &reply, me, rolls, depth + 1);
+                }
+            } else {
+                let ov = v.value(&reply, opp);
+                if ov > best_for_opp {
+                    best_for_opp = ov;
+                    leaf_for_me = v.value(&reply, me);
+                }
             }
         }
         total += w * leaf_for_me;
@@ -103,7 +140,7 @@ pub fn best_turn_2ply<V: Value>(
     let mut best_idx = scored[0].0;
     let mut best_score = f32::NEG_INFINITY;
     for (i, _, after) in scored.iter().take(k) {
-        let score = opponent_reply_value(v, after, me, &rolls);
+        let score = opponent_reply_value(v, after, me, &rolls, 0);
         if score > best_score {
             best_score = score;
             best_idx = *i;

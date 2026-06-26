@@ -1,7 +1,7 @@
+use crate::i18n::*;
+use leptos_i18n::I18nContext;
 use sheshbesh::{GameState, Heuristic, LinearValue, MlpValue, Side, Value};
 
-// Веса обученных TD(λ)-ценностей (LE f32) под каждый режим — компьютер ходит ими.
-// MLP — `examples/export_model.rs`; линейные — `examples/export_linear.rs`.
 pub(crate) static MODEL_2P: &[u8] = include_bytes!("model.bin");
 pub(crate) static MODEL_3P: &[u8] = include_bytes!("model_3p.bin");
 pub(crate) static MODEL_4P: &[u8] = include_bytes!("model_4p.bin");
@@ -11,38 +11,31 @@ pub(crate) static LIN_3P: &[u8] = include_bytes!("model_lin_3p.bin");
 pub(crate) static LIN_4P: &[u8] = include_bytes!("model_lin_4p.bin");
 pub(crate) static LIN_4P_TEAMS: &[u8] = include_bytes!("model_lin_4p_teams.bin");
 
-/// Алгоритм компьютера для одной стороны — выбирается в настройках.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Algo {
-    /// Однослойный перцептрон (по умолчанию, сильнейший из «одноплайных»).
     Mlp,
-    /// MLP + 2-плай expectiminimax-поиск (сильнее, но считает дольше).
     Search,
-    /// Линейная TD(λ)-ценность (быстрее, чуть слабее).
     Linear,
-    /// Жадная эвристика (без обучения).
     Heuristic,
 }
 
 impl Algo {
     pub(crate) const ALL: [Algo; 4] = [Algo::Mlp, Algo::Search, Algo::Linear, Algo::Heuristic];
 
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) fn label(self, i18n: I18nContext<Locale>) -> String {
         match self {
-            Algo::Mlp => "MLP",
-            Algo::Search => "MLP+поиск",
-            Algo::Linear => "Linear",
-            Algo::Heuristic => "Эвристика",
+            Algo::Mlp => t_string!(i18n, algo_mlp).to_string(),
+            Algo::Search => t_string!(i18n, algo_search).to_string(),
+            Algo::Linear => t_string!(i18n, algo_linear).to_string(),
+            Algo::Heuristic => t_string!(i18n, algo_heuristic).to_string(),
         }
     }
 
-    /// Нужен ли 2-плай-поиск (а не жадный выбор по 1-плай).
     pub(crate) fn is_search(self) -> bool {
         self == Algo::Search
     }
 }
 
-/// Готовая функция ценности под выбранный алгоритм (ход выбирается `best_turn`).
 pub(crate) enum Ai {
     Mlp(MlpValue),
     Linear(LinearValue),
@@ -66,8 +59,6 @@ fn floats(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-/// Агент-ценность под алгоритм, число сторон и режим (команды 2×2). Для MLP число
-/// скрытых нейронов выводится из длины весов (`MlpValue::from_floats`).
 pub(crate) fn ai_model_for(algo: Algo, active_len: usize, teams: bool) -> Ai {
     let idx = match (active_len, teams) {
         (4, true) => 3,
@@ -77,7 +68,6 @@ pub(crate) fn ai_model_for(algo: Algo, active_len: usize, teams: bool) -> Ai {
     };
     match algo {
         Algo::Heuristic => Ai::Heuristic(Heuristic),
-        // 2-плай-поиск работает поверх MLP-оценки — модель та же.
         Algo::Mlp | Algo::Search => {
             let bytes = [MODEL_2P, MODEL_3P, MODEL_4P, MODEL_4P_TEAMS][idx];
             Ai::Mlp(MlpValue::from_floats(&floats(bytes)))
