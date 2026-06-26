@@ -434,6 +434,8 @@ fn GameApp() -> impl IntoView {
     // Автоход компьютерных сторон: бросок + по-шаговый ход (`play_computer`). Цепочка
     // ходов «сама себя» продолжает через `animating` (после анимации он снимается →
     // Effect срабатывает снова). Пауза/победа/ход человека/ожидание выкупа её прерывают.
+    // Кости показываются НЕМЕДЛЕННО (до вычислений), чтобы кубик не зависал на время
+    // тяжёлого 2-плай поиска на WASM; между броском и расчётом — точка yield.
     Effect::new(move |_| {
         let g = game.get();
         let hs = humans.get_untracked();
@@ -452,29 +454,57 @@ fn GameApp() -> impl IntoView {
         let r = roll_v.expect("roll");
         let side = g.state.to_move;
         let no_move = legal_turns(&g.state, r).iter().all(Vec::is_empty);
-        let mut frames = Vec::new();
-        frames.push(Frame {
-            state: g.state.clone(),
-            roll: Some(r),
-            hold: ROLL_ANIM_MS,
-            rolling: true,
-            note: Some(t_string!(i18n, herald_roll, who = side_name(side, &hs, i18n)).to_string()),
-            pts: Vec::new(),
-            fade: false,
-            sound: None,
+        let era = epoch.get_value();
+        let factor = speed.get_untracked().factor();
+        let instant = speed.get_untracked() == Speed::VeryFast;
+        let roll_ms = if instant { 70 } else { (f64::from(ROLL_ANIM_MS) * factor) as u32 };
+        let name = side_name(side, &hs, i18n);
+        let [a, b] = r.values();
+        // Крутим кубик немедленно — до того, как начнётся расчёт хода ИИ.
+        roll.set(Some(r));
+        rolling.set(!instant);
+        herald.set(t_string!(i18n, herald_roll, who = &name).to_string());
+        if sound.get_untracked() {
+            settings::play(settings::SoundKind::Dice);
+        }
+        spawn_local(async move {
+            TimeoutFuture::new(roll_ms).await;
+            if epoch.get_value() != era {
+                return;
+            }
+            rolling.set(false);
+            // Пауза — не начинаем расчёт, пока пользователь не снимет.
+            while paused.get_untracked() {
+                TimeoutFuture::new(150).await;
+                if epoch.get_value() != era {
+                    return;
+                }
+            }
+            if no_move {
+                herald.set(t_string!(i18n, herald_no_move, who = &name, a = a, b = b).to_string());
+                let nomove_ms = (f64::from(HOLD_NOMOVE_MS) * factor) as u32;
+                TimeoutFuture::new(nomove_ms).await;
+                if epoch.get_value() != era {
+                    return;
+                }
+                let mut fg = Game::new(g.state.clone());
+                fg.commit_turn(r, Vec::new(), |_, _, _| 0);
+                play(vec![Frame {
+                    state: fg.state,
+                    roll: None,
+                    hold: HOLD_STEP_MS,
+                    rolling: false,
+                    note: None,
+                    pts: Vec::new(),
+                    fade: false,
+                    sound: None,
+                }]);
+                return;
+            }
+            comp_applied.set_value(Vec::new());
+            let frames = Vec::new();
+            play_computer(frames, g.state.clone(), r.values().to_vec(), r);
         });
-        frames.push(Frame {
-            state: g.state.clone(),
-            roll: Some(r),
-            hold: if no_move { HOLD_NOMOVE_MS } else { HOLD_ROLL_MS },
-            rolling: false,
-            note: Some(roll_note(side, &hs, r, no_move, i18n)),
-            pts: Vec::new(),
-            fade: false,
-            sound: None,
-        });
-        comp_applied.set_value(Vec::new()); // новый ход компьютера — копим заново
-        play_computer(frames, g.state.clone(), r.values().to_vec(), r);
     });
 
     // Старт партии: держим паузу-заставку (видно «Игра началась»), затем снимаем
