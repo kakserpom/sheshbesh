@@ -27,18 +27,6 @@ pub(crate) fn ThemeControl(theme: RwSignal<Theme>, menu_open: RwSignal<bool>) ->
     }
 }
 
-/// Кнопка-тумблер звука.
-#[component]
-pub(crate) fn SoundControl(sound: RwSignal<bool>) -> impl IntoView {
-    view! {
-        <button class="icon-btn" class:on=move || sound.get()
-            title=move || if sound.get() { "Звук включён" } else { "Звук выключен" }
-            on:click=move |_| sound.update(|s| *s = !*s)>
-            {move || if sound.get() { "🔊" } else { "🔇" }}
-        </button>
-    }
-}
-
 /// Ползунок скорости анимации (группа для всплывающей панели настроек).
 #[component]
 pub(crate) fn SpeedControl(speed: RwSignal<Speed>) -> impl IntoView {
@@ -53,24 +41,6 @@ pub(crate) fn SpeedControl(speed: RwSignal<Speed>) -> impl IntoView {
                     speed.set(Speed::from_index(i));
                 } />
             <span class="speed-val">{move || speed.get().label()}</span>
-        </div>
-    }
-}
-
-/// Иконка скорости «⏩» с выпадающим ползунком (drop-down под иконкой, как у темы).
-/// `open` — общий сигнал открытия (Escape закрывает его в `App`). Общая для меню,
-/// партии и обучения.
-#[component]
-pub(crate) fn SpeedMenu(open: RwSignal<bool>, speed: RwSignal<Speed>) -> impl IntoView {
-    view! {
-        <div class="theme-pick speed-pick">
-            <button class="icon-btn" title="Скорость анимации"
-                on:click=move |_| open.update(|o| *o = !*o)>"⏩"</button>
-            {move || open.get().then(|| view! {
-                <div class="theme-menu speed-menu">
-                    <SpeedControl speed/>
-                </div>
-            })}
         </div>
     }
 }
