@@ -33,18 +33,25 @@ pub(crate) fn App() -> impl IntoView {
 #[component]
 fn GameApp() -> impl IntoView {
     let i18n = use_i18n();
-    // Restore locale from localStorage on startup
+    // Restore locale from localStorage on startup; fall back to system language.
     if let Some(window) = web_sys::window() {
         if let Ok(Some(s)) = window.local_storage() {
-            if let Ok(Some(saved)) = s.get_item("locale") {
-                    if saved == "en" {
-                        i18n.set_locale(Locale::en);
-                    } else if saved == "ru" {
-                        i18n.set_locale(Locale::ru);
-                    }
+            let saved = s.get_item("locale").ok().flatten();
+            let locale = match saved.as_deref() {
+                Some("en") => Locale::en,
+                Some("ru") => Locale::ru,
+                // First run — detect browser language
+                _ => {
+                    let lang = window.navigator().language().unwrap_or_default();
+                    let detected = if lang.starts_with("ru") { Locale::ru } else { Locale::en };
+                    // Persist detected locale
+                    let _ = s.set_item("locale", if detected == Locale::en { "en" } else { "ru" });
+                    detected
                 }
-            }
+            };
+            i18n.set_locale(locale);
         }
+    }
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
     // Поколение партии: растёт при старте/остановке игры. Любая запущенная анимация
     // (spawn_local) запоминает своё поколение и прекращается, когда оно устарело, —
