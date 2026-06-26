@@ -101,22 +101,22 @@ impl Speed {
     /// Множитель пауз между кадрами (1.0 — базовая скорость).
     pub(crate) fn factor(self) -> f64 {
         match self {
-            Speed::VerySlow => 2.4,
-            Speed::Slow => 1.6,
-            Speed::Normal => 1.0,
-            Speed::Fast => 0.6,
-            Speed::VeryFast => 0.32,
+            Speed::VerySlow => 1.6,
+            Speed::Slow => 1.0,
+            Speed::Normal => 0.6,
+            Speed::Fast => 0.32,
+            Speed::VeryFast => 0.16,
         }
     }
 
     /// Длительность CSS-перехода позиции фишки (`--move-dur`).
     fn move_dur(self) -> &'static str {
         match self {
-            Speed::VerySlow => "0.7s",
-            Speed::Slow => "0.48s",
-            Speed::Normal => "0.32s",
-            Speed::Fast => "0.18s",
-            Speed::VeryFast => "0.1s",
+            Speed::VerySlow => "0.48s",
+            Speed::Slow => "0.32s",
+            Speed::Normal => "0.18s",
+            Speed::Fast => "0.1s",
+            Speed::VeryFast => "0.06s",
         }
     }
 

@@ -1,10 +1,10 @@
-use crate::controls::{SoundControl, SpeedControl, SpeedMenu, ThemeControl};
+use crate::controls::{SpeedControl, ThemeControl};
 use crate::demo::*;
 use crate::geom::*;
 use crate::lessons::*;
 use crate::model::*;
 use crate::moves_ui::*;
-use crate::settings::{self, Speed};
+use crate::settings::{self, Speed, Theme};
 use crate::util::*;
 use crate::view::*;
 use gloo_timers::future::TimeoutFuture;
@@ -97,6 +97,8 @@ pub(crate) fn App() -> impl IntoView {
     let theme = RwSignal::new(init_theme);
     let speed = RwSignal::new(init_speed);
     let sound = RwSignal::new(init_sound);
+    // Мобильное меню (гамбургер).
+    let hamburger = RwSignal::new(false);
     // Открыт ли выпадающий ползунок скорости (по иконке «⏩»).
     let speed_menu = RwSignal::new(false);
     // Открыт ли выпадающий список выбора темы (в основном меню, по иконке-палитре).
@@ -128,6 +130,7 @@ pub(crate) fn App() -> impl IntoView {
                 || keys_hint.get_untracked()
                 || speed_menu.get_untracked()
                 || theme_menu.get_untracked()
+                || hamburger.get_untracked()
                 || rules.get_untracked()
                 || about.get_untracked();
             if popup_open {
@@ -135,6 +138,7 @@ pub(crate) fn App() -> impl IntoView {
                 keys_hint.set(false);
                 speed_menu.set(false);
                 theme_menu.set(false);
+                hamburger.set(false);
                 rules.set(false);
                 about.set(false);
             } else if tutorial.get_untracked() {
@@ -174,9 +178,13 @@ pub(crate) fn App() -> impl IntoView {
             el.as_ref()
                 .is_some_and(|el| el.closest(sel).ok().flatten().is_some())
         };
-        let (close_theme, close_speed) = if inside(".speed-pick") {
+        let outside_hamburger = !el.as_ref().is_some_and(|el| el.closest(".hamburger-btn, .hamburger-content.open").ok().flatten().is_some());
+        if outside_hamburger && hamburger.get_untracked() {
+            hamburger.set(false);
+        }
+        let (close_theme, close_speed) = if inside(".speed-pick, .hamburger-speed-menu") {
             (true, false)
-        } else if inside(".theme-pick") {
+        } else if inside(".theme-pick, .hamburger-theme-menu") {
             (false, true)
         } else {
             (true, true)
@@ -1413,10 +1421,39 @@ pub(crate) fn App() -> impl IntoView {
                     <div class="status">
                         <div class="status-left">
                         <button class="icon-btn" title="Назад в меню" on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>"←"</button>
-                        <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
-                        <SoundControl sound/>
-                        <SpeedMenu open=speed_menu speed/>
-                        <ThemeControl theme menu_open=theme_menu/>
+                        <button class="icon-btn hamburger-btn" class:on=move || hamburger.get()
+                            title="Меню" on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
+                        <div class="hamburger-content" class:open=move || hamburger.get()>
+                        <button class="hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">"Правила"</span></button>
+                        <button class="hamburger-item" on:click=move |_| sound.update(|s| *s = !*s)>
+                            {move || if sound.get() { "🔊" } else { "🔇" }}<span class="hamburger-label">"Звук"</span>
+                        </button>
+                        <button class="hamburger-item" on:click=move |_| speed_menu.update(|o| *o = !*o)>
+                            "⏩" <span class="hamburger-label">"Скорость"</span>
+                        </button>
+                        {move || speed_menu.get().then(|| view! {
+                            <div class="hamburger-submenu hamburger-speed-menu">
+                                <SpeedControl speed/>
+                            </div>
+                        })}
+                        <button class="hamburger-item" on:click=move |_| theme_menu.update(|o| *o = !*o)>
+                            "🎨" <span class="hamburger-label">"Тема"</span>
+                        </button>
+                        {move || theme_menu.get().then(|| view! {
+                            <div class="hamburger-submenu hamburger-theme-menu">
+                                <div class="hamburger-theme-row">
+                                    {Theme::ALL.into_iter().map(|t| {
+                                        let on = move || theme.get() == t;
+                                        view! {
+                                            <button class:on=on on:click=move |_| theme.set(t)>
+                                                {t.label()}
+                                            </button>
+                                        }
+                                    }).collect_view()}
+                                </div>
+                            </div>
+                        })}
+                        </div>
                         </div>
                         // Выпадающий список шагов — прыжок на любой шаг обучения.
                         <div class="lesson-pick">
@@ -1670,17 +1707,43 @@ pub(crate) fn App() -> impl IntoView {
                     on:click=move |_| paused.update(|p| *p = !*p)>
                     {move || if paused.get() { "▶" } else { "⏸" }}
                 </button>
-                <button class="icon-btn" title="Правила" on:click=move |_| rules.set(true)>"📖"</button>
-                <button class="icon-btn" class:on=move || keys_hint.get() title="Горячие клавиши"
-                    on:click=move |_| keys_hint.update(|v| *v = !*v)>"⌨"</button>
-                <SoundControl sound/>
-                <SpeedMenu open=speed_menu speed/>
-                // Тема оформления — палитра с выпадающим списком (так же, как в меню).
-                <ThemeControl theme menu_open=theme_menu/>
-                // Технический лог партии — только в отладочной сборке.
-                {cfg!(debug_assertions).then(|| view! {
-                    <button class="icon-btn" class:on=move || show_log.get() title="Лог партии" on:click=move |_| show_log.update(|v| *v = !*v)>"📋"</button>
+                <button class="icon-btn hamburger-btn" class:on=move || hamburger.get()
+                    title="Меню" on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
+                <div class="hamburger-content" class:open=move || hamburger.get()>
+                <button class="hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">"Правила"</span></button>
+                <button class="hamburger-item" on:click=move |_| { keys_hint.update(|v| *v = !*v); hamburger.set(false); }>"⌨" <span class="hamburger-label">"Горячие клавиши"</span></button>
+                <button class="hamburger-item" on:click=move |_| sound.update(|s| *s = !*s)>
+                    {move || if sound.get() { "🔊" } else { "🔇" }}<span class="hamburger-label">"Звук"</span>
+                </button>
+                <button class="hamburger-item" on:click=move |_| speed_menu.update(|o| *o = !*o)>
+                    "⏩" <span class="hamburger-label">"Скорость"</span>
+                </button>
+                {move || speed_menu.get().then(|| view! {
+                    <div class="hamburger-submenu hamburger-speed-menu">
+                        <SpeedControl speed/>
+                    </div>
                 })}
+                <button class="hamburger-item" on:click=move |_| theme_menu.update(|o| *o = !*o)>
+                    "🎨" <span class="hamburger-label">"Тема"</span>
+                </button>
+                {move || theme_menu.get().then(|| view! {
+                    <div class="hamburger-submenu hamburger-theme-menu">
+                        <div class="hamburger-theme-row">
+                            {Theme::ALL.into_iter().map(|t| {
+                                let on = move || theme.get() == t;
+                                view! {
+                                    <button class:on=on on:click=move |_| theme.set(t)>
+                                        {t.label()}
+                                    </button>
+                                }
+                            }).collect_view()}
+                        </div>
+                    </div>
+                })}
+                {cfg!(debug_assertions).then(|| view! {
+                    <button class="hamburger-item" on:click=move |_| { show_log.update(|v| *v = !*v); hamburger.set(false); }>"📋" <span class="hamburger-label">"Лог партии"</span></button>
+                })}
+                </div>
                 </div>
                 <span class="herald" inner_html=move || herald.get()></span>
             </div>

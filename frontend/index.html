@@ -338,6 +338,41 @@
     .hl-combo { stroke: #22c55e; stroke-width: .08; stroke-dasharray: .18 .12; }
     .hl-sel { stroke: #e2e8f0; stroke-width: .1; }
     .hit { fill: transparent; cursor: pointer; }
+    /* Мобильный гамбургер: на узких экранах кнопки управления сворачиваются в ☰. */
+    .hamburger-btn { display: none; }
+    .hamburger-content { display: flex; align-items: center; gap: .6rem; }
+    .hamburger-label { display: none; }
+    @media (max-width: 700px) {
+      .hamburger-btn { display: inline-flex; }
+      .hamburger-label { display: inline; }
+      .hamburger-content {
+        display: none; position: absolute; top: 100%; left: 0; z-index: 60;
+        flex-direction: column; gap: .5rem;
+        background: var(--panel-bg); border: 1px solid var(--border);
+        border-radius: .5rem; padding: .6rem;
+        box-shadow: 0 8px 24px #0006; min-width: 14rem;
+      }
+      .hamburger-content.open { display: flex; }
+      .status-left { position: relative; }
+      button.hamburger-item {
+        display: flex; align-items: center; gap: .6rem; width: 100%;
+        padding: .6rem .8rem; border-radius: .4rem; font-size: 1rem;
+        cursor: pointer; border: none; background: none; color: var(--text);
+        text-align: left; box-sizing: border-box;
+      }
+      button.hamburger-item:hover { background: var(--cell); }
+      .hamburger-submenu {
+        padding: .2rem .8rem .6rem; width: 100%; box-sizing: border-box;
+      }
+      .hamburger-submenu .set-group { min-width: auto; width: 100%; }
+      .hamburger-theme-row { display: flex; gap: .4rem; }
+      .hamburger-theme-row button { flex: 1; text-align: center; padding: .35rem .5rem; }
+      .wrap { padding: .2rem; }
+      .board-area { padding: .2rem; }
+      .status { font-size: .9rem; gap: .3rem; min-height: 1.8rem; }
+      .set-row { flex-wrap: wrap; min-width: auto; }
+      .set-row b { min-width: auto; }
+    }
   </style>
 </head>
 <body></body>
