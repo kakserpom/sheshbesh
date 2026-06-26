@@ -22,6 +22,7 @@ use sheshbesh::turn::next_unfinished_active;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
+#[allow(non_snake_case)]
 pub(crate) fn App() -> impl IntoView {
     view! {
         <I18nContextProvider>
