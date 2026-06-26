@@ -13,16 +13,18 @@ pub(crate) enum Theme {
     Midnight,
     Daylight,
     Forest,
+    Dusk,
 }
 
 impl Theme {
-    pub(crate) const ALL: [Theme; 3] = [Theme::Midnight, Theme::Daylight, Theme::Forest];
+    pub(crate) const ALL: [Theme; 4] = [Theme::Midnight, Theme::Dusk, Theme::Daylight, Theme::Forest];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
             Theme::Midnight => "Полночь",
             Theme::Daylight => "Рассвет",
             Theme::Forest => "Лес",
+            Theme::Dusk => "Сумерки",
         }
     }
 
@@ -31,6 +33,7 @@ impl Theme {
             Theme::Midnight => "midnight",
             Theme::Daylight => "daylight",
             Theme::Forest => "forest",
+            Theme::Dusk => "dusk",
         }
     }
 
