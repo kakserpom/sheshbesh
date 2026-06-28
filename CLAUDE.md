@@ -56,6 +56,10 @@ TUI (интерактивный ratatui + потоковая ANSI-анимаци
   выводится из длины весов в `MlpValue::from_floats`), ход выбирается
   `best_turn`/`best_forced` (жадно по ценности афтерстейта), а для варианта
   **MLP+поиск** — `best_turn_2ply` (2-плай expectiminimax, см. `src/search.rs`).
+  **2-плай поиск вынесен в Web Worker** (`frontend/ai-worker/`): отдельный WASM-бинар
+  (`wasm-pack --target no-modules`), общается с основным потоком через `postMessage`
+  (JSON). Веса моделей встроены в воркер (`include_bytes!`). Worker собирается раньше
+  фронтенда: `./frontend/build-worker.sh && trunk build`.
   **Алгоритм каждого компьютера выбирается на экране настроек** — сигнал
   `algos: [Algo; 4]` (по индексу `Side`, по умолчанию MLP); для каждой
   стороны-компьютера показывается селектор **MLP / MLP+поиск / Linear / Эвристика**
@@ -221,7 +225,9 @@ TUI (интерактивный ratatui + потоковая ANSI-анимаци
 - Все тесты: `cargo test` (движок + TUI)
 - Один тест: `cargo test <имя_теста>` (`-- --exact` для точного совпадения)
 - Движок без TUI / WASM: `cargo build --no-default-features [--target wasm32-unknown-unknown]`
-- GUI (Leptos): из `frontend/` — `trunk serve` (dev-сервер) или `trunk build`;
+- GUI (Leptos): из `frontend/` — сперва собрать AI-воркер (требует `wasm-pack`):
+  `./build-worker.sh`; затем `trunk serve` (dev-сервер) или `trunk build`;
+  всё вместе одной командой: `./build-worker.sh && trunk build`;
   линт фронтенда — `cargo clippy -p sheshbesh-gui --target wasm32-unknown-unknown`
 - Линтер: `cargo clippy --all --workspace --all-targets` — включён `clippy::pedantic`
   (через `[lints.clippy]` в `Cargo.toml`); шумные для этого кода правила (числовые

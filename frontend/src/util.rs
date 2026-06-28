@@ -97,9 +97,9 @@ pub(crate) struct Frame {
 
 pub(crate) fn side_name(side: Side, humans: &[Side], i18n: I18nContext<Locale>) -> String {
     let who = if humans.contains(&side) {
-        t_string!(i18n, side_human)
+        tu_string!(i18n, side_human)
     } else {
-        t_string!(i18n, side_ai)
+        tu_string!(i18n, side_ai)
     };
     format!(
         "<b style=\"color:{}\">{who} {}</b>",
@@ -118,10 +118,10 @@ pub(crate) fn move_note(
     let owner = before.checkers[mv.checker].owner;
     let name = side_name(owner, humans, i18n);
     if !before.has_won(owner) && after.has_won(owner) {
-        return Some(t_string!(i18n, note_finish, who = name));
+        return Some(tu_string!(i18n, note_finish, who = name));
     }
     if mv.kind == MoveKind::Ransom {
-        return Some(t_string!(i18n, note_ransom, who = name));
+        return Some(tu_string!(i18n, note_ransom, who = name));
     }
     let victim = after.checkers.iter().enumerate().find(|(j, c)| {
         matches!(c.pos, Position::Captured { .. })
@@ -129,17 +129,17 @@ pub(crate) fn move_note(
     });
     if let Some((j, _)) = victim {
         let v = side_name(before.checkers[j].owner, humans, i18n);
-        return Some(t_string!(i18n, note_capture, who = name, victim = v));
+        return Some(tu_string!(i18n, note_capture, who = name, victim = v));
     }
     let event = match mv.kind {
-        MoveKind::Enter => Some(t_string!(i18n, note_enter)),
-        MoveKind::EnterMoon => Some(t_string!(i18n, note_moon_enter)),
-        MoveKind::MoonAdvance => Some(t_string!(i18n, note_moon_advance)),
-        MoveKind::MoonExit => Some(t_string!(i18n, note_moon_exit)),
-        MoveKind::EnterPrison => Some(t_string!(i18n, note_prison_enter)),
-        MoveKind::PrisonRelease => Some(t_string!(i18n, note_prison_release)),
-        MoveKind::EnterHome => Some(t_string!(i18n, note_home_enter)),
-        MoveKind::HomeAdvance => Some(t_string!(i18n, note_home_advance)),
+        MoveKind::Enter => Some(tu_string!(i18n, note_enter)),
+        MoveKind::EnterMoon => Some(tu_string!(i18n, note_moon_enter)),
+        MoveKind::MoonAdvance => Some(tu_string!(i18n, note_moon_advance)),
+        MoveKind::MoonExit => Some(tu_string!(i18n, note_moon_exit)),
+        MoveKind::EnterPrison => Some(tu_string!(i18n, note_prison_enter)),
+        MoveKind::PrisonRelease => Some(tu_string!(i18n, note_prison_release)),
+        MoveKind::EnterHome => Some(tu_string!(i18n, note_home_enter)),
+        MoveKind::HomeAdvance => Some(tu_string!(i18n, note_home_advance)),
         MoveKind::Step | MoveKind::Ransom => None,
     };
     event.map(|e| format!("{name}: {e}"))
@@ -149,12 +149,12 @@ pub(crate) fn roll_note(side: Side, humans: &[Side], roll: DiceRoll, no_move: bo
     let name = side_name(side, humans, i18n);
     let [a, b] = roll.values();
     if no_move {
-        return t_string!(i18n, herald_no_move, who = name, a = a.to_string(), b = b.to_string());
+        return tu_string!(i18n, herald_no_move, who = name, a = a.to_string(), b = b.to_string());
     }
     if roll.is_double() {
-        t_string!(i18n, herald_double, who = name, a = a.to_string(), b = b.to_string())
+        tu_string!(i18n, herald_double, who = name, a = a.to_string(), b = b.to_string())
     } else {
-        t_string!(i18n, herald_wait_move, who = name, a = a.to_string(), b = b.to_string())
+        tu_string!(i18n, herald_wait_move, who = name, a = a.to_string(), b = b.to_string())
     }
 }
 
@@ -213,7 +213,7 @@ pub(crate) fn result_msg(
             .filter(|&&s| team_of(s) == t)
             .map(|s| s.letter().to_string())
             .collect();
-        Some(t_string!(i18n, result_team_wins, team = ms.join("+")))
+        Some(tu_string!(i18n, result_team_wins, team = ms.join("+")))
     } else {
         let mut order = finished.to_vec();
         for &s in &state.active {
@@ -226,7 +226,7 @@ pub(crate) fn result_msg(
             .enumerate()
             .map(|(i, s)| format!("{}) {}", i + 1, side_name(*s, humans, i18n)))
             .collect();
-        Some(t_string!(i18n, result_full,
+        Some(tu_string!(i18n, result_full,
             who = side_name(order[0], humans, i18n),
             places = places.join(", ")
         ))
@@ -368,7 +368,7 @@ pub(crate) fn commit_frames<F>(
             roll: Some(roll),
             hold: ROLL_ANIM_MS,
             rolling: true,
-            note: Some(t_string!(i18n, herald_roll, who = side_name(side, humans, i18n))),
+            note: Some(tu_string!(i18n, herald_roll, who = side_name(side, humans, i18n))),
             sound: Some(SoundKind::Dice),
             pts: Vec::new(),
             fade: false,
@@ -399,7 +399,7 @@ pub(crate) fn commit_frames<F>(
         let forced_resp = scratch.checkers[mv.checker].owner != side;
         scratch = apply_with_frames(frames, scratch, mv, roll, humans, i18n);
         if forced_resp && let Some(last) = frames.last_mut() {
-            last.note = Some(t_string!(i18n, forced_reply,
+            last.note = Some(tu_string!(i18n, forced_reply,
                 who = side_name(scratch.checkers[mv.checker].owner, humans, i18n)
             ));
         }

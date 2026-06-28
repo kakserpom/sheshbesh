@@ -16,7 +16,9 @@
 
 use crate::board::Side;
 use crate::dice::{DiceRoll, Die};
-use crate::moves::{Move, MoveKind, apply, forced_six_moves, legal_turns};
+use crate::moves::{
+    Move, MoveKind, apply, forced_six_moves, legal_turns, legal_turns_remaining, remaining_after,
+};
 use crate::state::{GameState, Position};
 use crate::turn::{Agent, next_unfinished_active};
 use crate::value::{Value, apply_sequence, best_forced};
@@ -70,6 +72,8 @@ fn opponent_reply_value<V: Value>(
             // Применяем последовательность пошагово, вставляя вынужденные ответы
             // при выкупе (если captor = мы).
             let mut reply = board.clone();
+            let roll_values = roll.values();
+            let mut consumed: u8 = 0;
             for &mv in &seq {
                 // Захватчик известен ДО применения выкупа.
                 let captor = if mv.kind == MoveKind::Ransom {
@@ -81,6 +85,7 @@ fn opponent_reply_value<V: Value>(
                     None
                 };
                 reply = apply(&reply, mv);
+                consumed += mv.pips;
                 // Вынужденный ответный ход захватчика (только если captor = мы).
                 if let Some(captor) = captor {
                     let forced = forced_six_moves(&reply, captor);
@@ -88,6 +93,24 @@ fn opponent_reply_value<V: Value>(
                         let fidx = best_forced(v, &reply, captor, &forced);
                         reply = apply(&reply, forced[fidx]);
                     }
+                    // После выкупа и ответа захватчика исходная последовательность
+                    // дальше недействительна — состояние изменилось. Пересчитываем
+                    // оставшиеся кости и ищем легальные продолжения.
+                    let rem = remaining_after(&roll_values, consumed);
+                    if !rem.is_empty() {
+                        let mut best_reply = reply.clone();
+                        let mut best_ov = f32::NEG_INFINITY;
+                        for s in legal_turns_remaining(&reply, &rem) {
+                            let after = apply_sequence(&reply, &s);
+                            let ov = v.value(&after, opp);
+                            if ov > best_ov {
+                                best_ov = ov;
+                                best_reply = after;
+                            }
+                        }
+                        reply = best_reply;
+                    }
+                    break;
                 }
             }
             // Дубль: соперник получает ещё один ход.

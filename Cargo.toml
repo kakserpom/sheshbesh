@@ -1,5 +1,5 @@
 [workspace]
-members = ["frontend", "src-tauri"]
+members = ["frontend", "frontend/ai-worker", "src-tauri"]
 
 [package]
 name = "sheshbesh"

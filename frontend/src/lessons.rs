@@ -93,38 +93,38 @@ pub(crate) fn lessons(i18n: I18nContext<Locale>) -> Vec<Lesson> {
         (
             dr(6, 5),
             Some(dr(3, 2)),
-            t_string!(i18n, lesson_title_1).to_string(),
-            t_string!(i18n, lesson_text_1).to_string(),
+            tu_string!(i18n, lesson_title_1).to_string(),
+            tu_string!(i18n, lesson_text_1).to_string(),
         ),
         (
             dr(4, 6),
             Some(dr(4, 1)),
-            t_string!(i18n, lesson_title_2).to_string(),
-            t_string!(i18n, lesson_text_2).to_string(),
+            tu_string!(i18n, lesson_title_2).to_string(),
+            tu_string!(i18n, lesson_text_2).to_string(),
         ),
         (
             dr(1, 2),
             Some(dr(3, 1)),
-            t_string!(i18n, lesson_title_3).to_string(),
-            t_string!(i18n, lesson_text_3).to_string(),
+            tu_string!(i18n, lesson_title_3).to_string(),
+            tu_string!(i18n, lesson_text_3).to_string(),
         ),
         (
             dr(3, 2),
             Some(dr(2, 1)),
-            t_string!(i18n, lesson_title_4).to_string(),
-            t_string!(i18n, lesson_text_4).to_string(),
+            tu_string!(i18n, lesson_title_4).to_string(),
+            tu_string!(i18n, lesson_text_4).to_string(),
         ),
         (
             dr(6, 1),
             Some(dr(4, 2)),
-            t_string!(i18n, lesson_title_5).to_string(),
-            t_string!(i18n, lesson_text_5).to_string(),
+            tu_string!(i18n, lesson_title_5).to_string(),
+            tu_string!(i18n, lesson_text_5).to_string(),
         ),
         (
             dr(2, 4),
             None,
-            t_string!(i18n, lesson_title_6).to_string(),
-            t_string!(i18n, lesson_text_6).to_string(),
+            tu_string!(i18n, lesson_title_6).to_string(),
+            tu_string!(i18n, lesson_text_6).to_string(),
         ),
     ];
 
@@ -167,8 +167,8 @@ pub(crate) fn lessons(i18n: I18nContext<Locale>) -> Vec<Lesson> {
         .find(|t| t.iter().any(|m| m.kind == MoveKind::Ransom))
         .unwrap_or_default();
     out.push(Lesson {
-        title: t_string!(i18n, lesson_title_7).to_string(),
-        text: t_string!(i18n, lesson_text_7).to_string(),
+        title: tu_string!(i18n, lesson_title_7).to_string(),
+        text: tu_string!(i18n, lesson_text_7).to_string(),
         before: ransom_before.clone(),
         roll: Some(ransom_roll),
         moves: ransom_moves.clone(),
@@ -187,8 +187,8 @@ pub(crate) fn lessons(i18n: I18nContext<Locale>) -> Vec<Lesson> {
     let home_roll = dr(2, 1);
     let home_moves = a_turn(&after_ransom, home_roll);
     out.push(Lesson {
-        title: t_string!(i18n, lesson_title_8).to_string(),
-        text: t_string!(i18n, lesson_text_8).to_string(),
+        title: tu_string!(i18n, lesson_title_8).to_string(),
+        text: tu_string!(i18n, lesson_text_8).to_string(),
         before: after_ransom,
         roll: Some(home_roll),
         moves: home_moves,

@@ -374,8 +374,10 @@ leptos_i18n::declare_locales! {
         home_test_herald: "Home entry test: the gate is a regular perimeter cell where you can stop (Step); entering Home is a separate move from the gate inward.",
     },
 }
+mod ai_worker;
 
 mod app;
+
 mod controls;
 mod demo;
 mod geom;

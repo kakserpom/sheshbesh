@@ -1,3 +1,4 @@
+use crate::ai_worker::{init_worker, next_id, send_raw, state_json};
 use crate::controls::{LocaleControl, SpeedControl, ThemeControl};
 use crate::demo::*;
 use crate::geom::*;
@@ -14,9 +15,9 @@ use leptos_meta::Title;
 use sheshbesh::board::LOCAL_MOON;
 use sheshbesh::moves::{forced_six_moves, move_legal};
 use sheshbesh::{
-    Agent, BOARD_DIM, BOARD_MARGIN, DEFAULT_WIDTH, DiceRoll, DiceSource, Die, Game, GameState,
+    Agent, BOARD_DIM, BOARD_MARGIN, DiceRoll, DiceSource, Die, Game, GameState,
     Heuristic, MoonField, Move, MoveKind, Position, RandomDice, Side, apply, best_forced,
-    best_turn, best_turn_2ply, legal_turns, legal_turns_remaining, margin_coord, remaining_after,
+    best_turn, legal_turns, legal_turns_remaining, margin_coord, remaining_after,
 };
 use sheshbesh::turn::next_unfinished_active;
 use wasm_bindgen::JsCast;
@@ -53,6 +54,7 @@ fn GameApp() -> impl IntoView {
             i18n.set_locale(locale);
         }
     }
+    init_worker();
     let dice = StoredValue::new(RandomDice::from_seed(seed()));
     // Поколение партии: растёт при старте/остановке игры. Любая запущенная анимация
     // (spawn_local) запоминает своё поколение и прекращается, когда оно устарело, —
@@ -351,20 +353,22 @@ fn GameApp() -> impl IntoView {
     // (человек выберет ответ, затем `forced_apply` продолжит ЭТОТ ЖЕ ход остатком костей).
     // Иначе компьютер выбирает ответ сам и идёт дальше — решение об остатке принимается
     // уже ПОСЛЕ ответа (как и требует правило).
-    let play_computer = move |mut frames: Vec<Frame>, mut st: GameState, mut rem: Vec<u8>, roll: DiceRoll| {
+    let play_computer = move |mut frames: Vec<Frame>, mut st: GameState, mut rem: Vec<u8>, roll: DiceRoll, first_idx: Option<usize>| {
         let side = st.to_move;
         let hs = humans.get_untracked();
         let algo = algos.get_untracked()[side.index()];
         let m = ai_model_for(algo, st.active.len(), teams.get_untracked());
+        let mut first_used = first_idx.is_none();
         loop {
             let turns = legal_turns_remaining(&st, &rem);
             if turns.iter().all(Vec::is_empty) {
                 break;
             }
-            let idx = if algo.is_search() {
-                best_turn_2ply(&m, DEFAULT_WIDTH, &st, &turns)
-            } else {
+            let idx = if first_used || !algo.is_search() {
                 best_turn(&m, &st, &turns)
+            } else {
+                first_used = true;
+                first_idx.unwrap()
             }
             .min(turns.len() - 1);
             let mut interrupted = false;
@@ -385,7 +389,7 @@ fn GameApp() -> impl IntoView {
                     if !options.is_empty() {
                         if hs.contains(&captor) {
                             if let Some(last) = frames.last_mut() {
-                                last.note = Some(t_string!(i18n, forced_pick_msg, who = side_name(captor, &hs, i18n)).to_string());
+                                last.note = Some(tu_string!(i18n, forced_pick_msg, who = side_name(captor, &hs, i18n)).to_string());
                             }
                             // Подсветка по умолчанию для выбора с клавиатуры (Tab/Enter):
                             // первый вариант обязательного хода.
@@ -398,7 +402,7 @@ fn GameApp() -> impl IntoView {
                         st = apply_with_frames(&mut frames, st, options[fidx], roll, &hs, i18n);
                         comp_applied.update_value(|v| v.push(options[fidx]));
                         if let Some(last) = frames.last_mut() {
-                            last.note = Some(t_string!(i18n, forced_reply, who = side_name(captor, &hs, i18n)).to_string());
+                            last.note = Some(tu_string!(i18n, forced_reply, who = side_name(captor, &hs, i18n)).to_string());
                         }
                     }
                     interrupted = true;
@@ -464,13 +468,15 @@ fn GameApp() -> impl IntoView {
         // Крутим кубик немедленно — до того, как начнётся расчёт хода ИИ.
         roll.set(Some(r));
         rolling.set(!instant);
-        herald.set(t_string!(i18n, herald_roll, who = &name).to_string());
+        herald.set(tu_string!(i18n, herald_roll, who = &name).to_string());
         if sound.get_untracked() {
             settings::play(settings::SoundKind::Dice);
         }
         spawn_local(async move {
+            animating.set(true);
             TimeoutFuture::new(roll_ms).await;
             if epoch.get_value() != era {
+                animating.set(false);
                 return;
             }
             rolling.set(false);
@@ -481,14 +487,16 @@ fn GameApp() -> impl IntoView {
             while paused.get_untracked() {
                 TimeoutFuture::new(150).await;
                 if epoch.get_value() != era {
+                    animating.set(false);
                     return;
                 }
             }
             if no_move {
-                herald.set(t_string!(i18n, herald_no_move, who = &name, a = a, b = b).to_string());
+                herald.set(tu_string!(i18n, herald_no_move, who = &name, a = a, b = b).to_string());
                 let nomove_ms = (f64::from(HOLD_NOMOVE_MS) * factor) as u32;
                 TimeoutFuture::new(nomove_ms).await;
                 if epoch.get_value() != era {
+                    animating.set(false);
                     return;
                 }
                 let mut fg = Game::new(g.state.clone());
@@ -507,7 +515,55 @@ fn GameApp() -> impl IntoView {
             }
             comp_applied.set_value(Vec::new());
             let frames = Vec::new();
-            play_computer(frames, g.state.clone(), r.values().to_vec(), r);
+            let st = g.state.clone();
+            let rem = r.values().to_vec();
+            let algo = algos.get_untracked()[side.index()];
+            if algo.is_search() {
+                let id = next_id();
+                let sj = state_json(&st);
+                let rem_json = rem.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
+                let ri = r.values();
+                let msg = format!(
+                    r#"{{"id":{},"mode":"turn","state":{},"roll":[{},{}],"rem":[{}],"algo":1}}"#,
+                    id, sj, ri[0], ri[1], rem_json
+                );
+                let signal = send_raw(&msg, id);
+                let first_idx = loop {
+                    if epoch.get_value() != era {
+                        animating.set(false);
+                        return;
+                    }
+                    if let Some(resp) = signal.get_untracked() {
+                        break resp;
+                    }
+                    TimeoutFuture::new(20).await;
+                };
+                if let Some(idx) = first_idx {
+                    play_computer(frames, st, rem, r, Some(idx));
+                } else {
+                    herald.set(tu_string!(i18n, herald_no_move, who = &name, a = a, b = b).to_string());
+                    let nomove_ms = (f64::from(HOLD_NOMOVE_MS) * factor) as u32;
+                    TimeoutFuture::new(nomove_ms).await;
+                    if epoch.get_value() != era {
+                        animating.set(false);
+                        return;
+                    }
+                    let mut fg = Game::new(g.state.clone());
+                    fg.commit_turn(r, Vec::new(), |_, _, _| 0);
+                    play(vec![Frame {
+                        state: fg.state,
+                        roll: None,
+                        hold: HOLD_STEP_MS,
+                        rolling: false,
+                        note: None,
+                        pts: Vec::new(),
+                        fade: false,
+                        sound: None,
+                    }]);
+                }
+            } else {
+                play_computer(frames, st, rem, r, None);
+            }
         });
     });
 
@@ -562,7 +618,7 @@ fn GameApp() -> impl IntoView {
             };
             let nomove_ms = (f64::from(HOLD_NOMOVE_MS) * factor) as u32;
             spawn_local(async move {
-                herald.set(t_string!(i18n, herald_roll, who = &name).to_string());
+                herald.set(tu_string!(i18n, herald_roll, who = &name).to_string());
                 roll.set(Some(r));
                 rolling.set(!instant);
                 TimeoutFuture::new(roll_ms).await;
@@ -574,7 +630,7 @@ fn GameApp() -> impl IntoView {
                 if no_move {
                     // Ходить нечем: показываем бросок и САМИ пропускаем ход через паузу
                     // (без кнопки) — как это делает компьютер.
-                    herald.set(t_string!(i18n, herald_no_move, who = &name, a = a, b = b).to_string());
+                    herald.set(tu_string!(i18n, herald_no_move, who = &name, a = a, b = b).to_string());
                     TimeoutFuture::new(nomove_ms).await;
                     if epoch.get_value() != era {
                         return;
@@ -598,9 +654,9 @@ fn GameApp() -> impl IntoView {
                     return;
                 }
                 herald.set(if r.is_double() {
-                    t_string!(i18n, herald_double, who = &name, a = a, b = b).to_string()
+                    tu_string!(i18n, herald_double, who = &name, a = a, b = b).to_string()
                 } else {
-                    t_string!(i18n, herald_wait_move, who = &name, a = a, b = b).to_string()
+                    tu_string!(i18n, herald_wait_move, who = &name, a = a, b = b).to_string()
                 });
                 turns.set(t);
                 prefix.set(Vec::new());
@@ -635,9 +691,9 @@ fn GameApp() -> impl IntoView {
             let burned: u8 = rem.iter().sum();
             let name = side_name(outcome.side, &hs, i18n);
             if outcome.again {
-                t_string!(i18n, burn_double, who = &name, n = burned as u16).to_string()
+                tu_string!(i18n, burn_double, who = &name, n = burned as u16).to_string()
             } else {
-                t_string!(i18n, burn_pip, who = &name, n = burned as u16).to_string()
+                tu_string!(i18n, burn_pip, who = &name, n = burned as u16).to_string()
             }
         });
         frames.push(Frame {
@@ -697,7 +753,7 @@ fn GameApp() -> impl IntoView {
                 let fidx = best_forced(&cm, &after, captor, &options).min(options.len() - 1);
                 after = apply_with_frames(&mut frames, after, options[fidx], r, &hs, i18n);
                 if let Some(last) = frames.last_mut() {
-                    last.note = Some(t_string!(i18n, forced_reply, who = side_name(captor, &hs, i18n)).to_string());
+                    last.note = Some(tu_string!(i18n, forced_reply, who = side_name(captor, &hs, i18n)).to_string());
                 }
             }
             turn_start.set_value(after.clone());
@@ -770,7 +826,7 @@ fn GameApp() -> impl IntoView {
         let st2 = apply_with_frames(&mut frames, st, fm, roll, &hs, i18n);
         comp_applied.update_value(|v| v.push(fm)); // ответ человека — часть хода компьютера
         forced_pick.set(None);
-        play_computer(frames, st2, rem, roll);
+        play_computer(frames, st2, rem, roll, None);
     };
 
     let click = move |target: Sel| {
@@ -1045,7 +1101,7 @@ fn GameApp() -> impl IntoView {
             active.len()
         ));
         let g = fresh(dice, active, teams_on);
-        herald.set(t_string!(i18n, herald_game_on, who = side_name(g.state.to_move, &hs, i18n)).to_string());
+        herald.set(tu_string!(i18n, herald_game_on, who = side_name(g.state.to_move, &hs, i18n)).to_string());
         game.set(g);
         started.set(true);
         kickoff();
@@ -1086,7 +1142,7 @@ fn GameApp() -> impl IntoView {
             roll: None,
             hold: HOLD_STEP_MS,
             rolling: false,
-            note: Some(t_string!(i18n, demo_complete).to_string()),
+            note: Some(tu_string!(i18n, demo_complete).to_string()),
             pts: Vec::new(),
             fade: false,
             sound: None,
@@ -1113,7 +1169,7 @@ fn GameApp() -> impl IntoView {
         prefix.set(Vec::new());
         remaining.set(r.values().to_vec());
         sel.set(None);
-        herald.set(t_string!(i18n, home_test_herald).to_string());
+        herald.set(tu_string!(i18n, home_test_herald).to_string());
         dev.set(false);
         started.set(true);
         kickoff();
@@ -1125,7 +1181,7 @@ fn GameApp() -> impl IntoView {
         animating.set(false);
         game.set(Game::new(demo_game(Demo::Reserve)));
         roll.set(None);
-        herald.set(t_string!(i18n, dev_title).to_string());
+        herald.set(tu_string!(i18n, dev_title).to_string());
         dev.set(true);
     };
 
@@ -1141,7 +1197,7 @@ fn GameApp() -> impl IntoView {
     };
 
     view! {
-        <Title text=t_string!(i18n, app_title) />
+        <Title text=move || t_string!(i18n, app_title) />
         <div class="wrap">
             // Заголовок — только на экране настроек; в партии/обучении он лишь крал бы
             // высоту у доски.

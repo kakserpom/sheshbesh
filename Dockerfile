@@ -4,11 +4,11 @@
 # ---- build ----
 FROM rust:1-bookworm AS build
 RUN rustup target add wasm32-unknown-unknown \
- && cargo install --locked trunk
+ && cargo install --locked trunk wasm-pack
 WORKDIR /app
 COPY . .
 WORKDIR /app/frontend
-RUN trunk build --release
+RUN ./build-worker.sh && trunk build --release
 # Готовая статика — в /app/frontend/dist
 
 # ---- serve ----

@@ -18,7 +18,7 @@ pub(crate) fn ThemeControl(
 ) -> impl IntoView {
     view! {
         <div class="theme-pick">
-            <button class="icon-btn" title=t_string!(i18n, theme_title)
+            <button class="icon-btn" title=move || t_string!(i18n, theme_title)
                 on:click=move |_| menu_open.update(|o| *o = !*o)>"🎨"</button>
             {move || menu_open.get().then(|| view! {
                 <div class="theme-menu">
@@ -50,7 +50,7 @@ pub(crate) fn LocaleControl(
 ) -> impl IntoView {
     view! {
         <div class="locale-pick">
-            <button class="icon-btn" title=t_string!(i18n, settings_lang)
+            <button class="icon-btn" title=move || t_string!(i18n, settings_lang)
                 on:click=move |_| menu_open.update(|o| *o = !*o)>"🌐"</button>
             {move || menu_open.get().then(|| view! {
                 <div class="locale-menu">
@@ -77,7 +77,7 @@ pub(crate) fn LocaleControl(
 pub(crate) fn SpeedControl(speed: RwSignal<Speed>, i18n: I18nContext<Locale>) -> impl IntoView {
     view! {
         <div class="set-group">
-            <span class="set-name">{t_string!(i18n, speed_name)}</span>
+            <span class="set-name">{move || t_string!(i18n, speed_name)}</span>
             <input type="range" class="speed-slider"
                 min="0" max=move || (Speed::ALL.len() - 1).to_string() step="1"
                 prop:value=move || speed.get().index().to_string()
