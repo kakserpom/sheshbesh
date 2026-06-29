@@ -62,6 +62,7 @@ leptos_i18n::declare_locales! {
         herald_roll: "{{ who }} бросает кости…",
         herald_no_move: "{{ who }}: выпало {{ a }} и {{ b }}. Ходить нечем — пропуск.",
         herald_wait_move: "{{ who }}: выпало {{ a }} и {{ b }}. Выберите ход.",
+        herald_ai_thinking: "Идёт выбор хода…",
         herald_double: "{{ who }}: выпало {{ a }} и {{ b }}. Дубль — ещё ход!",
         // Burn
         burn_double: "{{ who }}: сыграть {{ n }} больше нечем — дубль, переброс!",
@@ -244,6 +245,7 @@ leptos_i18n::declare_locales! {
         herald_roll: "{{ who }} rolls…",
         herald_no_move: "{{ who }}: rolled {{ a }} and {{ b }}. No moves — skip.",
         herald_wait_move: "{{ who }}: rolled {{ a }} and {{ b }}. Choose a move.",
+        herald_ai_thinking: "Choosing a move…",
         herald_double: "{{ who }}: rolled {{ a }} and {{ b }}. Doubles — extra turn!",
         // Burn
         burn_double: "{{ who }}: can't play {{ n }} — doubles, reroll!",
