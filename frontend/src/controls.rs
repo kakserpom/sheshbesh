@@ -59,13 +59,13 @@ pub(crate) fn LocaleControl(
                             let _ = web_sys::window().and_then(|w| w.local_storage().ok().flatten().map(|s| s.set_item("locale", "ru").ok()));
                             i18n.set_locale(Locale::ru);
                             menu_open.set(false);
-                        }>{t_string!(i18n, locale_ru)}</button>
+                        }>"Русский"</button>
                     <button class:on=move || i18n.get_locale() == Locale::en
                         on:click=move |_| {
                             let _ = web_sys::window().and_then(|w| w.local_storage().ok().flatten().map(|s| s.set_item("locale", "en").ok()));
                             i18n.set_locale(Locale::en);
                             menu_open.set(false);
-                        }>{t_string!(i18n, locale_en)}</button>
+                        }>"English"</button>
                 </div>
             })}
         </div>
