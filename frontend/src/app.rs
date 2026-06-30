@@ -483,7 +483,7 @@ fn GameApp() -> impl IntoView {
             // Показываем результат броска — до расчёта хода ИИ и анимации (иначе
             // herald перескочил бы с «AI rolls...» сразу на сообщение следующего хода).
             if !no_move {
-                herald.set(tu_string!(i18n, herald_ai_thinking).to_string());
+                herald.set(tu_string!(i18n, herald_ai_thinking, who = &name, a = a, b = b).to_string());
             }
             // Пауза — не начинаем расчёт, пока пользователь не снимет.
             while paused.get_untracked() {

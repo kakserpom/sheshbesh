@@ -152,7 +152,7 @@ pub(crate) fn roll_note(side: Side, humans: &[Side], roll: DiceRoll, no_move: bo
         return tu_string!(i18n, herald_no_move, who = name, a = a.to_string(), b = b.to_string());
     }
     if !humans.contains(&side) {
-        tu_string!(i18n, herald_ai_thinking).to_string()
+        tu_string!(i18n, herald_ai_thinking, who = name, a = a.to_string(), b = b.to_string())
     } else if roll.is_double() {
         tu_string!(i18n, herald_double, who = name, a = a.to_string(), b = b.to_string())
     } else {
