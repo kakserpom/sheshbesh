@@ -2371,14 +2371,12 @@ fn GameApp() -> impl IntoView {
             }}
             </div>
             </div>
-            // Плашка завершения игры: результат и кнопки «Играть снова» / «Главное меню».
+            // Плашка завершения игры: кнопки «Играть снова» / «Главное меню» по центру.
             {move || {
                 let g = game.get();
                 if game_over(&g.state, teams.get_untracked()) && !animating.get() {
-                    let msg = result_msg(&g.state, &finished.get(), teams.get_untracked(), &humans.get_untracked(), i18n).unwrap_or_default();
                     view! {
-                        <div class="complete-overlay">
-                            <h2 inner_html=msg.clone()></h2>
+                        <div class="game-over-overlay">
                             <div class="complete-buttons">
                                 <button class="primary" on:click=start_game>
                                     {t_string!(i18n, game_over_play_again)}
