@@ -12,7 +12,7 @@ use crate::view::*;
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use leptos_meta::Title;
-use sheshbesh::board::LOCAL_MOON;
+use sheshbesh::board::{LOCAL_MOON, LOCAL_PRISON_NEAR, SIDE_LEN};
 use sheshbesh::moves::{forced_six_moves, move_legal};
 use sheshbesh::{
     Agent, BOARD_DIM, BOARD_MARGIN, DiceRoll, DiceSource, Die, Game, GameState,
@@ -1546,6 +1546,16 @@ fn GameApp() -> impl IntoView {
                         }
                     });
                 };
+                // Позиции всплывающих подсказок для ключевых зон на доске (сторона A).
+                let btm = (BOARD_MARGIN + SIDE_LEN - 1) as f64 + 0.5;
+                let entry_pt = center_pt(margin_coord(Side::A.entry()));
+                let emid = entry_pt.0;
+                let moon_pt = moon_arc_point(Side::A, 0.5);
+                let prison_coord = margin_coord(Side::A.local_to_perimeter(LOCAL_PRISON_NEAR));
+                let prison_pt = prison_geoms().into_iter()
+                    .find(|g| g.coord == prison_coord)
+                    .map(|g| g.cage)
+                    .unwrap_or((7.5, btm - 1.0));
                 view! {
                     <div class="status">
                         <div class="status-left">
@@ -1637,6 +1647,34 @@ fn GameApp() -> impl IntoView {
                         s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD,
                     )>
                         {move || static_board(&game.get().state)}
+                        {view! {
+                            <g class="tut-labels">
+                                <g class="tut-label">
+                                    <text x=emid y=btm - 4.0 class="tut-text" text-anchor="middle" dy="0.35em">
+                                        <title>{t_string!(i18n, tutorial_tip_home)}</title>
+                                        {t_string!(i18n, tutorial_label_home)}
+                                    </text>
+                                </g>
+                                <g class="tut-label">
+                                    <text x=moon_pt.0 y=moon_pt.1 + 1.0 class="tut-text" text-anchor="middle" dy="0.35em">
+                                        <title>{t_string!(i18n, tutorial_tip_moon)}</title>
+                                        {t_string!(i18n, tutorial_label_moon)}
+                                    </text>
+                                </g>
+                                <g class="tut-label">
+                                    <text x=prison_pt.0 y=prison_pt.1 + 0.9 class="tut-text" text-anchor="middle" dy="0.35em">
+                                        <title>{t_string!(i18n, tutorial_tip_prison)}</title>
+                                        {t_string!(i18n, tutorial_label_prison)}
+                                    </text>
+                                </g>
+                                <g class="tut-label">
+                                    <text x=emid y=btm + 0.9 class="tut-text" text-anchor="middle" dy="0.35em">
+                                        <title>{t_string!(i18n, tutorial_tip_entry)}</title>
+                                        {t_string!(i18n, tutorial_label_entry)}
+                                    </text>
+                                </g>
+                            </g>
+                        }}
                         <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
                             <circle
                                 r=move || match game.get().state.checkers[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
