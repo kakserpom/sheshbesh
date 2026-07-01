@@ -1283,6 +1283,7 @@ fn GameApp() -> impl IntoView {
                         }>{t!(i18n, settings_tutorial)}</button>
                         <button on:click=move |_| rules.set(true)>{t!(i18n, settings_rules)}</button>
                         <button on:click=move |_| about.set(true)>{t!(i18n, settings_about)}</button>
+                        <a class="icon-btn" href="https://github.com/kakserpom/sheshbesh" target="_blank" title="GitHub">"🐙"</a>
                         // Переключение языка — выпадающее меню как у темы.
                         <LocaleControl i18n menu_open=locale_menu/>
                         // Выбор темы оформления — иконка-палитра с выпадающим списком.
