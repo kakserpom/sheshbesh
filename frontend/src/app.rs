@@ -1648,7 +1648,7 @@ fn GameApp() -> impl IntoView {
                         {view! {
                             <g class="tut-labels">
                                 <g class="tut-label">
-                                    <text x=emid + 1.2 y=btm - 4.2 class="tut-text" text-anchor="middle" dy="0.35em">
+                                    <text x=emid - 1.5 y=btm + 0.9 class="tut-text" text-anchor="middle" dy="0.35em">
                                         <title>{t_string!(i18n, tutorial_tip_home)}</title>
                                         {t_string!(i18n, tutorial_label_home)}
                                     </text>
@@ -1832,6 +1832,27 @@ fn GameApp() -> impl IntoView {
                         }
                     })}
                     </div>
+                    // Плашка завершения обучения (последний шаг, не анимируется).
+                    {move || {
+                        let cur = lesson_idx.get();
+                        if cur + 1 >= total && !animating.get() && !rolling.get() {
+                            view! {
+                                <div class="complete-overlay">
+                                    <h2>{t_string!(i18n, tutorial_complete)}</h2>
+                                    <div class="complete-buttons">
+                                        <button class="primary" on:click=move |_| goto_lesson(0)>
+                                            {t_string!(i18n, tutorial_complete_retry)}
+                                        </button>
+                                        <button on:click=move |_| { epoch.update_value(|e| *e += 1); animating.set(false); rolling.set(false); tutorial.set(false); }>
+                                            {t_string!(i18n, tutorial_complete_back)}
+                                        </button>
+                                    </div>
+                                </div>
+                            }.into_any()
+                        } else {
+                            ().into_any()
+                        }
+                    }}
                 }
             })}
 
@@ -2345,6 +2366,28 @@ fn GameApp() -> impl IntoView {
             }}
             </div>
             </div>
+            // Плашка завершения игры: результат и кнопки «Играть снова» / «Главное меню».
+            {move || {
+                let g = game.get();
+                if game_over(&g.state, teams.get_untracked()) && !animating.get() {
+                    let msg = result_msg(&g.state, &finished.get(), teams.get_untracked(), &humans.get_untracked(), i18n).unwrap_or_default();
+                    view! {
+                        <div class="complete-overlay">
+                            <h2 inner_html=msg.clone()></h2>
+                            <div class="complete-buttons">
+                                <button class="primary" on:click=start_game>
+                                    {t_string!(i18n, game_over_play_again)}
+                                </button>
+                                <button on:click=to_settings>
+                                    {t_string!(i18n, game_over_back)}
+                                </button>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
             })}
         </div>
     }
