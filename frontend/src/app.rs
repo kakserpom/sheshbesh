@@ -1650,7 +1650,7 @@ fn GameApp() -> impl IntoView {
                         {view! {
                             <g class="tut-labels">
                                 <g class="tut-label">
-                                    <text x=emid y=btm - 4.0 class="tut-text" text-anchor="middle" dy="0.35em">
+                                    <text x=emid + 1.2 y=btm - 4.2 class="tut-text" text-anchor="middle" dy="0.35em">
                                         <title>{t_string!(i18n, tutorial_tip_home)}</title>
                                         {t_string!(i18n, tutorial_label_home)}
                                     </text>
