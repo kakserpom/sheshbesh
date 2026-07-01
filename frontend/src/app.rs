@@ -1551,11 +1551,9 @@ fn GameApp() -> impl IntoView {
                 let entry_pt = center_pt(margin_coord(Side::A.entry()));
                 let emid = entry_pt.0;
                 let moon_pt = moon_arc_point(Side::A, 0.5);
-                let prison_coord = margin_coord(Side::A.local_to_perimeter(LOCAL_PRISON_NEAR));
-                let prison_pt = prison_geoms().into_iter()
-                    .find(|g| g.coord == prison_coord)
-                    .map(|g| g.cage)
-                    .unwrap_or((7.5, btm - 1.0));
+                let prison_cell_pt = center_pt(margin_coord(
+                    Side::A.local_to_perimeter(LOCAL_PRISON_NEAR),
+                ));
                 view! {
                     <div class="status">
                         <div class="status-left">
@@ -1662,7 +1660,7 @@ fn GameApp() -> impl IntoView {
                                     </text>
                                 </g>
                                 <g class="tut-label">
-                                    <text x=prison_pt.0 y=prison_pt.1 + 0.9 class="tut-text" text-anchor="middle" dy="0.35em">
+                                    <text x=prison_cell_pt.0 y=btm + 0.9 class="tut-text" text-anchor="middle" dy="0.35em">
                                         <title>{t_string!(i18n, tutorial_tip_prison)}</title>
                                         {t_string!(i18n, tutorial_label_prison)}
                                     </text>
