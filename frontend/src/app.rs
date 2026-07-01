@@ -2378,7 +2378,7 @@ fn GameApp() -> impl IntoView {
                     view! {
                         <div class="game-over-overlay">
                             <div class="complete-buttons">
-                                <button class="primary" on:click=start_game>
+                                <button on:click=start_game>
                                     {t_string!(i18n, game_over_play_again)}
                                 </button>
                                 <button on:click=to_settings>
