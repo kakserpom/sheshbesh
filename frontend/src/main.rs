@@ -49,12 +49,12 @@ leptos_i18n::declare_locales! {
         speed_name: "Скорость:",
         theme_title: "Тема оформления",
         // Hamburger
-        hamburger_rules: "📖 Правила",
+        hamburger_rules: "Правила",
         hamburger_sound: "Звук",
         hamburger_speed: "Скорость",
         hamburger_theme: "Тема",
-        hamburger_keys: "⌨ Горячие клавиши",
-        hamburger_log: "📋 Лог партии",
+        hamburger_keys: "Горячие клавиши",
+        hamburger_log: "Лог партии",
         hamburger_lang: "🌐 Язык",
         hamburger_menu: "Меню",
         // Herald / game
@@ -248,12 +248,12 @@ leptos_i18n::declare_locales! {
         speed_name: "Speed:",
         theme_title: "Theme",
         // Hamburger
-        hamburger_rules: "📖 Rules",
+        hamburger_rules: "Rules",
         hamburger_sound: "Sound",
         hamburger_speed: "Speed",
         hamburger_theme: "Theme",
-        hamburger_keys: "⌨ Hotkeys",
-        hamburger_log: "📋 Game Log",
+        hamburger_keys: "Hotkeys",
+        hamburger_log: "Game Log",
         hamburger_lang: "🌐 Language",
         hamburger_menu: "Menu",
         // Herald / game
