@@ -1566,14 +1566,14 @@ fn GameApp() -> impl IntoView {
                         <button class="icon-btn hamburger-btn" class:on=move || hamburger.get()
                             title=t_string!(i18n, hamburger_menu) on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
                         <div class="hamburger-content" class:open=move || hamburger.get()>
-                        <button class="icon-btn hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">{t_string!(i18n, hamburger_rules)}</span></button>
-                        <button class="icon-btn hamburger-item" on:click=move |_| sound.update(|s| *s = !*s)>
+                        <button class="hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">{t_string!(i18n, hamburger_rules)}</span></button>
+                        <button class="hamburger-item" on:click=move |_| sound.update(|s| *s = !*s)>
                             {move || if sound.get() { "🔊" } else { "🔇" }}<span class="hamburger-label">{t_string!(i18n, hamburger_sound)}</span>
                         </button>
-                        <div class="hamburger-item-wrap">
-                        <button class="icon-btn hamburger-item hamburger-locale-btn" on:click=move |_| locale_menu.update(|o| *o = !*o)>
-                            "🌐" <span class="hamburger-label">{t_string!(i18n, settings_lang)}</span>
-                        </button>
+                <div class="hamburger-item-wrap">
+                <button class="hamburger-item hamburger-locale-btn" on:click=move |_| locale_menu.update(|o| *o = !*o)>
+                    "🌐" <span class="hamburger-label">{t_string!(i18n, settings_lang)}</span>
+                </button>
                         {move || locale_menu.get().then(|| view! {
                             <div class="hamburger-submenu">
                                 <button class:on=move || i18n.get_locale() == Locale::ru
@@ -1592,7 +1592,7 @@ fn GameApp() -> impl IntoView {
                         })}
                         </div>
                         <div class="hamburger-item-wrap">
-                        <button class="icon-btn hamburger-item hamburger-speed-menu" on:click=move |_| speed_menu.update(|o| *o = !*o)>
+                        <button class="hamburger-item hamburger-speed-menu" on:click=move |_| speed_menu.update(|o| *o = !*o)>
                             "⏩" <span class="hamburger-label">{t_string!(i18n, hamburger_speed)}</span>
                         </button>
                         {move || speed_menu.get().then(|| view! {
@@ -1602,7 +1602,7 @@ fn GameApp() -> impl IntoView {
                         })}
                         </div>
                         <div class="hamburger-item-wrap">
-                        <button class="icon-btn hamburger-item hamburger-theme-menu" on:click=move |_| theme_menu.update(|o| *o = !*o)>
+                        <button class="hamburger-item hamburger-theme-menu" on:click=move |_| theme_menu.update(|o| *o = !*o)>
                             "🎨" <span class="hamburger-label">{t_string!(i18n, hamburger_theme)}</span>
                         </button>
                         {move || theme_menu.get().then(|| view! {
@@ -1942,13 +1942,13 @@ fn GameApp() -> impl IntoView {
                 <button class="icon-btn hamburger-btn" class:on=move || hamburger.get()
                     title=t_string!(i18n, hamburger_menu) on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
                 <div class="hamburger-content" class:open=move || hamburger.get()>
-                <button class="icon-btn hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">{t_string!(i18n, hamburger_rules)}</span></button>
-                <button class="icon-btn hamburger-item" on:click=move |_| { keys_hint.update(|v| *v = !*v); hamburger.set(false); }>"⌨" <span class="hamburger-label">{t_string!(i18n, hamburger_keys)}</span></button>
-                <button class="icon-btn hamburger-item" on:click=move |_| sound.update(|s| *s = !*s)>
+                <button class="hamburger-item" on:click=move |_| { rules.set(true); hamburger.set(false); }>"📖" <span class="hamburger-label">{t_string!(i18n, hamburger_rules)}</span></button>
+                <button class="hamburger-item" on:click=move |_| { keys_hint.update(|v| *v = !*v); hamburger.set(false); }>"⌨" <span class="hamburger-label">{t_string!(i18n, hamburger_keys)}</span></button>
+                <button class="hamburger-item" on:click=move |_| sound.update(|s| *s = !*s)>
                     {move || if sound.get() { "🔊" } else { "🔇" }}<span class="hamburger-label">{t_string!(i18n, hamburger_sound)}</span>
                 </button>
                 <div class="hamburger-item-wrap">
-                <button class="icon-btn hamburger-item hamburger-locale-btn" on:click=move |_| locale_menu.update(|o| *o = !*o)>
+                <button class="hamburger-item hamburger-locale-btn" on:click=move |_| locale_menu.update(|o| *o = !*o)>
                     "🌐" <span class="hamburger-label">{t_string!(i18n, settings_lang)}</span>
                 </button>
                 {move || locale_menu.get().then(|| view! {
@@ -1969,7 +1969,7 @@ fn GameApp() -> impl IntoView {
                 })}
                 </div>
                 <div class="hamburger-item-wrap">
-                <button class="icon-btn hamburger-item hamburger-speed-menu" on:click=move |_| speed_menu.update(|o| *o = !*o)>
+                <button class="hamburger-item hamburger-speed-menu" on:click=move |_| speed_menu.update(|o| *o = !*o)>
                     "⏩" <span class="hamburger-label">{t_string!(i18n, hamburger_speed)}</span>
                 </button>
                 {move || speed_menu.get().then(|| view! {
@@ -1979,7 +1979,7 @@ fn GameApp() -> impl IntoView {
                 })}
                 </div>
                 <div class="hamburger-item-wrap">
-                <button class="icon-btn hamburger-item hamburger-theme-menu" on:click=move |_| theme_menu.update(|o| *o = !*o)>
+                <button class="hamburger-item hamburger-theme-menu" on:click=move |_| theme_menu.update(|o| *o = !*o)>
                     "🎨" <span class="hamburger-label">{t_string!(i18n, hamburger_theme)}</span>
                 </button>
                 {move || theme_menu.get().then(|| view! {
@@ -2001,7 +2001,7 @@ fn GameApp() -> impl IntoView {
                 })}
                 </div>
                 {cfg!(debug_assertions).then(|| view! {
-                    <button class="icon-btn hamburger-item" on:click=move |_| { show_log.update(|v| *v = !*v); hamburger.set(false); }>"📋" <span class="hamburger-label">{t_string!(i18n, hamburger_log)}</span></button>
+                    <button class="hamburger-item" on:click=move |_| { show_log.update(|v| *v = !*v); hamburger.set(false); }>"📋" <span class="hamburger-label">{t_string!(i18n, hamburger_log)}</span></button>
                 })}
                 </div>
                 </div>
