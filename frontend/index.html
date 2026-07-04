@@ -375,6 +375,13 @@
     .hamburger-content { display: flex; align-items: center; gap: .6rem; }
     .hamburger-label { display: none; }
     .hamburger-item-wrap { position: relative; }
+    button.hamburger-item {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 2.2rem; height: 2.2rem; padding: 0; font-size: 1.2rem;
+      cursor: pointer; border: none; border-radius: .4rem;
+      background: none; color: var(--text);
+    }
+    button.hamburger-item:hover { background: var(--cell); }
     .hamburger-submenu {
       position: absolute; top: calc(100% + .35rem); left: 50%; transform: translateX(-50%); z-index: 60;
       display: flex; flex-direction: column; gap: .3rem; min-width: 8rem;
@@ -396,12 +403,10 @@
       .hamburger-content.open { display: flex; }
       .status-left { position: relative; }
       button.hamburger-item {
-        display: flex; align-items: center; gap: .6rem; width: 100%;
-        padding: .6rem .8rem; border-radius: .4rem; font-size: 1rem;
-        cursor: pointer; border: none; background: none; color: var(--text);
-        text-align: left; box-sizing: border-box;
+        width: 100%; height: auto; padding: .6rem .8rem; gap: .6rem;
+        font-size: 1rem; justify-content: flex-start; text-align: left;
+        box-sizing: border-box;
       }
-      button.hamburger-item:hover { background: var(--cell); }
       .hamburger-item-wrap { position: static; }
       .hamburger-submenu {
         position: static;
