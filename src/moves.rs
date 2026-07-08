@@ -78,7 +78,7 @@ struct Resolved {
 /// командном режиме) не считаются соперниками — их фишки не едят.
 fn enemies_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> Vec<usize> {
     state
-        .checkers
+        .checkers()
         .iter()
         .enumerate()
         .filter(|(_, c)| {
@@ -94,7 +94,7 @@ fn enemies_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> Vec<usize> 
 /// второй своей фишкой на обычную клетку — исключения только угол и Тюрьма.
 fn own_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> bool {
     state
-        .checkers
+        .checkers()
         .iter()
         .any(|c| c.owner == owner && c.pos.perimeter_cell(c.owner) == Some(cell))
 }
@@ -105,7 +105,7 @@ fn own_on(state: &GameState, owner: Side, cell: PerimeterIdx) -> bool {
 /// блокируют). **Пленник** (`Prison`) сидит ВНУТРИ Тюрьмы (как фишка на дорожке Луны —
 /// вне периметра) и проход НЕ перекрывает: мимо Тюрьмы с пленником пройти можно.
 pub(crate) fn occupied(state: &GameState, cell: PerimeterIdx) -> bool {
-    state.checkers.iter().any(|c| {
+    state.checkers().iter().any(|c| {
         matches!(c.pos, Position::OnTrack { .. }) && c.pos.perimeter_cell(c.owner) == Some(cell)
     })
 }
@@ -139,7 +139,7 @@ fn path_clear(state: &GameState, owner: Side, progress: u16, die: u8) -> bool {
 /// Занята ли клетка Дома глубины `depth` своей фишкой (в Дом — по 1 в клетку).
 fn home_depth_taken(state: &GameState, owner: Side, depth: u8) -> bool {
     state
-        .checkers
+        .checkers()
         .iter()
         .any(|c| c.owner == owner && c.pos == Position::Home { depth })
 }
@@ -149,7 +149,7 @@ fn home_depth_taken(state: &GameState, owner: Side, depth: u8) -> bool {
 /// перешагивая спец-клетки; фишка в спец-состоянии — только на значение **одной**
 /// кости (`pips` тогда = это значение). `None` — ход нелегален.
 fn resolve_move(state: &GameState, ci: usize, pips: u8) -> Option<Resolved> {
-    match state.checkers[ci].pos {
+    match state.checker(ci).pos {
         Position::OnTrack { .. } => advance_on_track(state, ci, pips),
         _ => resolve_special(state, ci, pips),
     }
@@ -165,7 +165,7 @@ fn advance_on_track(state: &GameState, ci: usize, pips: u8) -> Option<Resolved> 
     if pips == 0 {
         return None;
     }
-    let ch = state.checkers[ci];
+    let ch = *state.checker(ci);
     let owner = ch.owner;
     let Position::OnTrack { progress } = ch.pos else {
         return None;
@@ -245,7 +245,7 @@ fn advance_on_track(state: &GameState, ci: usize, pips: u8) -> Option<Resolved> 
 /// Объединение очков сюда неприменимо: каждое из этих состояний требует конкретного
 /// значения на одной кости.
 fn resolve_special(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
-    let ch = state.checkers[ci];
+    let ch = *state.checker(ci);
     let owner = ch.owner;
     match ch.pos {
         Position::Reserve => {
@@ -256,7 +256,7 @@ fn resolve_special(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
             // Нельзя ввести фишку, если на клетке ввода уже стоит СВОЯ фишка
             // (две свои на точке ввода не ставятся). Чужую — можно съесть, вводя свою.
             let own_on_entry = state
-                .checkers
+                .checkers()
                 .iter()
                 .any(|c| c.owner == owner && c.pos.perimeter_cell(owner) == Some(entry));
             if own_on_entry {
@@ -340,7 +340,7 @@ fn resolve_special(state: &GameState, ci: usize, die: u8) -> Option<Resolved> {
 /// использовать, тем эффективнее ходы (см. `encode`).
 pub fn can_play(state: &GameState, side: Side, die: u8) -> bool {
     state
-        .checkers
+        .checkers()
         .iter()
         .enumerate()
         .any(|(ci, c)| c.owner == side && resolve_move(state, ci, die).is_some())
@@ -356,7 +356,7 @@ pub fn move_legal(state: &GameState, mv: Move) -> bool {
 /// Все легальные одиночные ходы стороны `side` костью `die` (одно её значение).
 fn moves_for_side(state: &GameState, side: Side, die: u8) -> Vec<Move> {
     state
-        .checkers
+        .checkers()
         .iter()
         .enumerate()
         .filter(|(_, c)| c.owner == side)
@@ -408,11 +408,11 @@ pub fn apply(state: &GameState, mv: Move) -> GameState {
     let mut next = state.clone();
     // Съеденные фишки достаются стороне, чья фишка ходит (на обычных ходах это
     // текущий игрок; при вынужденном ответном ходе — захватчик).
-    let captor = state.checkers[mv.checker].owner;
+    let captor = state.checker(mv.checker).owner;
     for ci in resolved.captures {
-        next.checkers[ci].pos = Position::Captured { captor };
+        next.set_checker_pos(ci, Position::Captured { captor });
     }
-    next.checkers[mv.checker].pos = resolved.new_pos;
+    next.set_checker_pos(mv.checker, resolved.new_pos);
     next
 }
 
@@ -470,7 +470,7 @@ fn motion_candidates(remaining: &[u8]) -> Vec<(u8, Vec<u8>)> {
 /// периметре; спец-состояниям нужна ровно одна кость нужного значения.
 fn moves_for_motion(state: &GameState, pips: u8, combined: bool) -> Vec<Move> {
     state
-        .checkers
+        .checkers()
         .iter()
         .enumerate()
         .filter(|(_, c)| c.owner == state.to_move)
@@ -575,9 +575,9 @@ mod tests {
     /// Состояние с одним игроком A и заданными положениями фишек.
     fn state_a(positions: &[Position]) -> GameState {
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
+        s.clear_checkers();
         for &pos in positions {
-            s.checkers.push(Checker {
+            s.push_checker(Checker {
                 owner: Side::A,
                 pos,
             });
@@ -603,15 +603,15 @@ mod tests {
     #[test]
     fn corner_is_transparent_to_passing() {
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
+        s.clear_checkers();
         // A перед углом B (progress 8 = abs 17); ход на 2 проходит через угол abs 18.
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 8 },
         });
         // Чужая фишка стоит на углу — проходить через неё можно.
         let corner = Side::B.start_corner();
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(corner),
@@ -630,7 +630,7 @@ mod tests {
         );
         assert!(moves_for_die(&s, 5).is_empty());
         let after = apply(&s, moves_for_die(&s, 6)[0]);
-        assert_eq!(after.checkers[0].pos, Position::OnTrack { progress: 0 });
+        assert_eq!(after.checker(0).pos, Position::OnTrack { progress: 0 });
     }
 
     #[test]
@@ -642,7 +642,7 @@ mod tests {
         assert!(mv.iter().any(|m| m.kind == MoveKind::EnterMoon));
         let after = apply(&s, mv[0]);
         assert_eq!(
-            after.checkers[0].pos,
+            after.checker(0).pos,
             Position::Moon {
                 side: Side::B,
                 field: MoonField::One
@@ -659,7 +659,7 @@ mod tests {
         // 1 → Three
         s = apply(&s, moves_for_die(&s, 1)[0]);
         assert_eq!(
-            s.checkers[0].pos,
+            s.checker(0).pos,
             Position::Moon {
                 side: Side::B,
                 field: MoonField::Three
@@ -673,7 +673,7 @@ mod tests {
         s = apply(&s, moves_for_die(&s, 6)[0]);
         let exit = Side::B.local_to_perimeter(LOCAL_MOON_EXIT);
         assert_eq!(
-            s.checkers[0].pos,
+            s.checker(0).pos,
             Position::OnTrack {
                 progress: Side::A.progress_of(exit)
             }
@@ -756,19 +756,19 @@ mod tests {
     fn prison_entry_and_release() {
         // entry A = abs 9; Тюрьма стороны B (ближняя) = abs 18 + 4 = 22; A-прогресс 13.
         let prison_abs = Side::B.local_to_perimeter(LOCAL_PRISON_NEAR);
-        let s = state_a(&[Position::OnTrack { progress: 11 }]);
-        let mv = moves_for_die(&s, 2);
+        let s = state_a(&[Position::OnTrack { progress: 10 }]);
+        let mv = moves_for_die(&s, 3);
         assert!(mv.iter().any(|m| m.kind == MoveKind::EnterPrison));
         let jailed = apply(&s, mv[0]);
         assert_eq!(
-            jailed.checkers[0].pos,
+            jailed.checker(0).pos,
             Position::Prison { cell: prison_abs }
         );
         // выйти можно только по 4
         assert!(moves_for_die(&jailed, 6).is_empty());
         let freed = apply(&jailed, moves_for_die(&jailed, 4)[0]);
         assert_eq!(
-            freed.checkers[0].pos,
+            freed.checker(0).pos,
             Position::OnTrack {
                 progress: Side::A.progress_of(prison_abs)
             }
@@ -777,17 +777,17 @@ mod tests {
 
     #[test]
     fn imprisoned_does_not_block_but_released_does() {
-        // Тюрьма стороны B (ближняя), A-прогресс 13; фишка A на progress 11 перед ней.
+        // Тюрьма стороны B (ближняя), A-прогресс 13; фишка A на progress 10 перед ней.
         let prison = Side::B.local_to_perimeter(LOCAL_PRISON_NEAR);
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
-        s.checkers.push(Checker {
+        s.clear_checkers();
+        s.push_checker(Checker {
             owner: Side::A,
-            pos: Position::OnTrack { progress: 11 },
+            pos: Position::OnTrack { progress: 10 },
         });
         // ПЛЕННИК (сидит ВНУТРИ Тюрьмы) — проход не перекрывает: A идёт МИМО (2+3 = 5 очков),
         // заход в Тюрьму (2 очка) исключён правилом максимума.
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::Prison { cell: prison },
         });
@@ -801,9 +801,9 @@ mod tests {
         );
         // ОСВОБОЖДЁННАЯ фишка («зашёл-вышел», стоит НА клетке Тюрьмы) — перекрывает проход,
         // и A вынужден зайти в Тюрьму (мимо нельзя).
-        s.checkers[1].pos = Position::OnTrack {
+        s.set_checker_pos(1, Position::OnTrack {
             progress: Side::C.progress_of(prison),
-        };
+        });
         let turns = legal_turns(&s, roll(2, 3));
         assert!(
             turns
@@ -815,10 +815,10 @@ mod tests {
 
     #[test]
     fn prison_not_stuck_with_one_checker() {
-        // Одна фишка A на progress 11; бросок (2,3): объединив кости (2+3=5 «в один мах»)
+        // Одна фишка A на progress 10; бросок (2,3): объединив кости (2+3=5 «в один мах»)
         // или перешагнув Тюрьму одиночной костью, фишка проходит МИМО клетки Тюрьмы (13).
         // По правилу максимального хода играются ОБЕ кости, фишка не застревает в Тюрьме.
-        let s = state_a(&[Position::OnTrack { progress: 11 }]);
+        let s = state_a(&[Position::OnTrack { progress: 10 }]);
         let turns = legal_turns(&s, roll(2, 3));
         assert!(!turns.is_empty());
         for t in &turns {
@@ -827,7 +827,7 @@ mod tests {
                 st = apply(&st, m);
             }
             assert!(
-                !matches!(st.checkers[0].pos, Position::Prison { .. }),
+                !matches!(st.checker(0).pos, Position::Prison { .. }),
                 "при одной фишке нельзя застрять в Тюрьме: {t:?}"
             );
             assert_eq!(pips(t), 5, "обе кости должны играться: {t:?}");
@@ -850,7 +850,7 @@ mod tests {
                 st = apply(&st, m);
             }
             assert!(
-                !matches!(st.checkers[0].pos, Position::Prison { .. }),
+                !matches!(st.checker(0).pos, Position::Prison { .. }),
                 "нельзя застрять в Тюрьме при дубле: {t:?}"
             );
         }
@@ -858,12 +858,12 @@ mod tests {
 
     #[test]
     fn prison_entry_then_only_release() {
-        // Бросок (2,4), одна фишка A (progress 11). Выбор делается ПЕРВЫМ ходом:
-        //  • зайти в Тюрьму (13) и «зашёл-вышел» по «4» — остаться на клетке 13; либо
-        //  • перешагнуть Тюрьму (4 → 15, мимо) и пойти дальше (2 → 17).
+        // Бросок (3,4), одна фишка A (progress 10). Выбор делается ПЕРВЫМ ходом:
+        //  • зайти в Тюрьму (10+3=13) и «зашёл-вышел» по «4» — остаться на клетке 13; либо
+        //  • перешагнуть Тюрьму (4 → 14, мимо) и пойти дальше (3 → 17).
         // Зайдя в Тюрьму, второй костью пройти дальше уже НЕЛЬЗЯ — только освобождение.
-        let s = state_a(&[Position::OnTrack { progress: 11 }]);
-        let turns = legal_turns(&s, roll(2, 4));
+        let s = state_a(&[Position::OnTrack { progress: 10 }]);
+        let turns = legal_turns(&s, roll(3, 4));
         let finals: Vec<Position> = turns
             .iter()
             .map(|t| {
@@ -871,7 +871,7 @@ mod tests {
                 for &m in t {
                     st = apply(&st, m);
                 }
-                st.checkers[0].pos
+                st.checker(0).pos
             })
             .collect();
         // «зашёл-вышел»: свободна на клетке Тюрьмы (13).
@@ -903,7 +903,7 @@ mod tests {
                 st = apply(&st, m);
             }
             assert!(
-                !matches!(st.checkers[0].pos, Position::Moon { .. }),
+                !matches!(st.checker(0).pos, Position::Moon { .. }),
                 "нельзя застрять на Луне при дубле: {t:?}"
             );
         }
@@ -920,23 +920,23 @@ mod tests {
 
     #[test]
     fn may_enter_special_with_one_die_and_move_another() {
-        // Фишка 0 (progress 11) может ЗАЙТИ в Тюрьму (13) костью «2», а фишка 1
+        // Фишка 0 (progress 8) может ЗАЙТИ в Тюрьму (13) костью «5», а фишка 1
         // (progress 0) — сходить костью «3». Это легально и соблюдает максимум (обе
-        // кости сыграны, 5 очков): «встать одной, сходить другой».
+        // кости сыграны, 8 очков): «встать одной, сходить другой».
         let s = state_a(&[
-            Position::OnTrack { progress: 11 },
+            Position::OnTrack { progress: 8 },
             Position::OnTrack { progress: 0 },
         ]);
-        let turns = legal_turns(&s, roll(2, 3));
+        let turns = legal_turns(&s, roll(3, 5));
         assert!(
             turns.iter().any(|t| {
-                pips(t) == 5 && {
+                pips(t) == 8 && {
                     let mut st = s.clone();
                     for &m in t {
                         st = apply(&st, m);
                     }
-                    matches!(st.checkers[0].pos, Position::Prison { .. })
-                        && matches!(st.checkers[1].pos, Position::OnTrack { progress: 3 })
+                    matches!(st.checker(0).pos, Position::Prison { .. })
+                        && matches!(st.checker(1).pos, Position::OnTrack { progress: 3 })
                 }
             }),
             "должна быть возможность сесть в Тюрьму одной фишкой и сходить другой"
@@ -959,13 +959,13 @@ mod tests {
     fn enter_eats_enemy_on_entry() {
         // Чужая фишка на клетке ввода A → ввод разрешён и съедает её.
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
-        s.checkers.push(Checker {
+        s.clear_checkers();
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::Reserve,
         });
         let entry = Side::A.entry();
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(entry),
@@ -977,9 +977,9 @@ mod tests {
             .find(|m| m.checker == 0 && m.kind == MoveKind::Enter)
             .expect("ввод (со съеданием) разрешён");
         let after = apply(&s, enter);
-        assert_eq!(after.checkers[0].pos, Position::OnTrack { progress: 0 });
+        assert_eq!(after.checker(0).pos, Position::OnTrack { progress: 0 });
         assert!(matches!(
-            after.checkers[1].pos,
+            after.checker(1).pos,
             Position::Captured { captor: Side::A }
         ));
     }
@@ -1012,12 +1012,12 @@ mod tests {
         // (progress 70) не может зайти в Дом, «перепрыгнув» её — ворота тоже промежуточная.
         let entry = Side::A.entry();
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
-        s.checkers.push(Checker {
+        s.clear_checkers();
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 70 },
         });
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(entry),
@@ -1031,7 +1031,7 @@ mod tests {
             "нельзя зайти в Дом через занятую чужой фишкой клетку входа"
         );
         // Уберём чужую фишку с ворот (в резерв) — заход снова разрешён.
-        s.checkers[1].pos = Position::Reserve;
+        s.set_checker_pos(1, Position::Reserve);
         assert!(
             moves_for_die(&s, 4)
                 .iter()
@@ -1044,7 +1044,7 @@ mod tests {
         // Фишка в Доме на глубине 0 может идти глубже (освобождая вход).
         let s = state_a(&[Position::Home { depth: 0 }]);
         let after = apply(&s, moves_for_die(&s, 2)[0]);
-        assert_eq!(after.checkers[0].pos, Position::Home { depth: 2 });
+        assert_eq!(after.checker(0).pos, Position::Home { depth: 2 });
         // Но не за пределы Дома (перебор) и не перепрыгивая занятую клетку.
         let s2 = state_a(&[Position::Home { depth: 0 }, Position::Home { depth: 1 }]);
         assert!(
@@ -1059,15 +1059,15 @@ mod tests {
     #[test]
     fn capture_sends_enemy_to_captivity() {
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
+        s.clear_checkers();
         // A на progress 0 (abs 9). Цель шага на 3 → abs 12 (обычная клетка).
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 0 },
         });
         // C стоит на abs 12.
         let target = PerimeterIdx::new(12);
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(target),
@@ -1075,9 +1075,9 @@ mod tests {
         });
         let mv = moves_for_die(&s, 3);
         let after = apply(&s, mv[0]);
-        assert_eq!(after.checkers[0].pos, Position::OnTrack { progress: 3 });
+        assert_eq!(after.checker(0).pos, Position::OnTrack { progress: 3 });
         assert_eq!(
-            after.checkers[1].pos,
+            after.checker(1).pos,
             Position::Captured { captor: Side::A }
         );
     }
@@ -1087,13 +1087,13 @@ mod tests {
         // Командный режим 2×2: A и C — союзники. A приходит на клетку с фишкой C —
         // съедания нет, обе фишки сосуществуют.
         let mut s = GameState::new(Side::ALL.to_vec(), Side::A).with_teams(true);
-        s.checkers.clear();
-        s.checkers.push(Checker {
+        s.clear_checkers();
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 0 },
         });
         let target = PerimeterIdx::new(12);
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(target),
@@ -1101,14 +1101,14 @@ mod tests {
         });
         let mv = moves_for_die(&s, 3);
         let after = apply(&s, mv[0]);
-        assert_eq!(after.checkers[0].pos, Position::OnTrack { progress: 3 });
+        assert_eq!(after.checker(0).pos, Position::OnTrack { progress: 3 });
         // Фишка союзника C осталась на месте (не пленена).
-        assert!(matches!(after.checkers[1].pos, Position::OnTrack { .. }));
+        assert!(matches!(after.checker(1).pos, Position::OnTrack { .. }));
         // А вне командного режима тот же расклад — съедание (контроль).
         let plain = s.with_teams(false);
         let after2 = apply(&plain, moves_for_die(&plain, 3)[0]);
         assert_eq!(
-            after2.checkers[1].pos,
+            after2.checker(1).pos,
             Position::Captured { captor: Side::A }
         );
     }
@@ -1116,14 +1116,14 @@ mod tests {
     #[test]
     fn no_capture_on_corner() {
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
+        s.clear_checkers();
         // A progress 9 → abs 18 (угол B).
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 0 },
         });
         let corner = Side::B.start_corner();
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(corner),
@@ -1131,7 +1131,7 @@ mod tests {
         });
         let after = apply(&s, moves_for_die(&s, 9)[0]);
         // Соперник на углу не съеден.
-        assert!(matches!(after.checkers[1].pos, Position::OnTrack { .. }));
+        assert!(matches!(after.checker(1).pos, Position::OnTrack { .. }));
     }
 
     #[test]
@@ -1142,7 +1142,7 @@ mod tests {
         let mv = moves_for_die(&s, 3);
         assert!(mv.iter().any(|m| m.kind == MoveKind::EnterHome));
         assert_eq!(
-            apply(&s, mv[0]).checkers[0].pos,
+            apply(&s, mv[0]).checker(0).pos,
             Position::Home { depth: 0 }
         );
         // Перебор (progress 71 + 6 = 77 → глубина 4, за Домом) запрещён.
@@ -1170,14 +1170,14 @@ mod tests {
         assert_eq!(stop[0].kind, MoveKind::Step);
         let on_gate = apply(&s, stop[0]);
         assert_eq!(
-            on_gate.checkers[0].pos,
+            on_gate.checker(0).pos,
             Position::OnTrack { progress: PERIMETER as u16 }
         );
         // С ворот костью «1» — на глубину 0 Дома (отдельный заход).
         let enter = moves_for_die(&on_gate, 1);
         assert!(enter.iter().any(|m| m.kind == MoveKind::EnterHome));
         assert_eq!(
-            apply(&on_gate, enter[0]).checkers[0].pos,
+            apply(&on_gate, enter[0]).checker(0).pos,
             Position::Home { depth: 0 }
         );
     }
@@ -1204,14 +1204,14 @@ mod tests {
         let mv = moves_for_die(&s, 6);
         assert!(mv.iter().any(|m| m.kind == MoveKind::Ransom));
         let after = apply(&s, mv[0]);
-        assert_eq!(after.checkers[0].pos, Position::Reserve);
+        assert_eq!(after.checker(0).pos, Position::Reserve);
     }
 
     #[test]
     fn forced_six_moves_lists_captor_options() {
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
-        s.checkers.push(Checker {
+        s.clear_checkers();
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack { progress: 0 },
         });

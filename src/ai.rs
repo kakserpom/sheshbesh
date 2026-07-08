@@ -41,7 +41,7 @@ fn checker_value(owner: Side, pos: Position) -> i32 {
 /// Суммарная ценность фишек стороны.
 fn side_score(state: &GameState, side: Side) -> i32 {
     state
-        .checkers
+        .checkers()
         .iter()
         .filter(|c| c.owner == side)
         .map(|c| checker_value(side, c.pos))
@@ -101,7 +101,7 @@ fn shots_to(state: &GameState, ao: Side, p: u16, d: i32) -> i32 {
 /// и в резерве (вход по «6» на свою точку входа).
 fn threats_against(state: &GameState, victim: Side, attacker: Side) -> i32 {
     let mut total = 0;
-    for checker in state.checkers.iter().filter(|c| c.owner == victim) {
+    for checker in state.checkers().iter().filter(|c| c.owner == victim) {
         let Some(cell) = checker.pos.perimeter_cell(victim) else {
             continue;
         };
@@ -110,7 +110,7 @@ fn threats_against(state: &GameState, victim: Side, attacker: Side) -> i32 {
         }
         let cell_in_attacker = attacker.progress_of(cell) as i32;
         let mut shots = 0;
-        for oc in state.checkers.iter().filter(|c| c.owner == attacker) {
+        for oc in state.checkers().iter().filter(|c| c.owner == attacker) {
             match oc.pos {
                 Position::OnTrack { progress } => {
                     shots += shots_to(
@@ -210,8 +210,8 @@ mod tests {
     fn shots_account_for_blocked_lines() {
         // Атакующий A на progress 0 (abs 9); цель на дистанции 4 (abs 13).
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
-        s.checkers.push(Checker {
+        s.clear_checkers();
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 0 },
         });
@@ -220,7 +220,7 @@ mod tests {
 
         // Блокер на дистанции 2 (abs 11) перекрывает прямой выстрел и комбинации.
         let blocker = PerimeterIdx::new(11);
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(blocker),
@@ -248,19 +248,19 @@ mod tests {
     #[test]
     fn prefers_capturing_move() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.checkers.clear();
+        state.clear_checkers();
         // A: фишка 0 на дорожке (progress 0 = abs 9), фишка 1 чуть впереди.
-        state.checkers.push(Checker {
+        state.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 0 },
         });
-        state.checkers.push(Checker {
+        state.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 6 },
         });
         // C: продвинутая фишка на abs 12 — её можно съесть ходом на 3.
         let target = PerimeterIdx::new(12);
-        state.checkers.push(Checker {
+        state.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(target),
@@ -272,7 +272,7 @@ mod tests {
         game.play_turn(&mut dice, &mut Heuristic);
         // Эвристика должна была выбрать съедание: фишка C — в плену.
         assert!(matches!(
-            game.state.checkers[2].pos,
+            game.state.checker(2).pos,
             Position::Captured { .. }
         ));
     }
@@ -282,14 +282,14 @@ mod tests {
         // A-фишка на abs 12 (обычная клетка). C-фишка в 3 клетках позади — угроза.
         let exposed = {
             let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-            s.checkers.clear();
-            s.checkers.push(Checker {
+            s.clear_checkers();
+            s.push_checker(Checker {
                 owner: Side::A,
                 pos: Position::OnTrack { progress: 3 }, // abs 12
             });
             let cell = PerimeterIdx::new(12);
             let behind = Side::C.progress_of(cell) - 3; // в 3 клетках позади
-            s.checkers.push(Checker {
+            s.push_checker(Checker {
                 owner: Side::C,
                 pos: Position::OnTrack { progress: behind },
             });
@@ -301,9 +301,9 @@ mod tests {
         let safe = {
             let mut s = exposed.clone();
             let cell = PerimeterIdx::new(12);
-            s.checkers[1].pos = Position::OnTrack {
+            s.set_checker_pos(1, Position::OnTrack {
                 progress: Side::C.progress_of(cell) - 20,
-            };
+            });
             s
         };
         assert_eq!(capture_risk(&safe, Side::A), 0);
@@ -313,15 +313,15 @@ mod tests {
     fn threat_value_sees_attackable_enemy_blot() {
         // C-фишка открыта на abs 12; моя (A) фишка в 3 клетках позади — угроза.
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
+        s.clear_checkers();
         let cell = PerimeterIdx::new(12);
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(cell),
             },
         });
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack {
                 progress: Side::A.progress_of(cell) - 3,
@@ -336,13 +336,13 @@ mod tests {
     fn safe_cells_carry_no_risk() {
         // Фишка в Тюрьме не может быть съедена — риск 0, даже если соперник рядом.
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
+        s.clear_checkers();
         let prison = Side::A.local_to_perimeter(crate::board::LOCAL_PRISON_NEAR);
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::Prison { cell: prison },
         });
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(prison) - 1,

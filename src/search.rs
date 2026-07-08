@@ -77,7 +77,7 @@ fn opponent_reply_value<V: Value>(
             for &mv in &seq {
                 // Захватчик известен ДО применения выкупа.
                 let captor = if mv.kind == MoveKind::Ransom {
-                    match reply.checkers[mv.checker].pos {
+                    match reply.checker(mv.checker).pos {
                         Position::Captured { captor } if captor == me => Some(captor),
                         _ => None,
                     }

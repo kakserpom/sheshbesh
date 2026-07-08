@@ -87,7 +87,7 @@ pub fn state_json(state: &GameState) -> String {
         .collect::<Vec<_>>()
         .join(",");
     let checkers: String = state
-        .checkers
+        .checkers()
         .iter()
         .map(|c| {
             let owner = c.owner.index();

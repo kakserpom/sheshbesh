@@ -115,7 +115,7 @@ pub(crate) fn move_note(
     humans: &[Side],
     i18n: I18nContext<Locale>,
 ) -> Option<String> {
-    let owner = before.checkers[mv.checker].owner;
+    let owner = before.checkers()[mv.checker].owner;
     let name = side_name(owner, humans, i18n);
     if !before.has_won(owner) && after.has_won(owner) {
         return Some(tu_string!(i18n, note_finish, who = name));
@@ -123,12 +123,12 @@ pub(crate) fn move_note(
     if mv.kind == MoveKind::Ransom {
         return Some(tu_string!(i18n, note_ransom, who = name));
     }
-    let victim = after.checkers.iter().enumerate().find(|(j, c)| {
+    let victim = after.checkers().iter().enumerate().find(|(j, c)| {
         matches!(c.pos, Position::Captured { .. })
-            && !matches!(before.checkers[*j].pos, Position::Captured { .. })
+            && !matches!(before.checkers()[*j].pos, Position::Captured { .. })
     });
     if let Some((j, _)) = victim {
-        let v = side_name(before.checkers[j].owner, humans, i18n);
+        let v = side_name(before.checkers()[j].owner, humans, i18n);
         return Some(tu_string!(i18n, note_capture, who = name, victim = v));
     }
     let event = match mv.kind {
@@ -244,7 +244,7 @@ pub(crate) fn apply_with_frames(
     i18n: I18nContext<Locale>,
 ) -> GameState {
     let perim = PERIMETER as u16;
-    let mids: Vec<Position> = match state.checkers[mv.checker].pos {
+    let mids: Vec<Position> = match state.checkers()[mv.checker].pos {
         Position::OnTrack { progress } => {
             let target = progress + u16::from(mv.pips);
             if target <= perim {
@@ -276,7 +276,7 @@ pub(crate) fn apply_with_frames(
     };
     for pos in mids {
         let mut mid = state.clone();
-        mid.checkers[mv.checker].pos = pos;
+        mid.set_checker_pos(mv.checker, pos);
         frames.push(Frame {
             state: mid,
             roll: Some(roll),
@@ -291,8 +291,8 @@ pub(crate) fn apply_with_frames(
     let after = apply(&state, mv);
     let moon_seg = match (
         mv.kind,
-        after.checkers[mv.checker].pos,
-        state.checkers[mv.checker].pos,
+        after.checkers()[mv.checker].pos,
+        state.checkers()[mv.checker].pos,
     ) {
         (MoveKind::EnterMoon, Position::Moon { side, field }, _) => {
             Some((side, 0.0, moon_field_t(field)))
@@ -325,9 +325,9 @@ pub(crate) fn apply_with_frames(
         }
     }
     let note = move_note(&state, &after, mv, humans, i18n);
-    let capture_sound = state.checkers.iter().enumerate().any(|(j, _c)| {
-        matches!(after.checkers[j].pos, Position::Captured { .. })
-            && !matches!(state.checkers[j].pos, Position::Captured { .. })
+    let capture_sound = state.checkers().iter().enumerate().any(|(j, _c)| {
+        matches!(after.checkers()[j].pos, Position::Captured { .. })
+            && !matches!(state.checkers()[j].pos, Position::Captured { .. })
     });
     let sound = if capture_sound {
         Some(SoundKind::Capture)
@@ -398,11 +398,11 @@ pub(crate) fn commit_frames<F>(
     let applied = &outcome.applied;
     let mut scratch = pre;
     for &mv in applied {
-        let forced_resp = scratch.checkers[mv.checker].owner != side;
+        let forced_resp = scratch.checkers()[mv.checker].owner != side;
         scratch = apply_with_frames(frames, scratch, mv, roll, humans, i18n);
         if forced_resp && let Some(last) = frames.last_mut() {
             last.note = Some(tu_string!(i18n, forced_reply,
-                who = side_name(scratch.checkers[mv.checker].owner, humans, i18n)
+                who = side_name(scratch.checkers()[mv.checker].owner, humans, i18n)
             ));
         }
     }

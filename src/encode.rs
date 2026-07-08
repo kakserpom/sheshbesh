@@ -31,7 +31,7 @@ use crate::board::{
     CellKind, HOME_DEPTH, LOCAL_MOON_EXIT, PERIMETER, PerimeterIdx, Side, cell_kind,
 };
 use crate::moves::can_play;
-use crate::state::{GameState, MoonField, Position};
+use crate::state::{Checker, GameState, MoonField, Position};
 
 // Смещения внутри блока одной относительной стороны.
 const OFF_PIP: usize = 0;
@@ -91,7 +91,7 @@ fn moon_field_index(field: MoonField) -> usize {
 pub fn encode_into(state: &GameState, p: Side, out: &mut [f32]) {
     assert_eq!(out.len(), FEATURES, "буфер признаков неверной длины");
     out.fill(0.0);
-    for ch in &state.checkers {
+    for ch in state.checkers() {
         let owner = ch.owner;
         let base = rel_owner(p, owner) * PER_OWNER;
         out[base + OFF_PIP] += progress_to_home(owner, ch.pos) as f32 / PIP_MAX;
@@ -128,11 +128,11 @@ pub fn encode_into(state: &GameState, p: Side, out: &mut [f32]) {
     // (это `Heuristic::shots_to`) — дешёвый дистиллированный сигнал, остальное сеть
     // добирает из `track`. Сначала соберём абсолютные клетки всех фишек на периметре.
     let perim: Vec<(Side, usize)> = state
-        .checkers
+        .checkers()
         .iter()
         .filter_map(|c| c.pos.perimeter_cell(c.owner).map(|abs| (c.owner, abs.get())))
         .collect();
-    for c in &state.checkers {
+    for c in state.checkers() {
         let owner = c.owner;
         let Some(abs) = c.pos.perimeter_cell(owner) else {
             continue;
@@ -171,9 +171,10 @@ pub fn rotate_state(state: &GameState, r: usize) -> GameState {
     let mut out = state.clone();
     out.active = state.active.iter().map(|&s| rot(s)).collect();
     out.to_move = rot(state.to_move);
-    for ch in &mut out.checkers {
-        ch.owner = rot(ch.owner);
-        ch.pos = match ch.pos {
+    out.clear_checkers();
+    for ch in state.checkers() {
+        let owner = rot(ch.owner);
+        let pos = match ch.pos {
             Position::Moon { side, field } => Position::Moon {
                 side: rot(side),
                 field,
@@ -186,6 +187,7 @@ pub fn rotate_state(state: &GameState, r: usize) -> GameState {
             },
             other => other,
         };
+        out.push_checker(Checker { owner, pos });
     }
     out
 }
@@ -198,8 +200,8 @@ mod tests {
     /// Состояние со всеми четырьмя сторонами и разнообразными положениями фишек.
     fn varied_state() -> GameState {
         let mut s = GameState::new(Side::ALL.to_vec(), Side::A);
-        s.checkers.clear();
-        let mut push = |owner: Side, pos: Position| s.checkers.push(Checker { owner, pos });
+        s.clear_checkers();
+        let mut push = |owner: Side, pos: Position| s.push_checker(Checker { owner, pos });
         // A: дорожка, Дом, Луна, плен.
         push(Side::A, Position::OnTrack { progress: 5 });
         push(Side::A, Position::Home { depth: 2 });
@@ -269,8 +271,8 @@ mod tests {
     fn blots_and_contact() {
         // A на обычной клетке (progress 10 = abs 19, обычная) — это блот.
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.checkers.clear();
-        s.checkers.push(Checker {
+        s.clear_checkers();
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress: 10 },
         });
@@ -281,7 +283,7 @@ mod tests {
         // Враг C в 3 клетках ПОЗАДИ блота A (по ходу) — прямой бой.
         let a_abs = Side::A.entry().advance(10); // клетка блота
         let behind = a_abs.advance(PERIMETER - 3); // на 3 позади (по ходу к блоту)
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::OnTrack {
                 progress: Side::C.progress_of(behind),
@@ -303,7 +305,7 @@ mod tests {
     fn rotate_preserves_checker_count_and_completeness() {
         let s = varied_state();
         let sr = rotate_state(&s, 1);
-        assert_eq!(s.checkers.len(), sr.checkers.len());
+        assert_eq!(s.checkers_len(), sr.checkers_len());
         // Сумма всех признаков не нулевая (позиция закодирована).
         assert!(encode(&s, Side::A).iter().sum::<f32>() > 0.0);
     }

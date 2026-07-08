@@ -247,7 +247,7 @@ pub(crate) fn corner_sides(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
         .copied()
         .filter(|&s| {
             state
-                .checkers
+                .checkers()
                 .iter()
                 .any(|c| c.owner == s && checker_corner(c.owner, c.pos) == Some(abs))
         })
@@ -306,7 +306,7 @@ pub(crate) fn prison_cell_sides(state: &GameState, abs: PerimeterIdx) -> Vec<Sid
         .copied()
         .filter(|&s| {
             state
-                .checkers
+                .checkers()
                 .iter()
                 .any(|c| c.owner == s && checker_on_prison(c.owner, c.pos) == Some(abs))
         })
@@ -321,7 +321,7 @@ pub(crate) fn moon_sides(state: &GameState, side: Side, field: MoonField) -> Vec
         .copied()
         .filter(|&s| {
             state
-                .checkers
+                .checkers()
                 .iter()
                 .any(|c| c.owner == s && c.pos == Position::Moon { side, field })
         })
@@ -359,7 +359,7 @@ pub(crate) fn first_and_count(
 ) -> (Option<usize>, usize) {
     let mut first = None;
     let mut count = 0;
-    for (i, c) in state.checkers.iter().enumerate() {
+    for (i, c) in state.checkers().iter().enumerate() {
         if pred(c) {
             count += 1;
             first.get_or_insert(i);
@@ -514,7 +514,7 @@ pub(crate) fn slot_key(pos: Position, owner: Side) -> Slot {
 
 /// Координаты фишки `i` на доске и видимость (вне доски → невидима, в лотке).
 pub(crate) fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
-    let ch = state.checkers[i];
+    let ch = state.checkers()[i];
     // Пленники одной стороны делят слот (накладываются в один кружок со счётчиком),
     // а разные цвета разнесены по длинной оси каземата — без диагональной стопки.
     if let Position::Prison { .. } = ch.pos {
@@ -527,7 +527,7 @@ pub(crate) fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
     // Резерв — видимый ряд снаружи доски у Дома (4 фикс. слота = индекс среди своих).
     if ch.pos == Position::Reserve {
         let k = (0..i)
-            .filter(|&j| state.checkers[j].owner == ch.owner)
+            .filter(|&j| state.checkers()[j].owner == ch.owner)
             .count();
         let (x, y) = outside_point(ch.owner, RESERVE_OUT, k, 4);
         return (x, y, true);
@@ -536,8 +536,8 @@ pub(crate) fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
     // резерва, центрирован по числу пленённых этим захватчиком.
     if let Position::Captured { captor } = ch.pos {
         let held_by = |p: Position| matches!(p, Position::Captured { captor: c } if c == captor);
-        let n = state.checkers.iter().filter(|c| held_by(c.pos)).count();
-        let k = (0..i).filter(|&j| held_by(state.checkers[j].pos)).count();
+        let n = state.checkers().iter().filter(|c| held_by(c.pos)).count();
+        let k = (0..i).filter(|&j| held_by(state.checkers()[j].pos)).count();
         let (x, y) = outside_point(captor, CAPTURED_OUT, k, n);
         return (x, y, true);
     }
@@ -572,7 +572,7 @@ pub(crate) fn checker_xy(state: &GameState, i: usize) -> (f64, f64, bool) {
     let (base, visible) = (center_pt(coord), true);
     let key = slot_key(ch.pos, ch.owner);
     let rank = (0..i)
-        .filter(|&j| slot_key(state.checkers[j].pos, state.checkers[j].owner) == key)
+        .filter(|&j| slot_key(state.checkers()[j].pos, state.checkers()[j].owner) == key)
         .count();
     (
         base.0 + rank as f64 * 0.16,

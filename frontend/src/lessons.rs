@@ -48,27 +48,27 @@ pub(crate) fn lessons(i18n: I18nContext<Locale>) -> Vec<Lesson> {
     use Side::{A, C};
     // Стартовая позиция непрерывной партии.
     let mut s = GameState::new(vec![A, C], A);
-    s.checkers.clear();
-    s.checkers.push(Checker {
+    s.clear_checkers();
+    s.push_checker(Checker {
         owner: A,
         pos: Position::Reserve,
     }); // A[0] — демо-фишка
     for d in 1..4u8 {
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: A,
             pos: Position::Home { depth: d },
         }); // A[1..3] инертны
     }
-    s.checkers.push(Checker {
+    s.push_checker(Checker {
         owner: C,
         pos: Position::OnTrack { progress: 64 },
     }); // C[4] мишень
-    s.checkers.push(Checker {
+    s.push_checker(Checker {
         owner: C,
         pos: Position::OnTrack { progress: 5 },
     }); // C[5] мувер
     for d in 1..3u8 {
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: C,
             pos: Position::Home { depth: d },
         }); // C[6,7]
@@ -157,8 +157,8 @@ pub(crate) fn lessons(i18n: I18nContext<Locale>) -> Vec<Lesson> {
     // Шаг выкупа
     let ransom_before = {
         let mut s = g.state.clone();
-        s.checkers[0].pos = Position::OnTrack { progress: 64 };
-        s.checkers[5].pos = Position::OnTrack { progress: 50 };
+        s.set_checker_pos(0, Position::OnTrack { progress: 64 });
+        s.set_checker_pos(5, Position::OnTrack { progress: 50 });
         s
     };
     let ransom_roll = dr(6, 2);

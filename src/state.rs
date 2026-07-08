@@ -1,6 +1,6 @@
 //! Состояние игры: фишки, их положение и общее состояние партии.
 
-use crate::board::{CHECKERS_PER_PLAYER, LOCAL_HOME_ENTRANCE, PerimeterIdx, Side};
+use crate::board::{cell_kind, CellKind, CHECKERS_PER_PLAYER, LOCAL_HOME_ENTRANCE, PerimeterIdx, Side};
 
 /// Поле внутренней дорожки Луны. Поля проходятся по порядку,
 /// каждое продвигает только при совпадающем значении кости.
@@ -90,12 +90,31 @@ pub struct GameState {
     /// Стороны, участвующие в партии (2 — противоположные, либо 4).
     pub active: Vec<Side>,
     /// Все фишки всех игроков.
-    pub checkers: Vec<Checker>,
+    checkers: Vec<Checker>,
     /// Чей ход.
     pub to_move: Side,
     /// Командный режим 2×2 (только при 4 активных сторонах): противоположные
     /// стороны — союзники (A+C против B+D). Союзники **не едят** фишки друг друга.
     pub teams: bool,
+}
+
+/// Если `pos` — `OnTrack { progress }`, где прогресс указывает на клетку
+/// Луны, возвращает `Moon { side, field: One }`, иначе `pos` без изменений.
+fn normalize_ontrack(owner: Side, pos: Position) -> Position {
+    match pos {
+        Position::OnTrack { progress } => {
+            let abs = owner.entry().advance(progress as usize);
+            if cell_kind(abs) == CellKind::Moon {
+                Position::Moon {
+                    side: abs.side(),
+                    field: MoonField::One,
+                }
+            } else {
+                pos
+            }
+        }
+        _ => pos,
+    }
 }
 
 impl GameState {
@@ -142,6 +161,47 @@ impl GameState {
         self.teams && self.active.len() == 4 && a != b && a.index() % 2 == b.index() % 2
     }
 
+    /// Все фишки (только для чтения).
+    pub fn checkers(&self) -> &[Checker] {
+        &self.checkers
+    }
+
+    /// Количество фишек.
+    pub fn checkers_len(&self) -> usize {
+        self.checkers.len()
+    }
+
+    /// Фишка по индексу.
+    pub fn checker(&self, idx: usize) -> &Checker {
+        &self.checkers[idx]
+    }
+
+    /// Позиция фишки по индексу.
+    pub fn checker_pos(&self, idx: usize) -> &Position {
+        &self.checkers[idx].pos
+    }
+
+    /// Устанавливает позицию фишки `idx` с нормализацией:
+    /// `OnTrack` на клетке Луны → `Moon`.
+    pub fn set_checker_pos(&mut self, idx: usize, pos: Position) {
+        let owner = self.checkers[idx].owner;
+        self.checkers[idx].pos = normalize_ontrack(owner, pos);
+    }
+
+    /// Добавляет фишку с нормализацией: `OnTrack` на клетке Луны → `Moon`.
+    pub fn push_checker(&mut self, checker: Checker) {
+        let pos = normalize_ontrack(checker.owner, checker.pos);
+        self.checkers.push(Checker {
+            owner: checker.owner,
+            pos,
+        });
+    }
+
+    /// Удаляет все фишки.
+    pub fn clear_checkers(&mut self) {
+        self.checkers.clear();
+    }
+
     /// Фишки, стоящие на указанной клетке периметра (на дорожке или в Тюрьме).
     pub fn checkers_on(&self, cell: PerimeterIdx) -> impl Iterator<Item = &Checker> {
         self.checkers
@@ -166,8 +226,8 @@ mod tests {
     #[test]
     fn initial_setup_two_players() {
         let state = GameState::new(vec![Side::A, Side::C], Side::A);
-        assert_eq!(state.checkers.len(), 2 * CHECKERS_PER_PLAYER);
-        assert!(state.checkers.iter().all(|c| c.pos == Position::Reserve));
+        assert_eq!(state.checkers().len(), 2 * CHECKERS_PER_PLAYER);
+        assert!(state.checkers().iter().all(|c| c.pos == Position::Reserve));
         assert_eq!(state.to_move, Side::A);
     }
 
@@ -195,8 +255,39 @@ mod tests {
     #[test]
     fn checkers_on_cell_finds_pieces() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.checkers[0].pos = Position::OnTrack { progress: 0 };
+        state.set_checker_pos(0, Position::OnTrack { progress: 0 });
         let entry = Side::A.local_to_perimeter(LOCAL_HOME_ENTRANCE);
         assert_eq!(state.checkers_on(entry).count(), 1);
+    }
+
+    #[test]
+    fn push_checker_normalizes_moon_ontrack() {
+        let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
+        // Progress 65 = Moon entry for A (abs 2, local 2).
+        state.push_checker(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress: 65 },
+        });
+        let idx = state.checkers().len() - 1;
+        assert_eq!(
+            state.checker_pos(idx),
+            &Position::Moon {
+                side: Side::A,
+                field: MoonField::One
+            }
+        );
+    }
+
+    #[test]
+    fn set_checker_pos_normalizes_moon_ontrack() {
+        let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
+        state.set_checker_pos(0, Position::OnTrack { progress: 65 });
+        assert_eq!(
+            state.checker_pos(0),
+            &Position::Moon {
+                side: Side::A,
+                field: MoonField::One
+            }
+        );
     }
 }

@@ -43,7 +43,7 @@ pub(crate) fn landmark(abs: PerimeterIdx) -> char {
 /// Стороны фишек, стоящих на клетке периметра `abs` (с повторами).
 pub(crate) fn owners_on(state: &GameState, abs: PerimeterIdx) -> Vec<Side> {
     state
-        .checkers
+        .checkers()
         .iter()
         .filter(|c| c.pos.perimeter_cell(c.owner) == Some(abs))
         .map(|c| c.owner)
@@ -197,7 +197,7 @@ pub fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
         let (pr, pc) = (r + BOARD_MARGIN, c + BOARD_MARGIN);
         // Глифы фишек на клетке (пленённые — отдельным глифом).
         let occupants: Vec<Glyph> = state
-            .checkers
+            .checkers()
             .iter()
             .filter(|ch| ch.pos.perimeter_cell(ch.owner) == Some(p))
             .map(|ch| {
@@ -245,7 +245,7 @@ pub fn board_glyphs(state: &GameState) -> Vec<Vec<Glyph>> {
     }
 
     // Фишки в Доме и на Луне — поверх слотов.
-    for ch in &state.checkers {
+    for ch in state.checkers() {
         if matches!(ch.pos, Position::Home { .. } | Position::Moon { .. })
             && let Some((r, c)) = checker_cell(ch.owner, ch.pos)
         {
@@ -295,7 +295,7 @@ fn perimeter(state: &GameState) -> String {
 fn off_board(state: &GameState) -> String {
     let mut lines = Vec::new();
     for &side in &state.active {
-        let own = || state.checkers.iter().filter(move |c| c.owner == side);
+        let own = || state.checkers().iter().filter(move |c| c.owner == side);
 
         let reserve = own().filter(|c| c.pos == Position::Reserve).count();
 
@@ -356,18 +356,18 @@ mod tests {
 
         // Пленённая фишка — глиф Captive со своей стороной.
         let mut jailed = empty.clone();
-        jailed.checkers[0].pos = Position::Prison { cell: prison };
+        jailed.set_checker_pos(0, Position::Prison { cell: prison });
         assert_eq!(board_glyphs(&jailed)[pr][pc], Glyph::Captive(Side::A));
     }
 
     #[test]
     fn home_and_moon_checkers_appear_inside_the_square() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.checkers[0].pos = Position::Home { depth: 0 };
-        state.checkers[1].pos = Position::Moon {
+        state.set_checker_pos(0, Position::Home { depth: 0 });
+        state.set_checker_pos(1, Position::Moon {
             side: Side::A,
             field: MoonField::One,
-        };
+        });
         let grid = board_glyphs(&state);
 
         // Фишка в Доме — на первой клетке внутрь от входа в Дом.
@@ -395,7 +395,7 @@ mod tests {
     fn render_contains_landmarks_and_turn() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
         // Поставим фишку A на её вход в Дом — должна появиться метка `A1`.
-        state.checkers[0].pos = Position::OnTrack { progress: 0 };
+        state.set_checker_pos(0, Position::OnTrack { progress: 0 });
         let out = render(&state);
         assert!(out.contains("Ход стороны: A"));
         assert!(out.contains('+')); // углы

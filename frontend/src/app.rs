@@ -374,7 +374,7 @@ fn GameApp() -> impl IntoView {
             let mut interrupted = false;
             for &mv in &turns[idx] {
                 let captor = if mv.kind == MoveKind::Ransom {
-                    match st.checkers[mv.checker].pos {
+                    match st.checkers()[mv.checker].pos {
                         Position::Captured { captor } => Some(captor),
                         _ => None,
                     }
@@ -740,7 +740,7 @@ fn GameApp() -> impl IntoView {
         let after = apply_with_frames(&mut frames, ps.clone(), m, r, &hs, i18n);
         remaining.update(|rem| *rem = remaining_after(rem, m.pips));
         if m.kind == MoveKind::Ransom {
-            let captor = match ps.checkers[m.checker].pos {
+            let captor = match ps.checkers()[m.checker].pos {
                 Position::Captured { captor } => captor,
                 _ => return,
             };
@@ -777,7 +777,7 @@ fn GameApp() -> impl IntoView {
         if next_steps.is_empty() {
             finish(frames, after, np);
         } else {
-            let next_src = sel_of(after.checkers[m.checker].owner, after.checkers[m.checker].pos);
+            let next_src = sel_of(after.checkers()[m.checker].owner, after.checkers()[m.checker].pos);
             let keep = next_steps.iter().any(|&mv| move_source(&after, mv) == next_src);
             prefix.set(np);
             sel.set(keep.then_some(next_src));
@@ -1030,7 +1030,7 @@ fn GameApp() -> impl IntoView {
                     .collect();
                 let mut captors: Vec<Side> = Vec::new();
                 for &m in &ransoms {
-                    if let Position::Captured { captor } = ps.checkers[m.checker].pos
+                    if let Position::Captured { captor } = ps.checkers()[m.checker].pos
                         && !captors.contains(&captor)
                     {
                         captors.push(captor);
@@ -1155,6 +1155,30 @@ fn GameApp() -> impl IntoView {
     // Тест входа в Дом: стартует ИНТЕРАКТИВНУЮ партию из расстановки, где фишки A стоят
     // вплотную к Дому, с заранее заданным броском (1,2) — чтобы сразу проверить клик по
     // клетке входа (воротам). Бросок задаём вручную, минуя авто-бросок (роль уже `Some`).
+    // Тест выкупа + обязательного ответа: стартует партию, где A может выкупить
+    // фишку у C шестёркой, а у C ровно одна фишка со свободным ходом на 6.
+    let ransom_test = move |_| {
+        epoch.update_value(|e| *e += 1);
+        animating.set(false);
+        let r = DiceRoll::new(Die::new(6).expect("6"), Die::new(3).expect("3"));
+        let st = ransom_test();
+        let t = legal_turns(&st, r);
+        humans.set(vec![Side::A]);
+        finished.set(Vec::new());
+        dbg_log_reset();
+        dbg_log("[GAMELOG] === dev: ransom test ===");
+        game.set(Game::new(st));
+        roll.set(Some(r));
+        turns.set(t);
+        prefix.set(Vec::new());
+        remaining.set(r.values().to_vec());
+        sel.set(None);
+        herald.set("Ransom test: use ⚀ 6 to ransom, then ⚂ 3 to move".to_string());
+        dev.set(false);
+        started.set(true);
+        kickoff();
+    };
+
     let home_test = move |_| {
         epoch.update_value(|e| *e += 1);
         animating.set(false);
@@ -1678,11 +1702,11 @@ fn GameApp() -> impl IntoView {
                                 </g>
                             </g>
                         }}
-                        <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
+                        <For each=move || 0..game.get().state.checkers_len() key=|i| *i let:i>
                             <circle
-                                r=move || match game.get().state.checkers[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
-                                class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
-                                fill=move || side_color(game.get().state.checkers[i].owner)
+                                r=move || match game.get().state.checkers()[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
+                                class=move || if matches!(game.get().state.checkers()[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
+                                fill=move || side_color(game.get().state.checkers()[i].owner)
                                 cx=move || anim_xy(&game.get().state, i, &anim_pts.get()).0
                                 cy=move || anim_xy(&game.get().state, i, &anim_pts.get()).1
                                 opacity=move || if anim_xy(&game.get().state, i, &anim_pts.get()).2 { 1.0 } else { 0.0 }
@@ -1717,7 +1741,7 @@ fn GameApp() -> impl IntoView {
                                             // Цель: для входа на Луну — клетка-вход (на
                                             // периметре), для остального — куда реально
                                             // встанет фишка (поле дорожки/клетка/каземат).
-                                            let (tx, ty) = match (mv.kind, after.checkers[moved].pos) {
+                                            let (tx, ty) = match (mv.kind, after.checkers()[moved].pos) {
                                                 (MoveKind::EnterMoon, Position::Moon { side, .. }) => {
                                                     center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON)))
                                                 }
@@ -1895,6 +1919,7 @@ fn GameApp() -> impl IntoView {
                     }).collect_view()}
                     <button on:click=anim_demo>{t!(i18n, demo_anim)}</button>
                     <button on:click=home_test>{t!(i18n, demo_home_test)}</button>
+                    <button on:click=ransom_test>"⛓ Ransom test"</button>
                 </div>
                 // Панель прослушивания звуков: по кнопке на каждое событие.
                 <div class="controls dev-controls">
@@ -1911,11 +1936,11 @@ fn GameApp() -> impl IntoView {
                     s = (BOARD_DIM - 2 * BOARD_MARGIN) as f64 + 2.0 * RESERVE_PAD,
                 )>
                     {move || static_board(&game.get().state)}
-                    <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
+                    <For each=move || 0..game.get().state.checkers_len() key=|i| *i let:i>
                         <circle
-                            r=move || match game.get().state.checkers[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
-                            class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
-                            fill=move || side_color(game.get().state.checkers[i].owner)
+                            r=move || match game.get().state.checkers()[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
+                            class=move || if matches!(game.get().state.checkers()[i].pos, Position::Prison { .. } | Position::Captured { .. }) { "piece captive" } else { "piece" }
+                            fill=move || side_color(game.get().state.checkers()[i].owner)
                             cx=move || anim_xy(&game.get().state, i, &anim_pts.get()).0
                             cy=move || anim_xy(&game.get().state, i, &anim_pts.get()).1
                             opacity=move || if anim_xy(&game.get().state, i, &anim_pts.get()).2 { 1.0 } else { 0.0 }
@@ -2052,15 +2077,15 @@ fn GameApp() -> impl IntoView {
             )>
                 {move || static_board(&game.get().state)}
 
-                <For each=move || 0..game.get().state.checkers.len() key=|i| *i let:i>
+                <For each=move || 0..game.get().state.checkers_len() key=|i| *i let:i>
                     <circle
-                        r=move || match game.get().state.checkers[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
-                        class=move || if matches!(game.get().state.checkers[i].pos, Position::Prison { .. } | Position::Captured { .. }) {
+                        r=move || match game.get().state.checkers()[i].pos { Position::Prison { .. } | Position::Captured { .. } => 0.22, Position::Reserve => 0.3, _ => 0.36 }
+                        class=move || if matches!(game.get().state.checkers()[i].pos, Position::Prison { .. } | Position::Captured { .. }) {
                             "piece captive"
                         } else {
                             "piece"
                         }
-                        fill=move || side_color(game.get().state.checkers[i].owner)
+                        fill=move || side_color(game.get().state.checkers()[i].owner)
                         cx=move || anim_xy(&game.get().state, i, &anim_pts.get()).0
                         cy=move || anim_xy(&game.get().state, i, &anim_pts.get()).1
                         opacity=move || if anim_xy(&game.get().state, i, &anim_pts.get()).2 { 1.0 } else { 0.0 }
@@ -2197,7 +2222,7 @@ fn GameApp() -> impl IntoView {
                     let caged = |rc: (usize, usize)| {
                         cands.iter().any(|&m| {
                             move_source(&ps, m) == Sel::Cell(rc.0, rc.1)
-                                && matches!(ps.checkers[m.checker].pos, Position::Prison { .. })
+                                && matches!(ps.checkers()[m.checker].pos, Position::Prison { .. })
                         })
                     };
                     // Точка подсветки/хита источника — на самой фишке (Луна — на дуге,
@@ -2355,7 +2380,7 @@ fn GameApp() -> impl IntoView {
                     zone(Sel::Reserve, mover, RESERVE_OUT, true);
                     // Пленные хода — у Домов захватчиков; зона на каждом таком Доме.
                     let mut captors: Vec<Side> = Vec::new();
-                    for c in &ps.checkers {
+                    for c in ps.checkers() {
                         if c.owner == mover
                             && let Position::Captured { captor } = c.pos
                             && !captors.contains(&captor)

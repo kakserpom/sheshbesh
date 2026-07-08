@@ -130,7 +130,7 @@ fn panel_lines(state: &GameState) -> Vec<Line<'static>> {
         .active
         .iter()
         .map(|&side| {
-            let own = || state.checkers.iter().filter(move |c| c.owner == side);
+            let own = || state.checkers().iter().filter(move |c| c.owner == side);
             let reserve = own().filter(|c| c.pos == Position::Reserve).count();
             let captured = own()
                 .filter(|c| matches!(c.pos, Position::Captured { .. }))
@@ -286,15 +286,15 @@ fn legend_line() -> Line<'static> {
 /// Клетки «откуда» и «куда» для хода (для подсветки на текущей доске).
 /// Для входа на Луну/в Дом часть концов вне периметра (`None`).
 fn move_endpoints(base: &GameState, mv: Move) -> (Option<PerimeterIdx>, Option<PerimeterIdx>) {
-    let owner = base.checkers[mv.checker].owner;
-    let from = base.checkers[mv.checker].pos.perimeter_cell(owner);
+    let owner = base.checker(mv.checker).owner;
+    let from = base.checker(mv.checker).pos.perimeter_cell(owner);
     let after = preview_after(base, std::slice::from_ref(&mv));
-    let to = after.checkers[mv.checker]
+    let to = after.checker(mv.checker)
         .pos
         .perimeter_cell(owner)
         .or_else(|| {
             // Вход на Луну: фишка уходит на дорожку, но подсветим клетку приземления.
-            if let Position::OnTrack { progress } = base.checkers[mv.checker].pos {
+            if let Position::OnTrack { progress } = base.checker(mv.checker).pos {
                 let target = progress as usize + mv.pips as usize;
                 (target < PERIMETER).then(|| owner.entry().advance(target))
             } else {
@@ -407,7 +407,7 @@ fn dedup_moves(state: &GameState, moves: Vec<Move>) -> Vec<Move> {
     let mut seen: Vec<(Side, Position, u8)> = Vec::new();
     let mut out = Vec::new();
     for mv in moves {
-        let c = &state.checkers[mv.checker];
+        let c = state.checker(mv.checker);
         let sig = (c.owner, c.pos, mv.pips);
         if !seen.contains(&sig) {
             seen.push(sig);
@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn board_lines_have_landmarks_and_colored_checker() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.checkers[0].pos = Position::OnTrack { progress: 0 };
+        state.set_checker_pos(0, Position::OnTrack { progress: 0 });
         let lines = board_lines(&state, (2, 1));
         let text = flatten(&lines);
         for mark in ['+', 'M', 'J', 'h'] {
@@ -682,13 +682,11 @@ mod tests {
     fn multiple_checkers_spill_outside_the_field() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
         // Три фишки A на одной клетке (точка входа A) — все должны быть видны.
-        for c in state
-            .checkers
-            .iter_mut()
-            .filter(|c| c.owner == Side::A)
-            .take(3)
-        {
-            c.pos = Position::OnTrack { progress: 0 };
+        let a_indices: Vec<usize> = (0..state.checkers_len())
+            .filter(|&i| state.checker(i).owner == Side::A)
+            .collect();
+        for i in a_indices.into_iter().take(3) {
+            state.set_checker_pos(i, Position::OnTrack { progress: 0 });
         }
         let text = flatten(&board_lines(&state, (2, 1)));
         // На доске буква A встречается только как маркер фишки → не меньше трёх.
@@ -760,13 +758,11 @@ mod tests {
     #[test]
     fn status_shows_turn_and_winner() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        for (depth, c) in state
-            .checkers
-            .iter_mut()
-            .filter(|c| c.owner == Side::A)
-            .enumerate()
-        {
-            c.pos = Position::Home { depth: depth as u8 };
+        let a_indices: Vec<usize> = (0..state.checkers_len())
+            .filter(|&i| state.checker(i).owner == Side::A)
+            .collect();
+        for (depth, i) in a_indices.into_iter().enumerate() {
+            state.set_checker_pos(i, Position::Home { depth: depth as u8 });
         }
         let game = Game::new(state);
         let text = flatten(&status_lines(&game, None, false));

@@ -263,7 +263,7 @@ impl Game {
             }
             // Захватчик известен до применения выкупа (после фишка — в резерве).
             let captor = if mv.kind == MoveKind::Ransom {
-                match self.state.checkers[mv.checker].pos {
+                    match self.state.checker(mv.checker).pos {
                     Position::Captured { captor } => Some(captor),
                     _ => None,
                 }
@@ -330,7 +330,7 @@ impl Game {
             let mut interrupted = false;
             for &mv in &turns[idx] {
                 let captor = if mv.kind == MoveKind::Ransom {
-                    match self.state.checkers[mv.checker].pos {
+                match self.state.checker(mv.checker).pos {
                         Position::Captured { captor } => Some(captor),
                         _ => None,
                     }
@@ -427,7 +427,7 @@ mod tests {
         }
         impl Agent for Spy {
             fn choose_turn(&mut self, state: &GameState, turns: &[Vec<Move>]) -> usize {
-                let p = match state.checkers[4].pos {
+                let p = match state.checker(4).pos {
                     Position::OnTrack { progress } => progress,
                     _ => u16::MAX,
                 };
@@ -440,12 +440,12 @@ mod tests {
         }
 
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.checkers[0].pos = Position::Captured { captor: Side::C }; // A: пленная
-        state.checkers[1].pos = Position::OnTrack { progress: 10 }; // A: на дорожке (для 2-й кости)
-        state.checkers[4].pos = Position::OnTrack { progress: 0 }; // C: единственный её 6-ход
-        state.checkers[5].pos = Position::Home { depth: 0 };
-        state.checkers[6].pos = Position::Home { depth: 1 };
-        state.checkers[7].pos = Position::Home { depth: 2 };
+        state.set_checker_pos(0, Position::Captured { captor: Side::C }); // A: пленная
+        state.set_checker_pos(1, Position::OnTrack { progress: 10 }); // A: на дорожке (для 2-й кости)
+        state.set_checker_pos(4, Position::OnTrack { progress: 0 }); // C: единственный её 6-ход
+        state.set_checker_pos(5, Position::Home { depth: 0 });
+        state.set_checker_pos(6, Position::Home { depth: 1 });
+        state.set_checker_pos(7, Position::Home { depth: 2 });
         let mut game = Game::new(state);
 
         let seen = Rc::new(RefCell::new(Vec::new()));
@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(outcome.played.iter().map(|m| m.pips).sum::<u8>(), 12);
         assert!(
             game.state
-                .checkers
+                .checkers()
                 .iter()
                 .any(|c| c.owner == Side::A && !matches!(c.pos, Position::Reserve))
         );
@@ -516,13 +516,11 @@ mod tests {
     #[test]
     fn detects_winner() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        for (depth, c) in state
-            .checkers
-            .iter_mut()
-            .filter(|c| c.owner == Side::A)
-            .enumerate()
-        {
-            c.pos = Position::Home { depth: depth as u8 };
+        let a_indices: Vec<usize> = (0..state.checkers_len())
+            .filter(|&i| state.checker(i).owner == Side::A)
+            .collect();
+        for (depth, i) in a_indices.into_iter().enumerate() {
+            state.set_checker_pos(i, Position::Home { depth: depth as u8 });
         }
         let game = Game::new(state);
         assert_eq!(game.winner(), Some(Side::A));
@@ -532,12 +530,12 @@ mod tests {
     fn ransom_frees_captive_and_forces_captor_six_move() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
         // A: фишка 0 в плену у C; остальные A — в резерве.
-        state.checkers[0].pos = Position::Captured { captor: Side::C };
+        state.set_checker_pos(0, Position::Captured { captor: Side::C });
         // C: фишка 4 на дорожке (единственный её 6-ход); 5..7 в Доме (ходов на 6 нет).
-        state.checkers[4].pos = Position::OnTrack { progress: 0 };
-        state.checkers[5].pos = Position::Home { depth: 0 };
-        state.checkers[6].pos = Position::Home { depth: 1 };
-        state.checkers[7].pos = Position::Home { depth: 2 };
+        state.set_checker_pos(4, Position::OnTrack { progress: 0 });
+        state.set_checker_pos(5, Position::Home { depth: 0 });
+        state.set_checker_pos(6, Position::Home { depth: 1 });
+        state.set_checker_pos(7, Position::Home { depth: 2 });
         let mut game = Game::new(state);
 
         let mut dice = ScriptedDice::new(vec![roll(6, 6)]);
@@ -545,13 +543,13 @@ mod tests {
 
         // Пленная фишка больше не в плену (в резерве либо уже введена).
         assert!(!matches!(
-            game.state.checkers[0].pos,
+            game.state.checker(0).pos,
             Position::Captured { .. }
         ));
         // Захватчик сделал ровно один вынужденный ход на 6: фишка 4 продвинулась.
         assert_eq!(outcome.forced.len(), 1);
         assert_eq!(
-            game.state.checkers[4].pos,
+            game.state.checker(4).pos,
             Position::OnTrack { progress: 6 }
         );
     }
@@ -559,15 +557,13 @@ mod tests {
     #[test]
     fn ransom_skipped_when_captor_has_no_six_move() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.checkers[0].pos = Position::Captured { captor: Side::C };
+        state.set_checker_pos(0, Position::Captured { captor: Side::C });
         // У C нет ни одного хода на «6»: все его фишки в Доме.
-        for (depth, c) in state
-            .checkers
-            .iter_mut()
-            .filter(|c| c.owner == Side::C)
-            .enumerate()
-        {
-            c.pos = Position::Home { depth: depth as u8 };
+        let c_indices: Vec<usize> = (0..state.checkers_len())
+            .filter(|&i| state.checker(i).owner == Side::C)
+            .collect();
+        for (depth, i) in c_indices.into_iter().enumerate() {
+            state.set_checker_pos(i, Position::Home { depth: depth as u8 });
         }
         let mut game = Game::new(state);
 
@@ -575,7 +571,7 @@ mod tests {
         let mut dice = ScriptedDice::new(vec![roll(6, 6)]);
         let outcome = game.play_turn(&mut dice, &mut RansomFirst);
         assert!(!matches!(
-            game.state.checkers[0].pos,
+            game.state.checker(0).pos,
             Position::Captured { .. }
         ));
         // Обязательный ход пропущен — у захватчика нет хода на 6.
@@ -605,15 +601,15 @@ mod tests {
             if game.winner().is_some() {
                 break;
             }
-            let before = game.state.checkers.len();
+            let before = game.state.checkers_len();
             let outcome = game.play_turn(&mut dice, &mut FirstChoice);
-            assert_eq!(game.state.checkers.len(), before);
+            assert_eq!(game.state.checkers_len(), before);
             assert!(game.state.active.contains(&outcome.side));
             assert!(game.state.active.contains(&game.state.to_move));
         }
         assert!(
             game.state
-                .checkers
+                .checkers()
                 .iter()
                 .any(|c| !matches!(c.pos, Position::Reserve))
         );

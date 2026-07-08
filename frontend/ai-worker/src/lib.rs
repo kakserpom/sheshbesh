@@ -109,7 +109,8 @@ fn to_side(v: u8) -> Side {
 
 fn reconstruct_state(raw: RawState) -> GameState {
     let active: Vec<Side> = raw.a.iter().map(|&v| to_side(v)).collect();
-    let mut checkers = Vec::with_capacity(raw.c.len());
+    let mut state = GameState::new(active.clone(), to_side(raw.m));
+    state.clear_checkers();
     for c in &raw.c {
         let owner = to_side(c[0]);
         let pos = match c[1] {
@@ -137,14 +138,10 @@ fn reconstruct_state(raw: RawState) -> GameState {
             },
             _ => Position::Reserve,
         };
-        checkers.push(Checker { owner, pos });
+        state.push_checker(Checker { owner, pos });
     }
-    GameState {
-        active,
-        checkers,
-        to_move: to_side(raw.m),
-        teams: raw.t,
-    }
+    state.teams = raw.t;
+    state
 }
 
 #[wasm_bindgen]

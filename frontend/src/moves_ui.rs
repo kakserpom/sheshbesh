@@ -15,12 +15,12 @@ pub(crate) fn step_opts(turns: &[Vec<Move>], prefix: &[Move]) -> Vec<Move> {
 }
 
 pub(crate) fn move_source(ps: &GameState, m: Move) -> Sel {
-    sel_of(ps.checkers[m.checker].owner, ps.checkers[m.checker].pos)
+    sel_of(ps.checkers()[m.checker].owner, ps.checkers()[m.checker].pos)
 }
 
 pub(crate) fn move_dest(ps: &GameState, m: Move) -> Sel {
     let after = apply(ps, m);
-    let pos = after.checkers[m.checker].pos;
+    let pos = after.checkers()[m.checker].pos;
     // Заход в Тюрьму/на Луну целим в КЛЕТКУ входа (периметр), а не в каземат / на дугу
     // Луны, куда фишка затем уходит, — там подсветка цели выглядела бы не на месте.
     match (m.kind, pos) {
@@ -32,7 +32,7 @@ pub(crate) fn move_dest(ps: &GameState, m: Move) -> Sel {
             let (r, c) = margin_coord(side.local_to_perimeter(LOCAL_MOON));
             Sel::Cell(r, c)
         }
-        _ => sel_of(after.checkers[m.checker].owner, pos),
+        _ => sel_of(after.checkers()[m.checker].owner, pos),
     }
 }
 

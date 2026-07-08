@@ -83,7 +83,7 @@ fn markers(side: Side, n: usize) -> String {
 fn colored_panel(state: &GameState) -> String {
     let mut lines = Vec::new();
     for &side in &state.active {
-        let own = || state.checkers.iter().filter(move |c| c.owner == side);
+        let own = || state.checkers().iter().filter(move |c| c.owner == side);
         let reserve = own().filter(|c| c.pos == Position::Reserve).count();
         let captured = own()
             .filter(|c| matches!(c.pos, Position::Captured { .. }))
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn frame_has_clear_colors_and_content() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.checkers[0].pos = Position::OnTrack { progress: 0 };
+        state.set_checker_pos(0, Position::OnTrack { progress: 0 });
         let f = frame(&state, "ЗАГОЛОВОК");
         assert!(f.starts_with(CLEAR)); // очистка экрана
         assert!(f.contains("ЗАГОЛОВОК"));
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn board_renders_landmarks_and_checkers() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.checkers[0].pos = Position::OnTrack { progress: 0 };
+        state.set_checker_pos(0, Position::OnTrack { progress: 0 });
         let board = colored_board(&state);
         // Видимый текст без ANSI-кодов содержит landmark-символы и маркер фишки A.
         let mut visible = String::new();

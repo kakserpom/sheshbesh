@@ -33,10 +33,11 @@ pub(crate) const DEMOS: &[Demo] = &[
 pub(crate) fn demo_state(place: impl Fn(Side, usize) -> Position) -> GameState {
     let mut s = GameState::new(Side::ALL.to_vec(), Side::A);
     let mut seen: Vec<Side> = Vec::new();
-    for ch in &mut s.checkers {
-        let k = seen.iter().filter(|&&o| o == ch.owner).count();
-        seen.push(ch.owner);
-        ch.pos = place(ch.owner, k);
+    for idx in 0..s.checkers_len() {
+        let owner = s.checker(idx).owner;
+        let k = seen.iter().filter(|&&o| o == owner).count();
+        seen.push(owner);
+        s.set_checker_pos(idx, place(owner, k));
     }
     s
 }
@@ -87,23 +88,55 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
 /// Расстановка для интерактивной проверки хода у Дома.
 pub(crate) fn home_entry_test() -> GameState {
     let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-    s.checkers.clear();
+    s.clear_checkers();
     for progress in [71u16, 69] {
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::OnTrack { progress },
         });
     }
     for depth in [2u8, 3] {
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::Home { depth },
         });
     }
     for _ in 0..4 {
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::Reserve,
+        });
+    }
+    s
+}
+
+/// Партия-заготовка для проверки выкупа: A может выкупить фишку у C (шестёркой),
+/// затем доиграть тройкой. У C ровно одна фишка на дорожке со свободным ходом на 6.
+/// Все OnTrack-позиции лежат на plain-клетках (не Луна, не Тюрьма).
+pub(crate) fn ransom_test() -> GameState {
+    let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+    s.clear_checkers();
+    // A: 3 фишки на plain-клетках (не corner/moon/prison), 1 в плену у C.
+    for progress in [70u16, 69, 58] {
+        s.push_checker(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress },
+        });
+    }
+    s.push_checker(Checker {
+        owner: Side::A,
+        pos: Position::Captured { captor: Side::C },
+    });
+    // C: 1 фишка на plain-клетке с ходом на +6, 3 в Доме.
+    // progress 6 → abs 51 (Side C local 15, plain); +6 → progress 12, путь чист.
+    s.push_checker(Checker {
+        owner: Side::C,
+        pos: Position::OnTrack { progress: 6 },
+    });
+    for depth in [0u8, 1, 2] {
+        s.push_checker(Checker {
+            owner: Side::C,
+            pos: Position::Home { depth },
         });
     }
     s
@@ -113,25 +146,25 @@ pub(crate) fn home_entry_test() -> GameState {
 pub(crate) fn demo_capture() -> Game {
     let target = Side::A.entry().advance(3);
     let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-    s.checkers.clear();
-    s.checkers.push(Checker {
+    s.clear_checkers();
+    s.push_checker(Checker {
         owner: Side::A,
         pos: Position::OnTrack { progress: 0 },
     });
     for d in 0..3 {
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::A,
             pos: Position::Home { depth: d },
         });
     }
-    s.checkers.push(Checker {
+    s.push_checker(Checker {
         owner: Side::C,
         pos: Position::OnTrack {
             progress: Side::C.progress_of(target),
         },
     });
     for d in 0..3 {
-        s.checkers.push(Checker {
+        s.push_checker(Checker {
             owner: Side::C,
             pos: Position::Home { depth: d },
         });
