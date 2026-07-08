@@ -2088,7 +2088,7 @@ fn GameApp() -> impl IntoView {
                         let ea = ((team_a - max_v) / t).exp();
                         let eb = ((team_b - max_v) / t).exp();
                         let s = ea + eb;
-                        let bar_x = 0.65;
+                        let bar_x = -0.2;
                         let half_w = 0.35 / 2.0;
                         let ha = total_h * (ea / s) as f64;
                         let hb = total_h * (eb / s) as f64;
@@ -2111,7 +2111,7 @@ fn GameApp() -> impl IntoView {
                             let y0 = y;
                             y += h;
                             vec![
-                                view! { <rect x=0.65 y=y0 width=0.35 height=h fill=col rx="0.06" /> }.into_any(),
+                                view! { <rect x=-0.2 y=y0 width=0.35 height=h fill=col rx="0.06" /> }.into_any(),
                             ]
                         }).collect::<Vec<_>>()
                     }
