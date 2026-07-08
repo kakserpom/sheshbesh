@@ -5,7 +5,8 @@ use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use sheshbesh::board::PERIMETER;
 use sheshbesh::{
-    DiceRoll, Game, GameState, Move, MoveKind, Position, RandomDice, Side, TurnOutcome, apply,
+    DiceRoll, Game, GameState, MoonField, Move, MoveKind, Position, RandomDice, Side, TurnOutcome,
+    apply,
 };
 
 #[cfg(debug_assertions)]
@@ -251,7 +252,10 @@ pub(crate) fn apply_with_frames(
                 let mut v: Vec<Position> = (progress + 1..target)
                     .map(|i| Position::OnTrack { progress: i })
                     .collect();
-                if matches!(mv.kind, MoveKind::EnterMoon | MoveKind::EnterPrison) {
+                if mv.kind == MoveKind::EnterMoon {
+                    let abs = state.checker(mv.checker).owner.entry().advance(target as usize);
+                    v.push(Position::Moon { side: abs.side(), field: MoonField::One });
+                } else if mv.kind == MoveKind::EnterPrison {
                     v.push(Position::OnTrack { progress: target });
                 }
                 v
