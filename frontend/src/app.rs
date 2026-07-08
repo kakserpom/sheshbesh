@@ -2076,10 +2076,13 @@ fn GameApp() -> impl IntoView {
                 {move || {
                     let g = game.get();
                     let state = &g.state;
+                    if game_over(state, teams.get_untracked()) { return vec![]; }
                     let tm = teams.get_untracked();
                     let total_h = 19.0;
                     let t = 150.0;
                     let mut y = 3.0f64;
+                    let bar_x = -0.2;
+                    let bar_w = 0.35;
 
                     if tm && state.active.len() == 4 {
                         let team_a = (Heuristic.value(state, Side::A) + Heuristic.value(state, Side::C)) / 2.0;
@@ -2088,15 +2091,15 @@ fn GameApp() -> impl IntoView {
                         let ea = ((team_a - max_v) / t).exp();
                         let eb = ((team_b - max_v) / t).exp();
                         let s = ea + eb;
-                        let bar_x = -0.2;
-                        let half_w = 0.35 / 2.0;
+                        let half_w = bar_w / 2.0;
                         let ha = total_h * (ea / s) as f64;
                         let hb = total_h * (eb / s) as f64;
                         vec![
-                            view! { <rect x=bar_x y=y width=half_w height=hb fill="#4ade80" rx="0.06" /> }.into_any(),
-                            view! { <rect x=bar_x + half_w y=y width=half_w height=hb fill="#facc15" rx="0.06" /> }.into_any(),
-                            view! { <rect x=bar_x y=y + hb width=half_w height=ha fill="#22d3ee" rx="0.06" /> }.into_any(),
-                            view! { <rect x=bar_x + half_w y=y + hb width=half_w height=ha fill="#e879f9" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x y=y width=bar_w height=total_h class="eval-bg" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x y=y width=half_w height=hb fill="#4ade80" /> }.into_any(),
+                            view! { <rect x=bar_x + half_w y=y width=half_w height=hb fill="#facc15" /> }.into_any(),
+                            view! { <rect x=bar_x y=y + hb width=half_w height=ha fill="#22d3ee" /> }.into_any(),
+                            view! { <rect x=bar_x + half_w y=y + hb width=half_w height=ha fill="#e879f9" /> }.into_any(),
                         ]
                     } else {
                         let sides: Vec<Side> = state.active.iter().filter(|&&s| !state.has_won(s)).copied().rev().collect();
@@ -2105,15 +2108,19 @@ fn GameApp() -> impl IntoView {
                         let max_v = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                         let exps: Vec<f32> = values.iter().map(|v| ((v - max_v) / t).exp()).collect();
                         let sum_e: f32 = exps.iter().sum();
-                        sides.into_iter().zip(exps).flat_map(|(s, e)| {
+                        let mut rects = vec![
+                            view! { <rect x=bar_x y=y width=bar_w height=total_h class="eval-bg" rx="0.06" /> }.into_any(),
+                        ];
+                        rects.extend(sides.into_iter().zip(exps).flat_map(|(s, e)| {
                             let h = total_h * (e / sum_e) as f64;
                             let col = side_color(s);
                             let y0 = y;
                             y += h;
                             vec![
-                                view! { <rect x=-0.2 y=y0 width=0.35 height=h fill=col rx="0.06" /> }.into_any(),
+                                view! { <rect x=bar_x y=y0 width=bar_w height=h fill=col /> }.into_any(),
                             ]
-                        }).collect::<Vec<_>>()
+                        }));
+                        rects
                     }
                 }}
 
