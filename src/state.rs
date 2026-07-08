@@ -181,11 +181,14 @@ impl GameState {
         &self.checkers[idx].pos
     }
 
-    /// Устанавливает позицию фишки `idx` с нормализацией:
-    /// `OnTrack` на клетке Луны → `Moon`.
+    /// Устанавливает позицию фишки `idx` (без нормализации).
+    /// Нормализация применяется только при конструировании начальных расстановок
+    /// (`push_checker`), а не в ходе игры: движок (`resolve_move`) и так
+    /// выставляет `Moon` при входе на Луну, а анимационные кадры
+    /// (`apply_with_frames`) создают промежуточные `OnTrack`-клетки, которые
+    /// могут проходить через клетку Луны.
     pub fn set_checker_pos(&mut self, idx: usize, pos: Position) {
-        let owner = self.checkers[idx].owner;
-        self.checkers[idx].pos = normalize_ontrack(owner, pos);
+        self.checkers[idx].pos = pos;
     }
 
     /// Добавляет фишку с нормализацией: `OnTrack` на клетке Луны → `Moon`.
@@ -279,15 +282,16 @@ mod tests {
     }
 
     #[test]
-    fn set_checker_pos_normalizes_moon_ontrack() {
-        let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
-        state.set_checker_pos(0, Position::OnTrack { progress: 65 });
-        assert_eq!(
-            state.checker_pos(0),
-            &Position::Moon {
-                side: Side::A,
-                field: MoonField::One
-            }
-        );
+    fn set_checker_pos_and_push_checker_on_track_with_moon_cell() {
+        // push_checker нормализует OnTrack на клетке Луны → Moon
+        let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+        s.push_checker(Checker { owner: Side::A, pos: Position::OnTrack { progress: 65 } });
+        let idx = s.checkers_len() - 1;
+        assert_eq!(s.checker_pos(idx), &Position::Moon { side: Side::A, field: MoonField::One });
+        // set_checker_pos НЕ нормализует — оставляет OnTrack (нужно для
+        // промежуточных кадров анимации, где фишка проходит сквозь клетку Луны).
+        let mut s2 = GameState::new(vec![Side::A, Side::C], Side::A);
+        s2.set_checker_pos(0, Position::OnTrack { progress: 65 });
+        assert_eq!(s2.checker_pos(0), &Position::OnTrack { progress: 65 });
     }
 }
