@@ -2096,10 +2096,10 @@ fn GameApp() -> impl IntoView {
                         let hb = total_h * (eb / s) as f64;
                         vec![
                             view! { <rect x=bar_x y=y width=bar_w height=total_h class="eval-bg" rx="0.06" /> }.into_any(),
-                            view! { <rect x=bar_x y=y width=half_w height=hb fill="#4ade80" /> }.into_any(),
-                            view! { <rect x=bar_x + half_w y=y width=half_w height=hb fill="#facc15" /> }.into_any(),
-                            view! { <rect x=bar_x y=y + hb width=half_w height=ha fill="#22d3ee" /> }.into_any(),
-                            view! { <rect x=bar_x + half_w y=y + hb width=half_w height=ha fill="#e879f9" /> }.into_any(),
+                            view! { <rect x=bar_x y=y width=half_w height=hb fill="#4ade80" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x + half_w y=y width=half_w height=hb fill="#facc15" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x y=y + hb width=half_w height=ha fill="#22d3ee" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x + half_w y=y + hb width=half_w height=ha fill="#e879f9" rx="0.06" /> }.into_any(),
                         ]
                     } else {
                         let sides: Vec<Side> = state.active.iter().filter(|&&s| !state.has_won(s)).copied().rev().collect();
@@ -2117,7 +2117,7 @@ fn GameApp() -> impl IntoView {
                             let y0 = y;
                             y += h;
                             vec![
-                                view! { <rect x=bar_x y=y0 width=bar_w height=h fill=col /> }.into_any(),
+                                view! { <rect x=bar_x y=y0 width=bar_w height=h fill=col rx="0.06" /> }.into_any(),
                             ]
                         }));
                         rects
