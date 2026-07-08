@@ -2093,13 +2093,13 @@ fn GameApp() -> impl IntoView {
                         let ha = total_h * (ea / s) as f64;
                         let hb = total_h * (eb / s) as f64;
                         vec![
-                            view! { <rect x=bar_x y=y width=half_w height=ha fill="#22d3ee" rx="0.06" /> }.into_any(),
-                            view! { <rect x=bar_x + half_w y=y width=half_w height=ha fill="#e879f9" rx="0.06" /> }.into_any(),
-                            view! { <rect x=bar_x y=y + ha width=half_w height=hb fill="#4ade80" rx="0.06" /> }.into_any(),
-                            view! { <rect x=bar_x + half_w y=y + ha width=half_w height=hb fill="#facc15" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x y=y width=half_w height=hb fill="#4ade80" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x + half_w y=y width=half_w height=hb fill="#facc15" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x y=y + hb width=half_w height=ha fill="#22d3ee" rx="0.06" /> }.into_any(),
+                            view! { <rect x=bar_x + half_w y=y + hb width=half_w height=ha fill="#e879f9" rx="0.06" /> }.into_any(),
                         ]
                     } else {
-                        let sides: Vec<Side> = state.active.iter().filter(|&&s| !state.has_won(s)).copied().collect();
+                        let sides: Vec<Side> = state.active.iter().filter(|&&s| !state.has_won(s)).copied().rev().collect();
                         if sides.is_empty() { return vec![]; }
                         let values: Vec<f32> = sides.iter().map(|&s| Heuristic.value(state, s)).collect();
                         let max_v = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
