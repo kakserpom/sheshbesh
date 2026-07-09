@@ -98,6 +98,7 @@ leptos_i18n::declare_locales! {
         demo_prison_stack: "Тюрьма: стопки одного цвета",
         demo_captured: "12 фишек в плену (макс)",
         demo_homes: "Дома заполнены",
+        demo_corner_two: "Угол: две своих фишки",
         demo_anim: "▶ Анимация: ход и съедание",
         demo_home_test: "🏠 Тест: вход в Дом (клик)",
         demo_complete: "Демо завершено.",
@@ -205,8 +206,17 @@ leptos_i18n::declare_locales! {
         tutorial_tip_corner: "Безопасная клетка: на углах не съедают и не сажают в Тюрьму.",
         tutorial_label_entry: "Вход",
         tutorial_tip_entry: "Сюда фишки вводятся в игру по кости 6. Вторая своя фишка сюда не ставится.",
-        // Home test
+        // Dev test heralds
         home_test_herald: "Тест входа в Дом: клетка входа (ворота) — обычная клетка, на ней можно остановиться (Step); заход в Дом — отдельным ходом, по клетке Дома внутри.",
+        test_ransom_herald: "Тест выкупа: используйте ⚀ 6 для выкупа, затем ⚂ 3 для хода.",
+        test_moon_herald: "🌙 Вход на Луну: клик 1 → поле 1, второй 1 → поле 3.",
+        test_corner_herald: "Тест угла: клик по фишке на углу — выбор; клик по центру клетки — ход.",
+        // Dev buttons
+        demo_moon_test: "🌙 Тест: вход на Луну (клик)",
+        demo_ransom_test: "⛓ Тест выкупа",
+        demo_corner_test: "↗ Тест: угол (вторая фишка)",
+        // General
+        github_title: "GitHub",
     },
     en: {
         // Locale
@@ -297,6 +307,7 @@ leptos_i18n::declare_locales! {
         demo_prison_stack: "Prison: same-color stacks",
         demo_captured: "12 pieces captured (max)",
         demo_homes: "Homes full",
+        demo_corner_two: "Corner: two own checkers",
         demo_anim: "▶ Animation: move and capture",
         demo_home_test: "🏠 Test: Home entry (click)",
         demo_complete: "Demo complete.",
@@ -404,8 +415,17 @@ leptos_i18n::declare_locales! {
         tutorial_tip_corner: "Safe cell: no captures or prison on corners.",
         tutorial_label_entry: "Entry",
         tutorial_tip_entry: "Pieces enter the board here by rolling 6. A second friendly piece cannot be placed here.",
-        // Home test
+        // Dev test heralds
         home_test_herald: "Home entry test: the gate is a regular perimeter cell where you can stop (Step); entering Home is a separate move from the gate inward.",
+        test_ransom_herald: "Ransom test: use ⚀ 6 to ransom, then ⚂ 3 to move.",
+        test_moon_herald: "🌙 Moon entry: click 1 → Moon field 1, second 1 → Moon field 3.",
+        test_corner_herald: "Corner test: click the checker on corner to select; click cell center to place second.",
+        // Dev buttons
+        demo_moon_test: "🌙 Test: Moon entry (click)",
+        demo_ransom_test: "⛓ Ransom test",
+        demo_corner_test: "↗ Test: corner (second checker)",
+        // General
+        github_title: "GitHub",
     },
 }
 mod ai_worker;

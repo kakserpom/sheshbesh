@@ -1,5 +1,6 @@
 use crate::ai_worker::{init_worker, next_id, send_raw, state_json};
 use crate::controls::{LocaleControl, SpeedControl, ThemeControl};
+use crate::demo;
 use crate::demo::*;
 use crate::geom::*;
 use crate::i18n::*;
@@ -11,13 +12,15 @@ use crate::util::*;
 use crate::view::*;
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+
 use leptos_meta::Title;
-use sheshbesh::board::{LOCAL_MOON, LOCAL_PRISON_NEAR, SIDE_LEN};
+use sheshbesh::board::{cell_kind, CellKind, LOCAL_MOON, LOCAL_PRISON_NEAR, SIDE_LEN};
 use sheshbesh::moves::{forced_six_moves, move_legal};
 use sheshbesh::{
     Agent, BOARD_DIM, BOARD_MARGIN, DiceRoll, DiceSource, Die, Game, GameState,
     Heuristic, MoonField, Move, MoveKind, Position, RandomDice, Side, Value, apply,
-    best_forced, best_turn, legal_turns, legal_turns_remaining, margin_coord, remaining_after,
+    best_forced, best_turn, checker_cell, legal_turns, legal_turns_remaining, margin_coord,
+    remaining_after,
 };
 use sheshbesh::turn::next_unfinished_active;
 use wasm_bindgen::JsCast;
@@ -874,13 +877,57 @@ fn GameApp() -> impl IntoView {
             // НЕ снимает выбор (раньше снимал) — переключиться можно кликом по другой.
             Some(src) if src == target => {}
             Some(src) => {
-                let found = cands
+                // Приоритет хода: ищем ход из src в target; если есть — играем.
+                // Если нет — может, target — это другой источник (своя фишка
+                // на углу) → переключаем фокус. Фишку на углу можно выбрать Tab.
+                if let Some(m) = cands
                     .iter()
                     .find(|&&m| move_source(&ps, m) == src && move_dest(&ps, m) == target)
-                    .copied();
-                if let Some(m) = found {
+                    .copied()
+                {
                     play_part(m);
                 } else if cands.iter().any(|&m| move_source(&ps, m) == target) {
+                    sel.set(Some(target));
+                }
+            }
+        }
+    };
+
+    // Долгое нажатие (≥1.5с) на углу со своей фишкой: ход (как клик по цели).
+    // Короткое — выбор (оригинальное поведение src_click).
+    let press_start: RwSignal<Option<f64>> = RwSignal::new(None);
+
+    let src_click = move |target: Sel| {
+        let elapsed = match press_start.get_untracked() {
+            None => 0.0,
+            Some(t) => js_sys::Date::now() - t,
+        };
+        if elapsed >= 1500.0 {
+            click(target);
+            return;
+        }
+        let g = game.get_untracked();
+        let hs = humans.get_untracked();
+        if animating.get_untracked()
+            || paused.get_untracked()
+            || game_over(&g.state, teams.get_untracked())
+            || !hs.contains(&g.state.to_move)
+            || roll.get_untracked().is_none()
+        {
+            return;
+        }
+        let ps = g.state.clone();
+        let pre = prefix.get_untracked();
+        let cands = step_opts(&turns.get_untracked(), &pre);
+        match sel.get_untracked() {
+            None => {
+                if cands.iter().any(|&m| move_source(&ps, m) == target) {
+                    sel.set(Some(target));
+                }
+            }
+            Some(src) if src == target => {}
+            Some(_) => {
+                if cands.iter().any(|&m| move_source(&ps, m) == target) {
                     sel.set(Some(target));
                 }
             }
@@ -1073,7 +1120,34 @@ fn GameApp() -> impl IntoView {
                 sources.push(s);
             }
         }
-        if let Some(&s) = sources
+        // Фишка на углу может сосуществовать с другими фишками той же стороны.
+        // При авто-фокусе отдаём предпочтение источникам НЕ на углу — иначе клик
+        // по углу (src == target) ничего не делает.
+        let sel_on_corner = |state: &GameState, s: Sel| -> bool {
+            let Sel::Cell(r, c) = s else { return false };
+            state.checkers().iter().any(|ch| {
+                if ch.owner != state.to_move {
+                    return false;
+                }
+                let Some((cr, cc)) = checker_cell(ch.owner, ch.pos) else { return false };
+                let Position::OnTrack { progress } = ch.pos else { return false };
+                (cr, cc) == (r, c) && cell_kind(ch.owner.entry().advance(progress as usize)) == CellKind::Corner
+            })
+        };
+        if true == sources
+            .iter()
+            .filter(|s| matches!(s, Sel::Cell(..)))
+            .any(|s| !sel_on_corner(&g.state, *s))
+        {
+            if let Some(&s) = sources
+                .iter()
+                .find(|s| matches!(s, Sel::Cell(..)) && !sel_on_corner(&g.state, **s))
+                .or_else(|| sources.iter().find(|s| matches!(s, Sel::Cell(..))))
+                .or_else(|| sources.first())
+            {
+                sel.set(Some(s));
+            }
+        } else if let Some(&s) = sources
             .iter()
             .find(|s| matches!(s, Sel::Cell(..)))
             .or_else(|| sources.first())
@@ -1173,7 +1247,7 @@ fn GameApp() -> impl IntoView {
         prefix.set(Vec::new());
         remaining.set(r.values().to_vec());
         sel.set(None);
-        herald.set("Ransom test: use ⚀ 6 to ransom, then ⚂ 3 to move".to_string());
+        herald.set(t_string!(i18n, test_ransom_herald).to_string());
         dev.set(false);
         started.set(true);
         kickoff();
@@ -1217,7 +1291,29 @@ fn GameApp() -> impl IntoView {
         prefix.set(Vec::new());
         remaining.set(r.values().to_vec());
         sel.set(None);
-        herald.set("🌙 Moon entry: click 1 → Moon field 1, second 1 → Moon field 3".to_string());
+        herald.set(t_string!(i18n, test_moon_herald).to_string());
+        dev.set(false);
+        started.set(true);
+        kickoff();
+    };
+
+    let corner_test = move |_| {
+        epoch.update_value(|e| *e += 1);
+        animating.set(false);
+        let r = DiceRoll::new(Die::new(6).expect("6"), Die::new(1).expect("1"));
+        let st = demo::corner_test();
+        let t = legal_turns(&st, r);
+        humans.set(vec![Side::A]);
+        finished.set(Vec::new());
+        dbg_log_reset();
+        dbg_log("[GAMELOG] === dev: corner test ===");
+        game.set(Game::new(st));
+        roll.set(Some(r));
+        turns.set(t);
+        prefix.set(Vec::new());
+        remaining.set(r.values().to_vec());
+        sel.set(None);
+        herald.set(t_string!(i18n, test_corner_herald).to_string());
         dev.set(false);
         started.set(true);
         kickoff();
@@ -1329,7 +1425,7 @@ fn GameApp() -> impl IntoView {
                         }>{t!(i18n, settings_tutorial)}</button>
                         <button on:click=move |_| rules.set(true)>{t!(i18n, settings_rules)}</button>
                         <button on:click=move |_| about.set(true)>{t!(i18n, settings_about)}</button>
-                        <a class="icon-btn" href="https://github.com/kakserpom/sheshbesh" target="_blank" title="GitHub">{view! {
+                        <a class="icon-btn" href="https://github.com/kakserpom/sheshbesh" target="_blank" title={t_string!(i18n, github_title)}>{view! {
                             <svg viewBox="0 0 16 16" fill="currentColor" width="1.2em" height="1.2em">
                                 <path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
                             </svg>
@@ -1927,6 +2023,7 @@ fn GameApp() -> impl IntoView {
                             Demo::PrisonStack => t_string!(i18n, demo_prison_stack),
                             Demo::Captured => t_string!(i18n, demo_captured),
                             Demo::Homes => t_string!(i18n, demo_homes),
+                            Demo::CornerTwo => t_string!(i18n, demo_corner_two),
                         };
                         let demo = *d;
                         view! {
@@ -1941,14 +2038,28 @@ fn GameApp() -> impl IntoView {
                     }).collect_view()}
                     <button on:click=anim_demo>{t!(i18n, demo_anim)}</button>
                     <button on:click=home_test>{t!(i18n, demo_home_test)}</button>
-                    <button on:click=moon_test>"🌙 Moon entry (click)"</button>
-                    <button on:click=ransom_test>"⛓ Ransom test"</button>
+                    <button on:click=moon_test>{t!(i18n, demo_moon_test)}</button>
+                    <button on:click=ransom_test>{t!(i18n, demo_ransom_test)}</button>
+                    <button on:click=corner_test>{t!(i18n, demo_corner_test)}</button>
                 </div>
                 // Панель прослушивания звуков: по кнопке на каждое событие.
                 <div class="controls dev-controls">
                     <span class="set-name">{t_string!(i18n, dev_sounds)}</span>
-                    {settings::SoundKind::ALL.iter().map(|&(kind, label)| view! {
-                        <button on:click=move |_| settings::play(kind)>{label}</button>
+                    {settings::SoundKind::ALL.iter().map(|&(kind, _)| {
+                        let label = match kind {
+                            settings::SoundKind::Dice => t_string!(i18n, sound_dice),
+                            settings::SoundKind::Enter => t_string!(i18n, sound_enter),
+                            settings::SoundKind::Capture => t_string!(i18n, sound_capture),
+                            settings::SoundKind::PrisonIn => t_string!(i18n, sound_prison_in),
+                            settings::SoundKind::PrisonOut => t_string!(i18n, sound_prison_out),
+                            settings::SoundKind::Moon => t_string!(i18n, sound_moon),
+                            settings::SoundKind::Ransom => t_string!(i18n, sound_ransom),
+                            settings::SoundKind::Home => t_string!(i18n, sound_home),
+                            settings::SoundKind::Win => t_string!(i18n, sound_win),
+                        };
+                        view! {
+                            <button on:click=move |_| settings::play(kind)>{label}</button>
+                        }
                     }).collect_view()}
                 </div>
                 <div class="board-area">
@@ -2216,6 +2327,10 @@ fn GameApp() -> impl IntoView {
                             dsts.push((r, c));
                         }
                     }
+                    // Клетки, которые одновременно источник И цель (угол со своей фишкой):
+                    // источник → выбор (src_click), цель → ход (click) в центре клетки.
+                    let ambiguous: Vec<(usize, usize)> =
+                        srcs.iter().filter(|&rc| dsts.contains(rc)).copied().collect();
                     // «Ход сразу за обе кости» одной фишкой — конечные клетки как
                     // дополнительные цели (например, 1-1 → пройти Тюрьму насквозь на 2,
                     // или 1-3 на Луне → сразу на поле «6»). Точку подсветки берём по
@@ -2302,9 +2417,10 @@ fn GameApp() -> impl IntoView {
                     if let Some(rc) = sel_cell {
                         nodes.push(pt_hl(rc, "hl-sel"));
                     }
-                    // Цели — на точке, куда встанет фишка (Луна — на дугу).
+                    // Цели — на точке, куда встанет фишка (Луна — на дугу);
+                    // для углов-источников — в центре клетки (отдельно от фишки).
                     for &rc in &dsts {
-                        let (cx, cy) = dst_point(rc);
+                        let (cx, cy) = if ambiguous.contains(&rc) { center_pt(rc) } else { dst_point(rc) };
                         nodes.push(ring_pt(cx, cy, "hl-dst"));
                     }
                     // Цель «за обе кости сразу» — пунктиром, чтобы отличать от одиночной.
@@ -2321,29 +2437,52 @@ fn GameApp() -> impl IntoView {
                     }
                     // Кликабельные зоны: каземат — по рамке И по самой клетке Тюрьмы;
                     // остальное — по центру клетки. Цели — по центру клетки.
+                    // Для клеток-источников ФИШКА и ЦЕЛЬ могут совпадать (угол со своей
+                    // фишкой): destination-hit рисуем ПЕРВЫМ (под source-hit), а source-hit —
+                    // ПОВЕРХ, чтобы клик по фишке ВЫБИРАЛ (src_click), а не ходил (click).
+                    // Радиусы уменьшаем, чтобы зоны почти не перекрывались.
+                    let amb_r = 0.33; // радиус для ambiguous-клеток (меньше, ~6px)
+                    let unamb_r = 0.5; // радиус для обычных
+                    // Destination-хиты (под source-хитами в SVG-стеке)
+                    for &(r, c) in &dsts {
+                        let amb = ambiguous.contains(&(r, c));
+                        let (cx, cy) = if amb { center_pt((r, c)) } else { dst_point((r, c)) };
+                        nodes.push(view! {
+                            <circle cx=cx cy=cy r=if amb { amb_r } else { unamb_r } class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
+                        }.into_any());
+                    }
+                    for &((r, c), (cx, cy)) in &combo_dsts {
+                        nodes.push(view! {
+                            <circle cx=cx cy=cy r=unamb_r class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
+                        }.into_any());
+                    }
+                    // Source-хиты ПОВЕРХ destination (чтобы клик по фишке выбирал).
                     let mut src_hits: Vec<(usize, usize)> = srcs.clone();
                     if let Some(rc) = sel_cell { src_hits.push(rc); }
                     for rc in src_hits {
                         let (cx, cy) = src_point(rc);
-                        nodes.push(view! {
-                            <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(rc.0, rc.1)) />
-                        }.into_any());
+                        if ambiguous.contains(&rc) {
+                            // На углу со своей фишкой: клик по фишке ВЫБИРАЕТ, не ходит.
+                            // Долгое нажатие (≥1.5с) — ход (делегирует в click).
+                            let p = press_start;
+                            nodes.push(view! {
+                                <circle cx=cx cy=cy r=amb_r class="hit"
+                                    on:pointerdown=move |_| {
+                                        p.set(Some(js_sys::Date::now()));
+                                    }
+                                    on:click=move |_| src_click(Sel::Cell(rc.0, rc.1))
+                                />
+                            }.into_any());
+                        } else {
+                            nodes.push(view! {
+                                <circle cx=cx cy=cy r=unamb_r class="hit" on:click=move |_| click(Sel::Cell(rc.0, rc.1)) />
+                            }.into_any());
+                        }
                         if caged(rc) && let Some((x, y, w, h)) = cage_rect(rc) {
                             nodes.push(view! {
                                 <rect x=x y=y width=w height=h class="hit" on:click=move |_| click(Sel::Cell(rc.0, rc.1)) />
                             }.into_any());
                         }
-                    }
-                    for &(r, c) in &dsts {
-                        let (cx, cy) = dst_point((r, c));
-                        nodes.push(view! {
-                            <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
-                        }.into_any());
-                    }
-                    for &((r, c), (cx, cy)) in &combo_dsts {
-                        nodes.push(view! {
-                            <circle cx=cx cy=cy r=0.5 class="hit" on:click=move |_| click(Sel::Cell(r, c)) />
-                        }.into_any());
                     }
                     // Выносные зоны хода (резерв у своего Дома, плен — у Дома
                     // захватчика): подсветка + клик в их центре.
