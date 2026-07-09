@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use sheshbesh::board::PERIMETER;
 use sheshbesh::{
-    DiceRoll, Game, GameState, MoonField, Move, MoveKind, Position, RandomDice, Side, TurnOutcome,
+    DiceRoll, Game, GameState, Move, MoveKind, Position, RandomDice, Side, TurnOutcome,
     apply,
 };
 
@@ -252,10 +252,9 @@ pub(crate) fn apply_with_frames(
                 let mut v: Vec<Position> = (progress + 1..target)
                     .map(|i| Position::OnTrack { progress: i })
                     .collect();
-                if mv.kind == MoveKind::EnterMoon {
-                    let abs = state.checker(mv.checker).owner.entry().advance(target as usize);
-                    v.push(Position::Moon { side: abs.side(), field: MoonField::One });
-                } else if mv.kind == MoveKind::EnterPrison {
+                // For EnterMoon, the moon arc animation (below) covers the entry
+                // cell starting from t=0.0 — no intermediate perimeter frame needed.
+                if mv.kind == MoveKind::EnterPrison {
                     v.push(Position::OnTrack { progress: target });
                 }
                 v
