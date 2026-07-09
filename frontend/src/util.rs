@@ -252,9 +252,7 @@ pub(crate) fn apply_with_frames(
                 let mut v: Vec<Position> = (progress + 1..target)
                     .map(|i| Position::OnTrack { progress: i })
                     .collect();
-                // For EnterMoon, the moon arc animation (below) covers the entry
-                // cell starting from t=0.0 — no intermediate perimeter frame needed.
-                if mv.kind == MoveKind::EnterPrison {
+                if mv.kind == MoveKind::EnterMoon || mv.kind == MoveKind::EnterPrison {
                     v.push(Position::OnTrack { progress: target });
                 }
                 v
