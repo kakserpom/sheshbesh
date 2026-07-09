@@ -110,6 +110,29 @@ pub(crate) fn home_entry_test() -> GameState {
     s
 }
 
+/// Расстановка для проверки захода на Луну: A на шаг от клетки Луны, бросок [1, 2].
+pub(crate) fn moon_entry_test() -> GameState {
+    let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
+    s.clear_checkers();
+    s.push_checker(Checker {
+        owner: Side::A,
+        pos: Position::OnTrack { progress: 64 },
+    });
+    for _ in 0..3 {
+        s.push_checker(Checker {
+            owner: Side::A,
+            pos: Position::Reserve,
+        });
+    }
+    for _ in 0..4 {
+        s.push_checker(Checker {
+            owner: Side::C,
+            pos: Position::Reserve,
+        });
+    }
+    s
+}
+
 /// Партия-заготовка для проверки выкупа: A может выкупить фишку у C (шестёркой),
 /// затем доиграть тройкой. У C ровно одна фишка на дорожке со свободным ходом на 6.
 /// Все OnTrack-позиции лежат на plain-клетках (не Луна, не Тюрьма).

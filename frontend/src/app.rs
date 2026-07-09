@@ -1201,6 +1201,28 @@ fn GameApp() -> impl IntoView {
         kickoff();
     };
 
+    let moon_test = move |_| {
+        epoch.update_value(|e| *e += 1);
+        animating.set(false);
+        let r = DiceRoll::new(Die::new(1).expect("1"), Die::new(1).expect("1"));
+        let st = moon_entry_test();
+        let t = legal_turns(&st, r);
+        humans.set(vec![Side::A]);
+        finished.set(Vec::new());
+        dbg_log_reset();
+        dbg_log("[GAMELOG] === dev: moon-entry test ===");
+        game.set(Game::new(st));
+        roll.set(Some(r));
+        turns.set(t);
+        prefix.set(Vec::new());
+        remaining.set(r.values().to_vec());
+        sel.set(None);
+        herald.set("🌙 Moon entry: click 1 → Moon field 1, second 1 → Moon field 3".to_string());
+        dev.set(false);
+        started.set(true);
+        kickoff();
+    };
+
     // Открыть/закрыть экран разработчика, показав состояние-заглушку.
     let open_dev = move |_| {
         epoch.update_value(|e| *e += 1);
@@ -1919,6 +1941,7 @@ fn GameApp() -> impl IntoView {
                     }).collect_view()}
                     <button on:click=anim_demo>{t!(i18n, demo_anim)}</button>
                     <button on:click=home_test>{t!(i18n, demo_home_test)}</button>
+                    <button on:click=moon_test>"🌙 Moon entry (click)"</button>
                     <button on:click=ransom_test>"⛓ Ransom test"</button>
                 </div>
                 // Панель прослушивания звуков: по кнопке на каждое событие.
