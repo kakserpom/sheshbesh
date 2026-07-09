@@ -48,17 +48,8 @@ pub(crate) fn moon_field_t(field: MoonField) -> f64 {
 /// Точка на параболе Луны стороны `side` при параметре `t` ∈ [0,1] (вход→выход).
 pub(crate) fn moon_arc_point(side: Side, t: f64) -> (f64, f64) {
     let c = BOARD_DIM as f64 / 2.0;
-    let edge = |coord| {
-        let p = center_pt(coord);
-        let d = (c - p.0, c - p.1);
-        if d.0.abs() > d.1.abs() {
-            (p.0 + d.0.signum() * 0.5, p.1)
-        } else {
-            (p.0, p.1 + d.1.signum() * 0.5)
-        }
-    };
-    let p0 = edge(margin_coord(side.local_to_perimeter(LOCAL_MOON)));
-    let p2 = edge(margin_coord(side.local_to_perimeter(LOCAL_MOON_EXIT)));
+    let p0 = center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON)));
+    let p2 = center_pt(margin_coord(side.local_to_perimeter(LOCAL_MOON_EXIT)));
     let mid = ((p0.0 + p2.0) / 2.0, (p0.1 + p2.1) / 2.0);
     let dir = (c - mid.0, c - mid.1);
     let len = (dir.0 * dir.0 + dir.1 * dir.1).sqrt().max(1e-3);
