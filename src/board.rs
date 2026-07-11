@@ -33,7 +33,7 @@ pub const LOCAL_EXIT_CORNER: u8 = 18;
 
 /// Сторона квадрата. Стороны перечислены против часовой стрелки: `A → B → C → D`.
 /// Каждая сторона владеет своим Домом; в игре вдвоём используются противоположные.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Side {
     A,
     B,
@@ -97,7 +97,7 @@ impl Side {
 }
 
 /// Индекс клетки периметра (0..71), с кольцевой арифметикой против часовой стрелки.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PerimeterIdx(usize);
 
 impl PerimeterIdx {
@@ -129,7 +129,7 @@ impl PerimeterIdx {
 }
 
 /// Геометрический тип клетки периметра (не зависит от игрока).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum CellKind {
     /// Обычная клетка.
     Plain,

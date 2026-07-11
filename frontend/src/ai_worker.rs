@@ -3,8 +3,8 @@ use leptos::prelude::*;
 use sheshbesh::{GameState, MoonField, Position};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use web_sys::{MessageEvent, Worker};
 
 thread_local! {
@@ -68,7 +68,9 @@ pub fn send_raw(msg: &str, id: u64) -> RwSignal<Option<Option<usize>>> {
         map.insert(id, signal);
     });
     WORKER.with(|w| {
-        let w = w.get().expect("AI worker not initialized — call init_worker first");
+        let w = w
+            .get()
+            .expect("AI worker not initialized — call init_worker first");
         w.post_message(&JsValue::from_str(msg))
             .expect("AI worker postMessage failed");
     });

@@ -88,8 +88,12 @@ pub(crate) fn demo_game(demo: Demo) -> GameState {
             let corner = Side::A.entry().get() as u16; // progress 0, первый угол
             demo_state(|side, k| match (side, k) {
                 (Side::A, 0) | (Side::A, 1) => Position::OnTrack { progress: corner },
-                (Side::A, 2) => Position::OnTrack { progress: corner + 1 },
-                (Side::A, 3) => Position::OnTrack { progress: corner + 2 },
+                (Side::A, 2) => Position::OnTrack {
+                    progress: corner + 1,
+                },
+                (Side::A, 3) => Position::OnTrack {
+                    progress: corner + 2,
+                },
                 _ => Position::Reserve,
             })
         }
@@ -149,13 +153,25 @@ pub(crate) fn moon_entry_test() -> GameState {
 pub(crate) fn corner_test() -> GameState {
     let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
     s.clear_checkers();
-    s.push_checker(Checker { owner: Side::A, pos: Position::OnTrack { progress: 9 } });
-    s.push_checker(Checker { owner: Side::A, pos: Position::OnTrack { progress: 3 } });
+    s.push_checker(Checker {
+        owner: Side::A,
+        pos: Position::OnTrack { progress: 9 },
+    });
+    s.push_checker(Checker {
+        owner: Side::A,
+        pos: Position::OnTrack { progress: 3 },
+    });
     for _ in 0..2 {
-        s.push_checker(Checker { owner: Side::A, pos: Position::Reserve });
+        s.push_checker(Checker {
+            owner: Side::A,
+            pos: Position::Reserve,
+        });
     }
     for _ in 0..4 {
-        s.push_checker(Checker { owner: Side::C, pos: Position::Reserve });
+        s.push_checker(Checker {
+            owner: Side::C,
+            pos: Position::Reserve,
+        });
     }
     s
 }

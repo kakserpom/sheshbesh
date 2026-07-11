@@ -36,8 +36,8 @@ pub use learn::{
     LinearValue, MlpValue, TdConfig, TdModel, train, train_mlp, train_with, train_with_progress,
 };
 pub use moves::{
-    Move, MoveKind, apply, legal_moves, legal_turns, legal_turns_remaining, max_pips,
-    remaining_after,
+    forced_six_moves, move_legal, Move, MoveKind, apply, legal_moves, legal_turns,
+    legal_turns_remaining, max_pips, remaining_after,
 };
 pub use render::{
     BOARD_DIM, BOARD_MARGIN, Glyph, board_glyphs, checker_cell, margin_coord, render,
@@ -46,6 +46,6 @@ pub use search::{DEFAULT_WIDTH, TwoPly, best_turn_2ply};
 pub use state::{Checker, GameState, MoonField, Position};
 pub use turn::{
     Agent, DiceSource, FirstChoice, Game, RandomDice, ScriptedDice, TurnOutcome, determine_first,
-    next_active_side, team_of, winners_of,
+    next_active_side, next_unfinished_active, team_of, winners_of,
 };
 pub use value::{Value, ValueAgent, best_forced, best_turn};

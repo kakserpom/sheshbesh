@@ -1,5 +1,5 @@
 [workspace]
-members = ["frontend", "frontend/ai-worker", "src-tauri"]
+members = ["frontend", "frontend/ai-worker", "src-tauri", "sheshbesh-server"]
 
 [package]
 name = "sheshbesh"
@@ -25,6 +25,7 @@ parallel = ["dep:rayon"]
 crossterm = { version = "0.29.0", optional = true }
 ratatui = { version = "0.30.2", optional = true }
 rayon = { version = "1.12.0", optional = true }
+serde = { version = "1", features = ["derive"] }
 
 # Только для нативных примеров (обработка Ctrl+C в `train_loop`). На библиотеку и
 # WASM-сборку не влияет: dev-зависимости не тянутся ни в lib, ни к зависимым крейтам.

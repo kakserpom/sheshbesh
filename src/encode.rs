@@ -130,7 +130,11 @@ pub fn encode_into(state: &GameState, p: Side, out: &mut [f32]) {
     let perim: Vec<(Side, usize)> = state
         .checkers()
         .iter()
-        .filter_map(|c| c.pos.perimeter_cell(c.owner).map(|abs| (c.owner, abs.get())))
+        .filter_map(|c| {
+            c.pos
+                .perimeter_cell(c.owner)
+                .map(|abs| (c.owner, abs.get()))
+        })
         .collect();
     for c in state.checkers() {
         let owner = c.owner;
@@ -277,7 +281,10 @@ mod tests {
             pos: Position::OnTrack { progress: 10 },
         });
         let v = encode(&s, Side::A);
-        assert_eq!(v[OFF_BLOTS], 0.25, "одна своя фишка на обычной клетке — блот");
+        assert_eq!(
+            v[OFF_BLOTS], 0.25,
+            "одна своя фишка на обычной клетке — блот"
+        );
         assert_eq!(v[OFF_CONTACT], 0.0, "врагов рядом нет — не под боем");
 
         // Враг C в 3 клетках ПОЗАДИ блота A (по ходу) — прямой бой.
@@ -290,7 +297,10 @@ mod tests {
             },
         });
         let v = encode(&s, Side::A);
-        assert_eq!(v[OFF_CONTACT], 0.25, "блот A под прямым боем врага в 3 клетках");
+        assert_eq!(
+            v[OFF_CONTACT], 0.25,
+            "блот A под прямым боем врага в 3 клетках"
+        );
     }
 
     #[test]

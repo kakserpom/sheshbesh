@@ -132,8 +132,13 @@ fn fair_share(mode: &Mode) -> f64 {
 /// одном (чередующемся) месте, `best` на остальных.
 fn head_to_head(cand: &MlpValue, best: &MlpValue, mode: &Mode, games: usize, seed: u64) -> f64 {
     if mode.active.len() == 2 {
-        let (cw, bw) =
-            match_winrate(&mut ValueAgent(cand), &mut ValueAgent(best), games, seed, 40_000);
+        let (cw, bw) = match_winrate(
+            &mut ValueAgent(cand),
+            &mut ValueAgent(best),
+            games,
+            seed,
+            40_000,
+        );
         return cw as f64 / (cw + bw).max(1) as f64;
     }
     let (w, g) = if mode.teams {

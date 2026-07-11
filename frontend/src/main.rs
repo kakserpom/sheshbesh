@@ -42,6 +42,7 @@ leptos_i18n::declare_locales! {
         settings_start: "Начать игру",
         settings_rules: "📖 Правила",
         settings_tutorial: "🎓 Обучение",
+        settings_multiplayer: "Мультиплеер",
         settings_about: "❤️ От автора",
         settings_lang: "Язык / Language",
         settings_dev: "Режим разработчика",
@@ -64,6 +65,9 @@ leptos_i18n::declare_locales! {
         herald_wait_move: "{{ who }}: выпало {{ a }} и {{ b }}. Выберите ход.",
         herald_ai_thinking: "{{ who }}: выпало {{ a }} и {{ b }}. Идёт выбор хода…",
         herald_double: "{{ who }}: выпало {{ a }} и {{ b }}. Дубль — ещё ход!",
+        herald_wait_opponent: "Ожидание соперника…",
+        herald_connected_wait: "Подключено. Ожидание сервера…",
+        herald_opponent_disconnected: "Соперник отключился",
         // Burn
         burn_double: "{{ who }}: сыграть {{ n }} больше нечем — дубль, переброс!",
         burn_pip: "{{ who }}: сыграть {{ n }} нечем — кость сгорает.",
@@ -217,6 +221,23 @@ leptos_i18n::declare_locales! {
         demo_corner_test: "↗ Тест: угол (вторая фишка)",
         // General
         github_title: "GitHub",
+        // Multiplayer
+        net_title: "Мультиплеер",
+        net_create: "Создать",
+        net_join_label: "Код:",
+        net_join: "Присоединиться",
+        net_code_placeholder: "ВВОД КОДА",
+        net_disconnect: "Отключиться",
+        net_lobby_info: "Лобби: {{ code }} — ваша сторона: {{ side }}",
+        net_chat_placeholder: "Чат…",
+        net_mode_single: "Одиночная",
+        net_mode_network: "Сетевая",
+        net_share: "🔗 Поделиться",
+        net_waiting: "Код лобби: {{ code }}. Ждём игроков…",
+        net_side_you: "Вы",
+        net_side_network: "Соперник по сети",
+        net_nick_placeholder: "Ваш ник",
+        net_play: "Играть",
     },
     en: {
         // Locale
@@ -251,6 +272,7 @@ leptos_i18n::declare_locales! {
         settings_start: "Start Game",
         settings_rules: "📖 Rules",
         settings_tutorial: "🎓 Tutorial",
+        settings_multiplayer: "Multiplayer",
         settings_about: "❤️ About",
         settings_lang: "Language / Язык",
         settings_dev: "Dev Mode",
@@ -273,6 +295,9 @@ leptos_i18n::declare_locales! {
         herald_wait_move: "{{ who }}: rolled {{ a }} and {{ b }}. Choose a move.",
         herald_ai_thinking: "{{ who }}: rolled {{ a }} and {{ b }}. Choosing a move…",
         herald_double: "{{ who }}: rolled {{ a }} and {{ b }}. Doubles — extra turn!",
+        herald_wait_opponent: "Waiting for opponent…",
+        herald_connected_wait: "Connected. Waiting for server…",
+        herald_opponent_disconnected: "Opponent disconnected",
         // Burn
         burn_double: "{{ who }}: can't play {{ n }} — doubles, reroll!",
         burn_pip: "{{ who }}: can't play {{ n }} — pip burns.",
@@ -426,6 +451,23 @@ leptos_i18n::declare_locales! {
         demo_corner_test: "↗ Test: corner (second checker)",
         // General
         github_title: "GitHub",
+        // Multiplayer
+        net_title: "Multiplayer",
+        net_create: "Create",
+        net_join_label: "Code:",
+        net_join: "Join",
+        net_code_placeholder: "ENTER CODE",
+        net_disconnect: "Disconnect",
+        net_lobby_info: "Lobby: {{ code }} — your side: {{ side }}",
+        net_chat_placeholder: "Chat…",
+        net_mode_single: "Single",
+        net_mode_network: "Network",
+        net_share: "🔗 Share",
+        net_waiting: "Lobby code: {{ code }}. Waiting for players…",
+        net_side_you: "You",
+        net_side_network: "Network",
+        net_nick_placeholder: "Your nick",
+        net_play: "Play",
     },
 }
 mod ai_worker;
@@ -438,6 +480,7 @@ mod geom;
 mod lessons;
 mod model;
 mod moves_ui;
+mod net;
 mod settings;
 mod util;
 mod view;

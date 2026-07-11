@@ -1,10 +1,12 @@
 //! Состояние игры: фишки, их положение и общее состояние партии.
 
-use crate::board::{cell_kind, CellKind, CHECKERS_PER_PLAYER, LOCAL_HOME_ENTRANCE, PerimeterIdx, Side};
+use crate::board::{
+    CHECKERS_PER_PLAYER, CellKind, LOCAL_HOME_ENTRANCE, PerimeterIdx, Side, cell_kind,
+};
 
 /// Поле внутренней дорожки Луны. Поля проходятся по порядку,
 /// каждое продвигает только при совпадающем значении кости.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum MoonField {
     /// Вход на Луну; для продвижения нужен выброс «1».
     One,
@@ -43,7 +45,7 @@ impl MoonField {
 /// Точка ввода — клетка входа в Дом владельца (`LOCAL_HOME_ENTRANCE`).
 /// ПРЕДПОЛОЖЕНИЕ (требует подтверждения): фишка вводится в игру именно здесь и,
 /// обойдя круг, отсюда же заходит в Дом.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Position {
     /// В Доме, ещё не введена в игру (нужен выброс «6»). Сюда же попадает
     /// выкупленная из плена фишка перед повторным вводом.
@@ -78,14 +80,14 @@ impl Position {
 }
 
 /// Фишка: владелец (его сторона) и текущее положение.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Checker {
     pub owner: Side,
     pub pos: Position,
 }
 
 /// Полное состояние партии.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GameState {
     /// Стороны, участвующие в партии (2 — противоположные, либо 4).
     pub active: Vec<Side>,
@@ -285,9 +287,18 @@ mod tests {
     fn set_checker_pos_and_push_checker_on_track_with_moon_cell() {
         // push_checker нормализует OnTrack на клетке Луны → Moon
         let mut s = GameState::new(vec![Side::A, Side::C], Side::A);
-        s.push_checker(Checker { owner: Side::A, pos: Position::OnTrack { progress: 65 } });
+        s.push_checker(Checker {
+            owner: Side::A,
+            pos: Position::OnTrack { progress: 65 },
+        });
         let idx = s.checkers_len() - 1;
-        assert_eq!(s.checker_pos(idx), &Position::Moon { side: Side::A, field: MoonField::One });
+        assert_eq!(
+            s.checker_pos(idx),
+            &Position::Moon {
+                side: Side::A,
+                field: MoonField::One
+            }
+        );
         // set_checker_pos НЕ нормализует — оставляет OnTrack (нужно для
         // промежуточных кадров анимации, где фишка проходит сквозь клетку Луны).
         let mut s2 = GameState::new(vec![Side::A, Side::C], Side::A);

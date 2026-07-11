@@ -301,9 +301,12 @@ mod tests {
         let safe = {
             let mut s = exposed.clone();
             let cell = PerimeterIdx::new(12);
-            s.set_checker_pos(1, Position::OnTrack {
-                progress: Side::C.progress_of(cell) - 20,
-            });
+            s.set_checker_pos(
+                1,
+                Position::OnTrack {
+                    progress: Side::C.progress_of(cell) - 20,
+                },
+            );
             s
         };
         assert_eq!(capture_risk(&safe, Side::A), 0);

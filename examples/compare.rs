@@ -37,8 +37,7 @@ fn hidden_of(m: &MlpValue) -> usize {
 /// Доля побед A против B (голова-в-голову) для режима — как гейтинг в `train_loop`.
 fn duel(a: &MlpValue, b: &MlpValue, mode: &Mode, games: usize, seed: u64) -> f64 {
     if mode.active.len() == 2 {
-        let (aw, bw) =
-            match_winrate(&mut ValueAgent(a), &mut ValueAgent(b), games, seed, 40_000);
+        let (aw, bw) = match_winrate(&mut ValueAgent(a), &mut ValueAgent(b), games, seed, 40_000);
         return aw as f64 / (aw + bw).max(1) as f64;
     }
     let (w, g) = if mode.teams {

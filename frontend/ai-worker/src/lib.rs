@@ -150,11 +150,7 @@ pub fn compute(json: &str) -> String {
     let req: Request = match serde_json::from_str(json) {
         Ok(r) => r,
         Err(_) => {
-            return serde_json::to_string(&Response {
-                id: 0,
-                idx: None,
-            })
-            .unwrap();
+            return serde_json::to_string(&Response { id: 0, idx: None }).unwrap();
         }
     };
     let state = reconstruct_state(req.state);

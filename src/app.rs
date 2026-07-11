@@ -289,7 +289,8 @@ fn move_endpoints(base: &GameState, mv: Move) -> (Option<PerimeterIdx>, Option<P
     let owner = base.checker(mv.checker).owner;
     let from = base.checker(mv.checker).pos.perimeter_cell(owner);
     let after = preview_after(base, std::slice::from_ref(&mv));
-    let to = after.checker(mv.checker)
+    let to = after
+        .checker(mv.checker)
         .pos
         .perimeter_cell(owner)
         .or_else(|| {

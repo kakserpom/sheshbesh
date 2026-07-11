@@ -364,10 +364,13 @@ mod tests {
     fn home_and_moon_checkers_appear_inside_the_square() {
         let mut state = GameState::new(vec![Side::A, Side::C], Side::A);
         state.set_checker_pos(0, Position::Home { depth: 0 });
-        state.set_checker_pos(1, Position::Moon {
-            side: Side::A,
-            field: MoonField::One,
-        });
+        state.set_checker_pos(
+            1,
+            Position::Moon {
+                side: Side::A,
+                field: MoonField::One,
+            },
+        );
         let grid = board_glyphs(&state);
 
         // Фишка в Доме — на первой клетке внутрь от входа в Дом.

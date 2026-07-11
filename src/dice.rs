@@ -5,7 +5,7 @@
 //! **одной** из костей; сумма не засчитывается.
 
 /// Одна шестигранная кость со значением 1..=6.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Die(u8);
 
 impl Die {
@@ -21,7 +21,7 @@ impl Die {
 }
 
 /// Результат броска двух костей.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DiceRoll {
     a: Die,
     b: Die,

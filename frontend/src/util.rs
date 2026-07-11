@@ -5,9 +5,14 @@ use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use sheshbesh::board::PERIMETER;
 use sheshbesh::{
-    DiceRoll, Game, GameState, Move, MoveKind, Position, RandomDice, Side, TurnOutcome,
-    apply,
+    DiceRoll, Game, GameState, Move, MoveKind, Position, RandomDice, Side, TurnOutcome, apply,
 };
+
+use std::sync::LazyLock;
+use std::sync::Mutex;
+
+pub(crate) static NET_NICKNAMES: LazyLock<Mutex<std::collections::HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 #[cfg(debug_assertions)]
 thread_local! {
@@ -97,6 +102,10 @@ pub(crate) struct Frame {
 }
 
 pub(crate) fn side_name(side: Side, humans: &[Side], i18n: I18nContext<Locale>) -> String {
+    let nick = NET_NICKNAMES.lock().unwrap().get(&side.letter().to_string()).cloned();
+    if let Some(nick) = nick {
+        return format!("<b style=\"color:{}\">{nick}</b>", side_color(side));
+    }
     let who = if humans.contains(&side) {
         tu_string!(i18n, side_human)
     } else {
@@ -146,18 +155,48 @@ pub(crate) fn move_note(
     event.map(|e| format!("{name}: {e}"))
 }
 
-pub(crate) fn roll_note(side: Side, humans: &[Side], roll: DiceRoll, no_move: bool, i18n: I18nContext<Locale>) -> String {
+pub(crate) fn roll_note(
+    side: Side,
+    humans: &[Side],
+    roll: DiceRoll,
+    no_move: bool,
+    i18n: I18nContext<Locale>,
+) -> String {
     let name = side_name(side, humans, i18n);
     let [a, b] = roll.values();
     if no_move {
-        return tu_string!(i18n, herald_no_move, who = name, a = a.to_string(), b = b.to_string());
+        return tu_string!(
+            i18n,
+            herald_no_move,
+            who = name,
+            a = a.to_string(),
+            b = b.to_string()
+        );
     }
     if !humans.contains(&side) {
-        tu_string!(i18n, herald_ai_thinking, who = name, a = a.to_string(), b = b.to_string())
+        tu_string!(
+            i18n,
+            herald_ai_thinking,
+            who = name,
+            a = a.to_string(),
+            b = b.to_string()
+        )
     } else if roll.is_double() {
-        tu_string!(i18n, herald_double, who = name, a = a.to_string(), b = b.to_string())
+        tu_string!(
+            i18n,
+            herald_double,
+            who = name,
+            a = a.to_string(),
+            b = b.to_string()
+        )
     } else {
-        tu_string!(i18n, herald_wait_move, who = name, a = a.to_string(), b = b.to_string())
+        tu_string!(
+            i18n,
+            herald_wait_move,
+            who = name,
+            a = a.to_string(),
+            b = b.to_string()
+        )
     }
 }
 
@@ -229,7 +268,9 @@ pub(crate) fn result_msg(
             .enumerate()
             .map(|(i, s)| format!("{}) {}", i + 1, side_name(*s, humans, i18n)))
             .collect();
-        Some(tu_string!(i18n, result_full,
+        Some(tu_string!(
+            i18n,
+            result_full,
             who = side_name(order[0], humans, i18n),
             places = places.join(", ")
         ))
@@ -268,11 +309,10 @@ pub(crate) fn apply_with_frames(
                 v
             }
         }
-        Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => {
-            (depth + 1..depth + mv.pips)
-                .map(|d| Position::Home { depth: d })
-                .collect()
-        }
+        Position::Home { depth } if mv.kind == MoveKind::HomeAdvance => (depth + 1
+            ..depth + mv.pips)
+            .map(|d| Position::Home { depth: d })
+            .collect(),
         _ => Vec::new(),
     };
     for pos in mids {
@@ -371,7 +411,11 @@ pub(crate) fn commit_frames<F>(
             roll: Some(roll),
             hold: ROLL_ANIM_MS,
             rolling: true,
-            note: Some(tu_string!(i18n, herald_roll, who = side_name(side, humans, i18n))),
+            note: Some(tu_string!(
+                i18n,
+                herald_roll,
+                who = side_name(side, humans, i18n)
+            )),
             sound: Some(SoundKind::Dice),
             pts: Vec::new(),
             fade: false,
@@ -402,7 +446,9 @@ pub(crate) fn commit_frames<F>(
         let forced_resp = scratch.checkers()[mv.checker].owner != side;
         scratch = apply_with_frames(frames, scratch, mv, roll, humans, i18n);
         if forced_resp && let Some(last) = frames.last_mut() {
-            last.note = Some(tu_string!(i18n, forced_reply,
+            last.note = Some(tu_string!(
+                i18n,
+                forced_reply,
                 who = side_name(scratch.checkers()[mv.checker].owner, humans, i18n)
             ));
         }

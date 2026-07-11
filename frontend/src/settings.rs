@@ -17,7 +17,8 @@ pub(crate) enum Theme {
 }
 
 impl Theme {
-    pub(crate) const ALL: [Theme; 4] = [Theme::Midnight, Theme::Dusk, Theme::Daylight, Theme::Forest];
+    pub(crate) const ALL: [Theme; 4] =
+        [Theme::Midnight, Theme::Dusk, Theme::Daylight, Theme::Forest];
 
     pub(crate) fn key(self) -> &'static str {
         match self {
@@ -360,5 +361,3 @@ pub(crate) fn play(kind: SoundKind) {
         }
     }
 }
-
-

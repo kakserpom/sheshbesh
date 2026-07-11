@@ -28,7 +28,7 @@ use crate::dice::DiceRoll;
 use crate::state::{GameState, MoonField, Position};
 
 /// Характер хода (для отображения/отладки; следствие позиции и значения кости).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum MoveKind {
     /// Ввод фишки из резерва на точку входа (по «6»).
     Enter,
@@ -57,7 +57,7 @@ pub enum MoveKind {
 /// Один ход: фишка `checker` продвигается на `pips` клеток. `pips` — это значение
 /// одной кости либо сумма нескольких костей, объединённых на эту фишку (только при
 /// ходе по периметру; см. модульный комментарий).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Move {
     /// Индекс фишки в `GameState::checkers`.
     pub checker: usize,
@@ -129,8 +129,7 @@ fn path_clear(state: &GameState, owner: Side, progress: u16, die: u8) -> bool {
     // (`target == PERIMETER`) — это её конечная клетка, а не «перепрыгивание»; а когда
     // фишка УЖЕ на воротах (`progress == PERIMETER`) и заходит в Дом — она их не
     // пересекает (стоит на них), поэтому собственная фишка на воротах не блокирует.
-    if target > PERIMETER as u16 && progress < PERIMETER as u16 && occupied(state, owner.entry())
-    {
+    if target > PERIMETER as u16 && progress < PERIMETER as u16 && occupied(state, owner.entry()) {
         return false;
     }
     true
@@ -760,10 +759,7 @@ mod tests {
         let mv = moves_for_die(&s, 3);
         assert!(mv.iter().any(|m| m.kind == MoveKind::EnterPrison));
         let jailed = apply(&s, mv[0]);
-        assert_eq!(
-            jailed.checker(0).pos,
-            Position::Prison { cell: prison_abs }
-        );
+        assert_eq!(jailed.checker(0).pos, Position::Prison { cell: prison_abs });
         // выйти можно только по 4
         assert!(moves_for_die(&jailed, 6).is_empty());
         let freed = apply(&jailed, moves_for_die(&jailed, 4)[0]);
@@ -801,9 +797,12 @@ mod tests {
         );
         // ОСВОБОЖДЁННАЯ фишка («зашёл-вышел», стоит НА клетке Тюрьмы) — перекрывает проход,
         // и A вынужден зайти в Тюрьму (мимо нельзя).
-        s.set_checker_pos(1, Position::OnTrack {
-            progress: Side::C.progress_of(prison),
-        });
+        s.set_checker_pos(
+            1,
+            Position::OnTrack {
+                progress: Side::C.progress_of(prison),
+            },
+        );
         let turns = legal_turns(&s, roll(2, 3));
         assert!(
             turns
@@ -1076,10 +1075,7 @@ mod tests {
         let mv = moves_for_die(&s, 3);
         let after = apply(&s, mv[0]);
         assert_eq!(after.checker(0).pos, Position::OnTrack { progress: 3 });
-        assert_eq!(
-            after.checker(1).pos,
-            Position::Captured { captor: Side::A }
-        );
+        assert_eq!(after.checker(1).pos, Position::Captured { captor: Side::A });
     }
 
     #[test]
@@ -1141,10 +1137,7 @@ mod tests {
         let s = state_a(&[Position::OnTrack { progress: 70 }]);
         let mv = moves_for_die(&s, 3);
         assert!(mv.iter().any(|m| m.kind == MoveKind::EnterHome));
-        assert_eq!(
-            apply(&s, mv[0]).checker(0).pos,
-            Position::Home { depth: 0 }
-        );
+        assert_eq!(apply(&s, mv[0]).checker(0).pos, Position::Home { depth: 0 });
         // Перебор (progress 71 + 6 = 77 → глубина 4, за Домом) запрещён.
         let s2 = state_a(&[Position::OnTrack { progress: 71 }]);
         assert!(moves_for_die(&s2, 6).is_empty());
@@ -1171,7 +1164,9 @@ mod tests {
         let on_gate = apply(&s, stop[0]);
         assert_eq!(
             on_gate.checker(0).pos,
-            Position::OnTrack { progress: PERIMETER as u16 }
+            Position::OnTrack {
+                progress: PERIMETER as u16
+            }
         );
         // С ворот костью «1» — на глубину 0 Дома (отдельный заход).
         let enter = moves_for_die(&on_gate, 1);

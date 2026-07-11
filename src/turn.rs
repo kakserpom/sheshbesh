@@ -263,7 +263,7 @@ impl Game {
             }
             // Захватчик известен до применения выкупа (после фишка — в резерве).
             let captor = if mv.kind == MoveKind::Ransom {
-                    match self.state.checker(mv.checker).pos {
+                match self.state.checker(mv.checker).pos {
                     Position::Captured { captor } => Some(captor),
                     _ => None,
                 }
@@ -330,7 +330,7 @@ impl Game {
             let mut interrupted = false;
             for &mv in &turns[idx] {
                 let captor = if mv.kind == MoveKind::Ransom {
-                match self.state.checker(mv.checker).pos {
+                    match self.state.checker(mv.checker).pos {
                         Position::Captured { captor } => Some(captor),
                         _ => None,
                     }
@@ -548,10 +548,7 @@ mod tests {
         ));
         // Захватчик сделал ровно один вынужденный ход на 6: фишка 4 продвинулась.
         assert_eq!(outcome.forced.len(), 1);
-        assert_eq!(
-            game.state.checker(4).pos,
-            Position::OnTrack { progress: 6 }
-        );
+        assert_eq!(game.state.checker(4).pos, Position::OnTrack { progress: 6 });
     }
 
     #[test]

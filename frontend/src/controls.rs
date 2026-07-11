@@ -7,8 +7,6 @@ use leptos_i18n::I18nContext;
 use crate::i18n::*;
 use crate::settings::{Speed, Theme};
 
-
-
 /// Иконка-палитра с выпадающим списком тем.
 #[component]
 pub(crate) fn ThemeControl(
@@ -44,10 +42,7 @@ pub(crate) fn ThemeControl(
 
 /// Иконка-глобус с выпадающим списком языков.
 #[component]
-pub(crate) fn LocaleControl(
-    i18n: I18nContext<Locale>,
-    menu_open: RwSignal<bool>,
-) -> impl IntoView {
+pub(crate) fn LocaleControl(i18n: I18nContext<Locale>, menu_open: RwSignal<bool>) -> impl IntoView {
     view! {
         <div class="locale-pick">
             <button class="icon-btn" title=move || t_string!(i18n, settings_lang)
