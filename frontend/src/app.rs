@@ -13,6 +13,7 @@ use crate::util::*;
 use crate::view::*;
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use js_sys::Date;
 
 use leptos_meta::Title;
 use sheshbesh::board::{CellKind, LOCAL_MOON, LOCAL_PRISON_NEAR, SIDE_LEN, cell_kind};
@@ -411,10 +412,24 @@ fn GameApp() -> impl IntoView {
         }
     });
 
+    // Таймер, устойчивый к неактивной вкладке: использует Date.now() вместо setTimeout.
+    async fn hold_ms(ms: u32) {
+        if ms == 0 {
+            return;
+        }
+        let target = Date::now() + f64::from(ms);
+        while Date::now() < target {
+            TimeoutFuture::new(50).await;
+        }
+    }
+
     // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
     // На паузе замирает между кадрами (опрос `paused`).
-    let play = move |frames: Vec<Frame>| {
+    let play = move |frames: Vec<Frame>, on_done: Option<Box<dyn FnOnce() + Send + 'static>>| {
         if frames.is_empty() {
+            if let Some(cb) = on_done {
+                cb();
+            }
             return;
         }
         let era = epoch.get_value();
@@ -437,11 +452,11 @@ fn GameApp() -> impl IntoView {
                         fading.set(false);
                         return;
                     }
-                    TimeoutFuture::new(150).await;
+                    hold_ms(150).await;
                 }
                 if frame.fade {
                     fading.set(true);
-                    TimeoutFuture::new(FADE_MS).await;
+                    hold_ms(FADE_MS).await;
                     if epoch.get_value() != era {
                         animating.set(false);
                         anim_pts.set(Vec::new());
@@ -467,7 +482,7 @@ fn GameApp() -> impl IntoView {
                     herald.set(note);
                 }
                 if frame.fade {
-                    TimeoutFuture::new(FADE_MS).await;
+                    hold_ms(FADE_MS).await;
                     fading.set(false);
                 }
                 let hold = if instant_roll {
@@ -475,12 +490,15 @@ fn GameApp() -> impl IntoView {
                 } else {
                     (f64::from(frame.hold) * speed.get_untracked().factor()) as u32
                 };
-                TimeoutFuture::new(hold).await;
+                hold_ms(hold).await;
             }
             anim_pts.set(Vec::new());
             rolling.set(false);
             animating.set(false);
             fading.set(false);
+            if let Some(cb) = on_done {
+                cb();
+            }
             // Обработать отложенные сообщения сервера.
             let q = pending.get_untracked();
             if !q.is_empty() {
@@ -653,11 +671,45 @@ fn GameApp() -> impl IntoView {
         }
         ServerMsg::WaitTurn => {
             humans.set(Vec::new());
-            roll.set(None);
             turns.set(Vec::new());
             sel.set(None);
             forced_pick.set(None);
             herald.set(t_string!(i18n, herald_wait_opponent).to_string());
+        }
+        ServerMsg::OpponentRolled { side, roll: r } => {
+            // Opponent's roll — show dice immediately, before their move.
+            if roll.get_untracked() == Some(r) {
+                return;
+            }
+            let hum = humans.get_untracked();
+            let pre_state = game.get_untracked().state;
+            let opp_side = Side::ALL.iter().copied().find(|s| s.letter().to_string() == side);
+            if let Some(os) = opp_side {
+                let name = side_name(os, &hum, i18n);
+                let frames = vec![
+                    Frame {
+                        state: pre_state.clone(),
+                        roll: Some(r),
+                        hold: ROLL_ANIM_MS,
+                        rolling: true,
+                        note: Some(tu_string!(i18n, herald_roll, who = &name)),
+                        sound: Some(settings::SoundKind::Dice),
+                        pts: Vec::new(),
+                        fade: false,
+                    },
+                    Frame {
+                        state: pre_state,
+                        roll: Some(r),
+                        hold: HOLD_ROLL_MS,
+                        rolling: false,
+                        note: Some(roll_note(os, &hum, r, false, i18n)),
+                        sound: None,
+                        pts: Vec::new(),
+                        fade: false,
+                    },
+                ];
+                play(frames, None);
+            }
         }
         ServerMsg::MovesApplied {
             side,
@@ -672,17 +724,87 @@ fn GameApp() -> impl IntoView {
                 }
             }
             forced_pick.set(None);
-            game.set(Game::new(state.clone()));
-            if again {
-                roll.set(Some(r));
-                let t = legal_turns(&state, r);
-                turns.set(t);
-                remaining.set(r.values().to_vec());
-                sel.set(None);
-            } else {
-                roll.set(None);
-                turns.set(Vec::new());
+            // Эхо собственного хода: локально уже проиграли анимацию через finish().
+            // Просто синхронизируемся с сервером и выставляем пост-анимационное
+            // состояние — не анимируем повторно.
+            if net_game_active.get_untracked()
+                && Some(side.as_str()) == net_my_side.get_untracked().as_deref()
+            {
+                game.set(Game::new(state.clone()));
+                if again {
+                    roll.set(Some(r));
+                    let t = legal_turns(&state, r);
+                    turns.set(t);
+                    remaining.set(r.values().to_vec());
+                    sel.set(None);
+                } else {
+                    roll.set(None);
+                    turns.set(Vec::new());
+                }
+                return;
             }
+            // Ход соперника: генерируем кадры анимации броска и хода.
+            let hum = humans.get_untracked();
+            let mut frames = Vec::new();
+            let pre_state = game.get_untracked().state;
+
+            // Показываем бросок соперника (кубик + результат), затем движение.
+            // Пропускаем бросок, если его уже показали через OpponentRolled.
+            let roll_already_shown = roll.get_untracked() == Some(r);
+            if !roll_already_shown {
+                let opp_side = Side::ALL.iter().copied().find(|s| s.letter().to_string() == side);
+                if let Some(os) = opp_side {
+                    let name = side_name(os, &hum, i18n);
+                    let no_move = applied.is_empty();
+                    frames.push(Frame {
+                        state: pre_state.clone(),
+                        roll: Some(r),
+                        hold: ROLL_ANIM_MS,
+                        rolling: true,
+                        note: Some(tu_string!(i18n, herald_roll, who = &name)),
+                        sound: Some(settings::SoundKind::Dice),
+                        pts: Vec::new(),
+                        fade: false,
+                    });
+                    frames.push(Frame {
+                        state: pre_state.clone(),
+                        roll: Some(r),
+                        hold: if no_move { HOLD_NOMOVE_MS } else { HOLD_ROLL_MS },
+                        rolling: false,
+                        note: if no_move {
+                            let [a, b] = r.values();
+                            Some(tu_string!(i18n, herald_no_move, who = &name, a = a, b = b))
+                        } else {
+                            Some(roll_note(os, &hum, r, false, i18n))
+                        },
+                        sound: None,
+                        pts: Vec::new(),
+                        fade: false,
+                    });
+                }
+            }
+
+            // Генерируем кадры движения по применённым ходам.
+            let mut scratch = pre_state;
+            for &mv in &applied {
+                scratch = apply_with_frames(&mut frames, scratch, mv, r, &hum, i18n);
+            }
+            let state2 = state.clone();
+            let r2 = r;
+            let again2 = again;
+            play(frames, Some(Box::new(move || {
+                if again2 {
+                    let t = legal_turns(&state2, r2);
+                    roll.set(Some(r2));
+                    turns.set(t);
+                    remaining.set(r2.values().to_vec());
+                    sel.set(None);
+                } else {
+                    roll.set(None);
+                    turns.set(Vec::new());
+                }
+                game.set(Game::new(state2));
+            })));
         }
         ServerMsg::GameOver {
             result_msg,
@@ -787,7 +909,7 @@ fn GameApp() -> impl IntoView {
                             // первый вариант обязательного хода.
                             sel.set(Some(move_source(&st, options[0])));
                             forced_pick.set(Some((side, captor, roll, rem.clone())));
-                            play(frames);
+                            play(frames, None);
                             return;
                         }
                         let fidx = best_forced(&m, &st, captor, &options).min(options.len() - 1);
@@ -828,7 +950,7 @@ fn GameApp() -> impl IntoView {
             fade: false,
             sound: None,
         });
-        play(frames);
+        play(frames, None);
     };
 
     // Автоход компьютерных сторон: бросок + по-шаговый ход (`play_computer`). Цепочка
@@ -915,7 +1037,7 @@ fn GameApp() -> impl IntoView {
                     pts: Vec::new(),
                     fade: false,
                     sound: None,
-                }]);
+                }], None);
                 return;
             }
             comp_applied.set_value(Vec::new());
@@ -970,7 +1092,7 @@ fn GameApp() -> impl IntoView {
                         pts: Vec::new(),
                         fade: false,
                         sound: None,
-                    }]);
+                    }], None);
                 }
             } else {
                 play_computer(frames, st, rem, r, None);
@@ -1064,7 +1186,7 @@ fn GameApp() -> impl IntoView {
                         pts: Vec::new(),
                         fade: false,
                         sound: None,
-                    }]);
+                    }], None);
                     return;
                 }
                 herald.set(if r.is_double() {
@@ -1105,7 +1227,7 @@ fn GameApp() -> impl IntoView {
                 fade: false,
                 sound: None,
             });
-            play(frames);
+            play(frames, None);
             turns.set(Vec::new());
             prefix.set(Vec::new());
             sel.set(None);
@@ -1154,7 +1276,7 @@ fn GameApp() -> impl IntoView {
         prefix.set(Vec::new());
         sel.set(None);
         remaining.set(Vec::new());
-        play(frames);
+        play(frames, None);
     };
 
     // Играет ОДНУ часть хода `m` (как клик по её цели): применяет её, при выкупе доигрывает
@@ -1208,7 +1330,7 @@ fn GameApp() -> impl IntoView {
                 finish(frames, after, Vec::new());
             } else {
                 turns.set(new_turns);
-                play(frames);
+                play(frames, None);
             }
             return;
         }
@@ -1227,7 +1349,7 @@ fn GameApp() -> impl IntoView {
                 .any(|&mv| move_source(&after, mv) == next_src);
             prefix.set(np);
             sel.set(keep.then_some(next_src));
-            play(frames);
+            play(frames, None);
         }
     };
 
@@ -1279,7 +1401,7 @@ fn GameApp() -> impl IntoView {
             let mut frames = Vec::new();
             let _ = apply_with_frames(&mut frames, st, fm, roll, &hs, i18n);
             forced_pick.set(None);
-            play(frames);
+            play(frames, None);
             return;
         }
 
@@ -1720,7 +1842,7 @@ fn GameApp() -> impl IntoView {
             fade: false,
             sound: None,
         });
-        play(frames);
+        play(frames, None);
     };
 
     // Тест входа в Дом: стартует ИНТЕРАКТИВНУЮ партию из расстановки, где фишки A стоят
@@ -2061,7 +2183,7 @@ fn GameApp() -> impl IntoView {
                                     game.set(Game::new(ls[0].before.clone()));
                                     // Первый бросок — до первого хода.
                                     match ls[0].roll {
-                                        Some(r) => play(roll_only_frames(&ls[0].before, r)),
+                                        Some(r) => play(roll_only_frames(&ls[0].before, r), None),
                                         None => roll.set(None),
                                     }
                                 });
@@ -2246,7 +2368,7 @@ fn GameApp() -> impl IntoView {
                                     }
                                     tut_sel.set(false);
                                     tut_played.set(1); // дальше — выбор хода на 6
-                                    play(frames);
+                                    play(frames, None);
                                 } else {
                                     // Фаза 1: ▶ выбирает первый из обязательных ходов на 6.
                                     let opts = forced_six_moves(&st, Side::A);
@@ -2258,7 +2380,7 @@ fn GameApp() -> impl IntoView {
                                     tut_sel.set(false);
                                     tut_pick.set(None);
                                     finish_step(&mut frames, &end, cur);
-                                    play(frames);
+                                    play(frames, None);
                                 }
                                 return;
                             }
@@ -2278,7 +2400,7 @@ fn GameApp() -> impl IntoView {
                                     } else {
                                         tut_played.set(end);
                                     }
-                                    play(frames);
+                                    play(frames, None);
                                 }
                                 None => {
                                     // Шаг-пояснение без хода — просто показываем следующий.
@@ -2288,7 +2410,7 @@ fn GameApp() -> impl IntoView {
                                         tut_played.set(0);
                                         game.set(Game::new(nb.clone()));
                                         match ls[cur + 1].roll {
-                                            Some(nr) => play(roll_only_frames(&nb, nr)),
+                                            Some(nr) => play(roll_only_frames(&nb, nr), None),
                                             None => roll.set(None),
                                         }
                                     }
@@ -2552,7 +2674,7 @@ fn GameApp() -> impl IntoView {
                                                         let end = apply_with_frames(&mut frames, st, mv, r, &[], i18n);
                                                         tut_pick.set(None);
                                                         finish_step(&mut frames, &end, cur);
-                                                        play(frames);
+                                                        play(frames, None);
                                                     } /> }.into_any());
                                             }
                                         }

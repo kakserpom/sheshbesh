@@ -40,6 +40,8 @@ pub enum ServerMsg {
         nicknames: Vec<(String, String)>,
         sid: String,
     },
+    #[serde(rename = "opponent_rolled")]
+    OpponentRolled { side: String, roll: DiceRoll },
     #[serde(rename = "your_turn")]
     YourTurn { roll: DiceRoll, state: GameState },
     #[serde(rename = "wait_turn")]

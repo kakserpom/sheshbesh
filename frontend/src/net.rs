@@ -64,6 +64,8 @@ pub enum ServerMsg {
         roll: Option<DiceRoll>,
         to_move: String,
     },
+    #[serde(rename = "opponent_rolled")]
+    OpponentRolled { side: String, roll: DiceRoll },
     #[serde(rename = "your_turn")]
     YourTurn { roll: DiceRoll, state: GameState },
     #[serde(rename = "wait_turn")]
@@ -215,14 +217,16 @@ impl Net {
                             }
                             ServerMsg::GameStart { side, sid, .. } => {
                                 save_sid(sid);
-                                my_side.set(Some(side.clone()));
-                                if let NetState::Connected { lobby_code, .. } =
-                                    state.get_untracked()
-                                {
-                                    state.set(NetState::Connected {
-                                        lobby_code,
-                                        side: side.clone(),
-                                    });
+                                if my_side.get_untracked().is_none() && !sid.is_empty() {
+                                    my_side.set(Some(side.clone()));
+                                    if let NetState::Connected { lobby_code, .. } =
+                                        state.get_untracked()
+                                    {
+                                        state.set(NetState::Connected {
+                                            lobby_code,
+                                            side: side.clone(),
+                                        });
+                                    }
                                 }
                             }
                             ServerMsg::Reconnected {

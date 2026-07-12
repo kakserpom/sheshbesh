@@ -42,7 +42,6 @@ struct PendingForced {
 }
 
 struct Lobby {
-    code: LobbyCode,
     players: Vec<Player>,
     max_players: usize,
     total_sides: usize,
@@ -121,6 +120,7 @@ async fn send_turn(
     side: Side,
     roll: sheshbesh::DiceRoll,
 ) {
+    let side_str = side.letter().to_string();
     // Computer side (active_idx >= 1 + network_count) → send to creator
     if active_idx(side, state.active.len()) >= 1 + network_count {
         send(
@@ -133,6 +133,7 @@ async fn send_turn(
         .await;
         for p in players {
             if p.side != side {
+                send(&p.tx, &ServerMsg::OpponentRolled { side: side_str.clone(), roll }).await;
                 send(&p.tx, &ServerMsg::WaitTurn).await;
             }
         }
@@ -149,6 +150,7 @@ async fn send_turn(
                 )
                 .await;
             } else {
+                send(&p.tx, &ServerMsg::OpponentRolled { side: side_str.clone(), roll }).await;
                 send(&p.tx, &ServerMsg::WaitTurn).await;
             }
         }
@@ -192,7 +194,6 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                     let total = players.max(2).min(4) as usize;
                     let net_cnt = (network_count as usize).min(total.saturating_sub(1));
                     let lobby = Lobby {
-                        code: code.clone(),
                         players: vec![Player {
                             side,
                             nickname,
@@ -335,7 +336,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                     }
                 }
                 ClientMsg::Reconnect { sid } => {
-                    let mut sid_idx = state.sid_index.lock().await;
+                    let sid_idx = state.sid_index.lock().await;
                     if let Some((ref code, side)) = sid_idx.get(sid.as_str()).cloned() {
                         drop(sid_idx);
                         let mut lobbies = state.lobbies.lock().await;
