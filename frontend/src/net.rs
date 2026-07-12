@@ -1,8 +1,13 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use sheshbesh::{DiceRoll, GameState, Move};
+use std::cell::RefCell;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
+
+thread_local! {
+    pub(crate) static ON_MSG: RefCell<Option<Box<dyn FnMut(ServerMsg)>>> = RefCell::new(None);
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NetState {
@@ -98,13 +103,10 @@ pub enum ServerMsg {
     Error { text: String },
 }
 
-/// WebSocket client stored in StoredValue. Pass signals from app.rs
-/// for reactive integration: the closures capture RwSignals directly.
 pub struct Net {
     pub state: RwSignal<NetState>,
     pub my_side: RwSignal<Option<String>>,
     pub chat_msgs: RwSignal<Vec<(String, String, String)>>,
-    pub incoming_msgs: RwSignal<Vec<ServerMsg>>,
     pub error: RwSignal<Option<String>>,
     ws: StoredValue<Option<web_sys::WebSocket>>,
 }
@@ -114,14 +116,12 @@ impl Net {
         state: RwSignal<NetState>,
         my_side: RwSignal<Option<String>>,
         chat_msgs: RwSignal<Vec<(String, String, String)>>,
-        incoming_msgs: RwSignal<Vec<ServerMsg>>,
         error: RwSignal<Option<String>>,
     ) -> Self {
         Net {
             state,
             my_side,
             chat_msgs,
-            incoming_msgs,
             error,
             ws: StoredValue::new(None),
         }
@@ -137,12 +137,11 @@ impl Net {
         let ws = web_sys::WebSocket::new(url).unwrap();
         ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
-        let ws_clone = ws.clone(); // for onopen closure
+        let ws_clone = ws.clone();
         let first_json = msg.map(|m| serde_json::to_string(&m).unwrap());
 
         let state = self.state;
         let error = self.error;
-        let incoming_msgs = self.incoming_msgs;
         let my_side = self.my_side;
         let chat_msgs = self.chat_msgs;
 
@@ -176,14 +175,14 @@ impl Net {
                 if let Ok(text) = ev.data().dyn_into::<js_sys::JsString>() {
                     let text: String = text.into();
                     if let Ok(smsg) = serde_json::from_str::<ServerMsg>(&text) {
-                        let set_url_sid = |sid: &str| {
+                        let save_sid = |sid: &str| {
                             if let Some(w) = web_sys::window() {
-                                let _ = w.location().set_hash(&format!("sid={sid}"));
+                                let _ = w.location().set_hash(&format!("sid={}", sid));
                             }
                         };
                         match &smsg {
                             ServerMsg::LobbyCreated { code, sid } => {
-                                set_url_sid(sid);
+                                save_sid(sid);
                                 let old = state.get_untracked();
                                 if let NetState::Connected { .. } = old {
                                     state.set(NetState::Connected {
@@ -194,7 +193,7 @@ impl Net {
                                 }
                             }
                             ServerMsg::Joined { sid } => {
-                                set_url_sid(sid);
+                                save_sid(sid);
                             }
                             ServerMsg::PlayerJoined { side, nickname } => {
                                 chat_msgs.update(|msgs| {
@@ -215,7 +214,7 @@ impl Net {
                                 });
                             }
                             ServerMsg::GameStart { side, sid, .. } => {
-                                set_url_sid(sid);
+                                save_sid(sid);
                                 my_side.set(Some(side.clone()));
                                 if let NetState::Connected { lobby_code, .. } =
                                     state.get_untracked()
@@ -240,9 +239,21 @@ impl Net {
                                     side: side.clone(),
                                 });
                             }
+                            ServerMsg::Error { text } => {
+                                error.set(Some(text.clone()));
+                                state.set(NetState::Disconnected);
+                                // Clear sid so reconnection doesn't retry the same lobby
+                                if let Some(w) = web_sys::window() {
+                                    let _ = w.location().set_hash("");
+                                }
+                            }
                             _ => {}
                         }
-                        incoming_msgs.update(|v| v.push(smsg));
+                        ON_MSG.with(|cb| {
+                            if let Some(ref mut f) = *cb.borrow_mut() {
+                                f(smsg);
+                            }
+                        });
                     }
                 }
             });
@@ -267,7 +278,8 @@ impl Net {
         }
         self.ws.set_value(None);
         self.state.set(NetState::Disconnected);
-        // Clear sid from URL
-        let _ = web_sys::window().map(|w| w.location().set_hash(""));
+        if let Some(w) = web_sys::window() {
+            let _ = w.location().set_hash("");
+        }
     }
 }

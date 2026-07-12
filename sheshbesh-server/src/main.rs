@@ -89,6 +89,12 @@ fn side_from_index(i: usize, total: usize) -> Side {
     }
 }
 
+fn active_idx(side: Side, total: usize) -> usize {
+    (0..total)
+        .find(|&i| side_from_index(i, total) == side)
+        .expect("side not in active set")
+}
+
 #[tokio::main]
 async fn main() {
     let state = Arc::new(AppState {
@@ -115,8 +121,8 @@ async fn send_turn(
     side: Side,
     roll: sheshbesh::DiceRoll,
 ) {
-    // Computer side (> network_count) → send to creator
-    if side.index() >= 1 + network_count {
+    // Computer side (active_idx >= 1 + network_count) → send to creator
+    if active_idx(side, state.active.len()) >= 1 + network_count {
         send(
             creator_tx,
             &ServerMsg::YourTurn {
@@ -194,7 +200,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                         }],
                         max_players: 1 + net_cnt,
                         total_sides: total,
-                        network_count: net_cnt,
+                        network_count: network_count as usize,
                         creator_tx: tx.clone(),
                         session: None,
                         pending_forced: None,
@@ -334,6 +340,12 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                         drop(sid_idx);
                         let mut lobbies = state.lobbies.lock().await;
                         if let Some(lobby) = lobbies.get_mut(code) {
+                            let nickname = lobby
+                                .players
+                                .iter()
+                                .find(|p| p.side == side)
+                                .map(|p| p.nickname.clone())
+                                .unwrap_or_default();
                             // Update player's tx with new connection
                             if let Some(player) =
                                 lobby.players.iter_mut().find(|p| p.side == side)
@@ -379,6 +391,19 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                     },
                                 )
                                 .await;
+                            }
+                            // Notify other players that this player reconnected
+                            let joined = serde_json::to_string(
+                                &ServerMsg::PlayerJoined {
+                                    side: side.letter().to_string(),
+                                    nickname,
+                                },
+                            )
+                            .unwrap();
+                            for p in &lobby.players {
+                                if p.side != side {
+                                    let _ = p.tx.send(joined.clone());
+                                }
                             }
                         } else {
                             send(
@@ -441,7 +466,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                     if let Some(ref mut session) = lobby.session {
                                         // Allow: own turn, or creator playing a computer side
                                         let is_computer_side =
-                                            is_creator && side.index() >= 1 + lobby.network_count;
+                                            is_creator && active_idx(session.game.state.to_move, lobby.total_sides) >= 1 + lobby.network_count;
                                         if session.game.state.to_move != side && !is_computer_side {
                                             send(
                                                 &tx,
@@ -488,8 +513,8 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                     captor,
                                                 );
                                                 if !options.is_empty()
-                                                    && captor.index()
-                                                        <= lobby.network_count
+                                                    && active_idx(captor, lobby.total_sides)
+                                                        < 1 + lobby.network_count
                                                 {
                                                     // Network captor must choose
                                                     let captor_s = captor.letter().to_string();
@@ -519,7 +544,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                         }
                                                     }
                                                     // Also send to creator if they control this side
-                                                    if captor.index() > lobby.network_count {
+                                                    if active_idx(captor, lobby.total_sides) >= 1 + lobby.network_count {
                                                         send(&lobby.creator_tx, &msg).await;
                                                     }
                                                     // Broadcast ransom moves so far

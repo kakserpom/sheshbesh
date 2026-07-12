@@ -23,6 +23,7 @@ use sheshbesh::{
     MoonField, Move, MoveKind, Position, RandomDice, Side, Value, apply, best_forced, best_turn,
     checker_cell, legal_turns, legal_turns_remaining, margin_coord, remaining_after,
 };
+use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
@@ -137,31 +138,33 @@ fn GameApp() -> impl IntoView {
     let net_chat_msgs = RwSignal::new(Vec::<(String, String, String)>::new());
     let net_chat_open = RwSignal::new(false);
     let net_chat_input = RwSignal::new(String::new());
-    let net_incoming = RwSignal::new(Vec::<ServerMsg>::new());
     let net_error = RwSignal::new(None::<String>);
+    // Очередь сообщений сервера, отложенных на время анимации.
+    let pending: RwSignal<Vec<ServerMsg>> = RwSignal::new(Vec::new());
     let net_client = StoredValue::new(Net::new(
         net_state,
         net_my_side,
         net_chat_msgs,
-        net_incoming,
         net_error,
     ));
     let net_mode = RwSignal::new(false); // true = сетевая игра, false = локальная
     let lobby_code_rx = RwSignal::new(None::<String>); // код созданного лобби (показываем оверлей)
 
-    // Auto-reconnect: если в URL есть #sid=..., пробуем восстановить сессию
+    // Auto-reconnect: если в #sid=SID в URL, восстанавливаем сессию
     {
         let sid: Option<String> = web_sys::window().and_then(|w| {
             let hash = w.location().hash().ok()?;
-            hash.strip_prefix("#sid=").map(|s| s.to_string())
+            if let Some(s) = hash.strip_prefix("#sid=") {
+                if !s.is_empty() { Some(s.to_string()) } else { None }
+            } else {
+                None
+            }
         });
         if let Some(ref sid) = sid {
-            if !sid.is_empty() {
-                let msg = ClientMsg::Reconnect { sid: sid.clone() };
-                net_client.with_value(|nc| {
-                    nc.connect("ws://localhost:3000/ws", Some(&msg))
-                });
-            }
+            let msg = ClientMsg::Reconnect { sid: sid.clone() };
+            net_client.with_value(|nc| {
+                nc.connect("ws://localhost:3000/ws", Some(&msg))
+            });
         }
     }
 
@@ -208,6 +211,41 @@ fn GameApp() -> impl IntoView {
                 }
             }
         }
+    }
+
+    // Реагируем на смену location.hash (напр. вставка #join:CODE в адресную строку).
+    if let Some(w) = web_sys::window() {
+        let w2 = w.clone();
+        let net_mode2 = net_mode;
+        let net_create_mode2 = net_create_mode;
+        let lobby_input2 = lobby_input;
+        let on_hashchange =
+            Closure::<dyn Fn()>::new(move || {
+                let hash = w2.location().hash().unwrap_or_default();
+                if let Some(code) = hash.strip_prefix("#join:") {
+                    if !code.is_empty() {
+                        net_mode2.set(true);
+                        net_create_mode2.set(false);
+                        lobby_input2.set(code.to_string());
+                        if let Ok(h) = w2.history() {
+                            if let Ok(url) = w2.location().href() {
+                                let clean =
+                                    url.split('#').next().unwrap_or(&url).to_string();
+                                let _ = h.replace_state_with_url(
+                                    &wasm_bindgen::JsValue::null(),
+                                    "",
+                                    Some(&clean),
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+        let _ = w.add_event_listener_with_callback(
+            "hashchange",
+            on_hashchange.as_ref().unchecked_ref(),
+        );
+        on_hashchange.forget();
     }
 
     // Настройки, меняемые на лету (тема/скорость/звук) — грузим сохранённые.
@@ -443,17 +481,30 @@ fn GameApp() -> impl IntoView {
             rolling.set(false);
             animating.set(false);
             fading.set(false);
+            // Обработать отложенные сообщения сервера.
+            let q = pending.get_untracked();
+            if !q.is_empty() {
+                pending.set(Vec::new());
+                crate::net::ON_MSG.with(|cb| {
+                    if let Some(ref mut f) = *cb.borrow_mut() {
+                        for m in q {
+                            f(m);
+                        }
+                    }
+                });
+            }
         });
     };
 
-    // Обработка входящих сообщений сервера (мультиплеер) — по одному за раз.
-    // Если идёт анимация (play()), откладываем обработку до её завершения.
-    Effect::new(move |_| {
-        let mut msgs = net_incoming.get();
-        if msgs.is_empty() { return; }
-        if animating.get() { return; }
-        let msg = msgs.remove(0);
-        net_incoming.set(msgs);
+    // Прямой обработчик входящих сообщений сервера. Вызывается из колбэка WebSocket
+    // (не через эффект/очередь) — все сообщения обрабатываются немедленно, что
+    // исключает проблемы с реактивностью, характерные для очереди.
+    crate::net::ON_MSG.with(|cb| *cb.borrow_mut() = Some(Box::new(move |msg| {
+        // Не обрабатываем во время анимации — кладём в очередь, play() разберёт после.
+        if animating.get_untracked() {
+            pending.update(|v| v.push(msg));
+            return;
+        }
         match msg {
         ServerMsg::LobbyCreated { code, sid: _ } => {
             lobby_code_rx.set(Some(code));
@@ -502,7 +553,6 @@ fn GameApp() -> impl IntoView {
             roll: r,
             to_move,
         } => {
-            // Reconnected to an ongoing game
             let has_roll = r.is_some();
             if has_roll {
                 epoch.update_value(|e| *e += 1);
@@ -514,33 +564,36 @@ fn GameApp() -> impl IntoView {
                 net_game_active.set(true);
                 game.set(Game::new(state.clone()));
                 let r = r.unwrap();
-                let t = legal_turns(&state, r);
-                let no_move = t.iter().all(Vec::is_empty);
-                turns.set(t);
-                remaining.set(r.values().to_vec());
-                sel.set(None);
-                forced_pick.set(None);
-                roll.set(Some(r));
-                prefix.set(Vec::new());
-                let who = to_move.clone();
-                if no_move {
+                let my_side = net_my_side.get_untracked();
+                let is_my_turn = my_side.as_deref() == Some(to_move.as_str());
+                if is_my_turn {
+                    let t = legal_turns(&state, r);
+                    let no_move = t.iter().all(Vec::is_empty);
                     let [a, b] = r.values();
-                    herald.set(
-                        t_string!(i18n, herald_no_move, who = who.clone(), a = a, b = b).to_string(),
-                    );
-                    net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
+                    turns.set(t);
+                    remaining.set(r.values().to_vec());
+                    sel.set(None);
+                    forced_pick.set(None);
+                    roll.set(Some(r));
+                    prefix.set(Vec::new());
+                    let who = to_move.clone();
+                    if no_move {
+                        herald.set(
+                            t_string!(i18n, herald_no_move, who = who.clone(), a = a, b = b).to_string(),
+                        );
+                        net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
+                    } else {
+                        herald.set(
+                            t_string!(i18n, herald_wait_move, who = who.clone(), a = a, b = b).to_string(),
+                        );
+                    }
+                    if let Some(s) = Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == who) {
+                        humans.set(vec![s]);
+                    }
                 } else {
-                    let [a, b] = r.values();
-                    herald.set(
-                        t_string!(i18n, herald_wait_move, who = who.clone(), a = a, b = b).to_string(),
-                    );
-                }
-                // human side
-                if let Some(s) = Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == who) {
-                    humans.set(vec![s]);
+                    herald.set(t_string!(i18n, herald_wait_opponent).to_string());
                 }
             } else {
-                // Reconnected to lobby (pre-game)
                 started.set(false);
                 net_game_active.set(false);
                 game.set(Game::new(state));
@@ -576,18 +629,17 @@ fn GameApp() -> impl IntoView {
             game.set(Game::new(state.clone()));
             roll.set(Some(r));
             let t = legal_turns(&state, r);
+            let [a, b] = r.values();
             let no_move = t.iter().all(Vec::is_empty);
             turns.set(t);
             prefix.set(Vec::new());
             remaining.set(r.values().to_vec());
             sel.set(None);
             if no_move {
-                let [a, b] = r.values();
                 let who = side.map(|s| s.letter().to_string()).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_no_move, who = who, a = a, b = b).to_string());
                 net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
             } else {
-                let [a, b] = r.values();
                 let who = side.map(|s| s.letter().to_string()).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_wait_move, who = who, a = a, b = b).to_string());
             }
@@ -595,6 +647,8 @@ fn GameApp() -> impl IntoView {
         ServerMsg::PlayerJoined { side, nickname } => {
             if !nickname.is_empty() {
                 crate::util::NET_NICKNAMES.lock().unwrap().insert(side.clone(), nickname.clone());
+                // Clear "opponent disconnected" herald — opponent reconnected
+                herald.set(String::new());
             }
         }
         ServerMsg::WaitTurn => {
@@ -612,43 +666,13 @@ fn GameApp() -> impl IntoView {
             roll: r,
             again,
         } => {
-            epoch.update_value(|e| *e += 1);
             if cfg!(debug_assertions) {
                 if let Some(s) = Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == side) {
                     dbg_log_moves(s, r, &applied);
                 }
             }
             forced_pick.set(None);
-            let local_st = game.get_untracked().state.clone();
-            // Если локальное состояние уже совпадает с серверным — ход уже
-            // анимирован локально (свой ход или обязательный ответ эхо).
-            if local_st.checkers() == state.checkers() {
-                game.set(Game::new(state.clone()));
-            } else {
-                let mut frames = Vec::new();
-                let mut st = local_st;
-                let mut h = humans.get_untracked();
-                for &mv in &applied {
-                    let owner = st.checkers()[mv.checker].owner;
-                    if !h.contains(&owner) {
-                        h.push(owner);
-                    }
-                }
-                for &mv in &applied {
-                    st = apply_with_frames(&mut frames, st, mv, r, &h, i18n);
-                }
-                frames.push(Frame {
-                    state: state.clone(),
-                    roll: Some(r),
-                    hold: if again { HOLD_STEP_MS } else { HOLD_NOMOVE_MS },
-                    rolling: false,
-                    note: None,
-                    pts: Vec::new(),
-                    fade: false,
-                    sound: None,
-                });
-                play(frames);
-            }
+            game.set(Game::new(state.clone()));
             if again {
                 roll.set(Some(r));
                 let t = legal_turns(&state, r);
@@ -671,11 +695,11 @@ fn GameApp() -> impl IntoView {
             turns.set(Vec::new());
             crate::util::NET_NICKNAMES.lock().unwrap().clear();
         }
-        ServerMsg::Disconnected { .. } => {
+        ServerMsg::Disconnected { side } => {
             herald.set(t_string!(i18n, herald_opponent_disconnected).to_string());
-            net_client.with_value(|nc| nc.disconnect());
-            net_game_active.set(false);
-            crate::util::NET_NICKNAMES.lock().unwrap().clear();
+            // Don't disconnect ourselves — opponent may reconnect.
+            // Don't clear net_game_active — we're still in net mode.
+            crate::util::NET_NICKNAMES.lock().unwrap().remove(&side);
         }
         ServerMsg::ForcedPick {
             captor,
@@ -697,9 +721,12 @@ fn GameApp() -> impl IntoView {
                 herald.set(t_string!(i18n, forced_pick_msg, who = &captor.letter().to_string()).to_string());
             }
         }
+        ServerMsg::Error { text } => {
+            herald.set(text.clone());
+        }
         _ => {}
         }
-    });
+    })));
 
     // По-шаговый ход КОМПЬЮТЕРА: продолжает заполнять `frames` от состояния `st` с
     // остатком костей `rem`. После выкупа СРАЗУ применяется обязательный ответ
@@ -1835,11 +1862,11 @@ fn GameApp() -> impl IntoView {
                                         }>{t!(i18n, net_disconnect)}</button>
                                         <button class="secondary" on:click=move |_| {
                                             if let Some(w) = web_sys::window() {
-                                                let url = format!(
-                                                    "{}#join:{}",
-                                                    w.location().href().unwrap_or_default(),
-                                                    code2,
-                                                );
+                                                let base = w.location().href()
+                                                    .unwrap_or_default()
+                                                    .split('#').next().unwrap_or_default()
+                                                    .to_string();
+                                                let url = format!("{}#join:{}", base, code2);
                                                 let promise =
                                                     w.navigator().clipboard().write_text(&url);
                                                 let h = herald;
@@ -1896,6 +1923,14 @@ fn GameApp() -> impl IntoView {
                         </div>
                         // В сетевом режиме: никнейм и создать/присоединиться
                             {move || net_mode.get().then(|| view! {
+                                {move || net_error.get().map(|e| view! {
+                                    <div class="net-error">
+                                        <span>{e}</span>
+                                        <button on:click=move |_| net_error.set(None)>
+                                            "✕"
+                                        </button>
+                                    </div>
+                                })}
                                 <div class="set-row">
                                     <span>"👤"</span>
                                     <input type="text" class="net-input" placeholder=t_string!(i18n, net_nick_placeholder)
