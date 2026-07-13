@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 use sheshbesh::{DiceRoll, GameState, Side};
 use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
+
+/// Timeout for any single Redis operation — prevents the entire server from
+/// hanging when the Upstash connection stalls (single-threaded tokio runtime
+/// on a shared-cpu-1x Fly machine).
+const REDIS_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct PersistedLobby {
@@ -36,7 +42,10 @@ pub(crate) fn dead_tx() -> mpsc::UnboundedSender<String> {
 impl RedisStore {
     pub(crate) async fn connect(url: &str) -> Result<Self, String> {
         let client = redis::Client::open(url).map_err(|e| e.to_string())?;
-        let conn = client.get_multiplexed_async_connection().await.map_err(|e| e.to_string())?;
+        let conn = timeout(REDIS_TIMEOUT, client.get_multiplexed_async_connection())
+            .await
+            .map_err(|_| "Redis connection timeout".to_string())?
+            .map_err(|e| e.to_string())?;
         Ok(Self { conn })
     }
 
@@ -46,13 +55,14 @@ impl RedisStore {
     pub(crate) async fn save_lobby(&mut self, lobby: &PersistedLobby) {
         let key = format!("lobby:{}", lobby.code);
         let json = serde_json::to_string(lobby).unwrap();
-        let _: () = redis::cmd("SET")
+        let _: () = timeout(REDIS_TIMEOUT, redis::cmd("SET")
             .arg(&key)
             .arg(&json)
             .arg("EX")
             .arg(Self::TTL)
-            .query_async(&mut self.conn)
+            .query_async(&mut self.conn))
             .await
+            .unwrap_or(Ok(()))
             .unwrap_or(());
     }
 
@@ -60,20 +70,28 @@ impl RedisStore {
         let mut out = Vec::new();
         let mut cursor: u64 = 0;
         loop {
-            let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg("lobby:*")
-                .arg("COUNT")
-                .arg(100)
-                .query_async(&mut self.conn)
-                .await
-                .unwrap_or_default();
+            let (next_cursor, keys): (u64, Vec<String>) = timeout(
+                REDIS_TIMEOUT,
+                redis::cmd("SCAN")
+                    .arg(cursor)
+                    .arg("MATCH")
+                    .arg("lobby:*")
+                    .arg("COUNT")
+                    .arg(100)
+                    .query_async(&mut self.conn),
+            )
+            .await
+            .unwrap_or(Ok((0, Vec::new())))
+            .unwrap_or_default();
             for key in &keys {
-                if let Ok(Some(json)) = redis::cmd("GET")
-                    .arg(key)
-                    .query_async::<Option<String>>(&mut self.conn)
-                    .await
+                if let Ok(Some(json)) = timeout(
+                    REDIS_TIMEOUT,
+                    redis::cmd("GET")
+                        .arg(key)
+                        .query_async::<Option<String>>(&mut self.conn),
+                )
+                .await
+                .unwrap_or(Ok(None))
                 {
                     if let Ok(lobby) = serde_json::from_str::<PersistedLobby>(&json) {
                         out.push(lobby);
@@ -91,10 +109,11 @@ impl RedisStore {
     #[allow(dead_code)]
     pub(crate) async fn remove_lobby(&mut self, code: &str) {
         let key = format!("lobby:{code}");
-        let _: () = redis::cmd("DEL")
+        let _: () = timeout(REDIS_TIMEOUT, redis::cmd("DEL")
             .arg(&key)
-            .query_async(&mut self.conn)
+            .query_async(&mut self.conn))
             .await
+            .unwrap_or(Ok(()))
             .unwrap_or(());
     }
 }
