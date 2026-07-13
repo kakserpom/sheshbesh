@@ -863,7 +863,11 @@ fn GameApp() -> impl IntoView {
             crate::util::NET_NICKNAMES.lock().unwrap().clear();
         }
         ServerMsg::Disconnected { side } => {
-            herald.set(t_string!(i18n, herald_opponent_disconnected).to_string());
+            let who = {
+                let s = Side::ALL.iter().copied().find(|s| s.letter().to_string() == side);
+                s.map(crate::util::herald_name).unwrap_or(side.clone())
+            };
+            herald.set(tu_string!(i18n, herald_opponent_disconnected, who = who).to_string());
             net_connected.update(|m| { m.insert(side, false); });
         }
         ServerMsg::ForcedPick {

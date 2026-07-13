@@ -67,7 +67,7 @@ leptos_i18n::declare_locales! {
         herald_double: "{{ who }}: выпало {{ a }} и {{ b }}. Дубль — ещё ход!",
         herald_wait_opponent_name: "Ожидание хода соперника {{ who }}",
         herald_connected_wait: "Подключено. Ожидание сервера…",
-        herald_opponent_disconnected: "Соперник отключился",
+        herald_opponent_disconnected: "Соперник {{ who }} отключился",
         // Burn
         burn_double: "{{ who }}: сыграть {{ n }} больше нечем — дубль, переброс!",
         burn_pip: "{{ who }}: сыграть {{ n }} нечем — кость сгорает.",
@@ -298,7 +298,7 @@ leptos_i18n::declare_locales! {
         herald_double: "{{ who }}: rolled {{ a }} and {{ b }}. Doubles — extra turn!",
         herald_wait_opponent_name: "Waiting for {{ who }}'s move",
         herald_connected_wait: "Connected. Waiting for server…",
-        herald_opponent_disconnected: "Opponent disconnected",
+        herald_opponent_disconnected: "Opponent {{ who }} disconnected",
         // Burn
         burn_double: "{{ who }}: can't play {{ n }} — doubles, reroll!",
         burn_pip: "{{ who }}: can't play {{ n }} — pip burns.",
