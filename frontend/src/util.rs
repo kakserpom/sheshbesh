@@ -118,6 +118,15 @@ pub(crate) fn side_name(side: Side, humans: &[Side], i18n: I18nContext<Locale>) 
     )
 }
 
+/// Display name for herald: nickname (colored) if available, else side letter (colored).
+pub(crate) fn herald_name(side: Side) -> String {
+    let nick = NET_NICKNAMES.lock().unwrap().get(&side.letter().to_string()).cloned();
+    match nick {
+        Some(nick) => format!("<b style=\"color:{}\">{nick}</b>", side_color(side)),
+        None => format!("<b style=\"color:{}\">{}</b>", side_color(side), side.letter()),
+    }
+}
+
 pub(crate) fn move_note(
     before: &GameState,
     after: &GameState,

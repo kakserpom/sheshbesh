@@ -621,7 +621,10 @@ fn GameApp() -> impl IntoView {
                     forced_pick.set(None);
                     roll.set(Some(r));
                     prefix.set(Vec::new());
-                    let who = to_move.clone();
+                    let who = {
+                        let s = Side::ALL.iter().copied().find(|s| s.letter().to_string() == to_move);
+                        s.map(crate::util::herald_name).unwrap_or(to_move.clone())
+                    };
                     if no_move {
                         herald.set(
                             t_string!(i18n, herald_no_move, who = who.clone(), a = a, b = b).to_string(),
@@ -681,11 +684,11 @@ fn GameApp() -> impl IntoView {
             remaining.set(r.values().to_vec());
             sel.set(None);
             if no_move {
-                let who = side.map(|s| s.letter().to_string()).unwrap_or_default();
+                let who = side.map(crate::util::herald_name).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_no_move, who = who, a = a, b = b).to_string());
                 net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
             } else {
-                let who = side.map(|s| s.letter().to_string()).unwrap_or_default();
+                let who = side.map(crate::util::herald_name).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_wait_move, who = who, a = a, b = b).to_string());
             }
         }

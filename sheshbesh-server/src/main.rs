@@ -120,15 +120,11 @@ fn lobby_to_persisted(code: &str, lobby: &Lobby) -> persist::PersistedLobby {
     }
 }
 
-async fn persist_lobby(state: &AppState, code: &str) {
-    let pl = {
-        let lobbies = state.lobbies.lock().await;
-        let Some(lobby) = lobbies.get(code) else { return };
-        lobby_to_persisted(code, lobby)
-    };
+/// Save a pre-built PersistedLobby to Redis (only acquires redis lock).
+async fn persist_pl(pl: &persist::PersistedLobby, state: &AppState) {
     let mut redis = state.redis.lock().await;
     if let Some(ref mut store) = *redis {
-        store.save_lobby(&pl).await;
+        store.save_lobby(pl).await;
     }
 }
 
@@ -223,7 +219,7 @@ async fn main() {
 
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    println!("sheshbesh-server listening on http://{addr}");
+    eprintln!("[MAIN] server starting on {addr}");
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -324,6 +320,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                         session: None,
                         pending_forced: None,
                     };
+                    let pl = lobby_to_persisted(&code, &lobby);
                     {
                         let mut lobbies = state.lobbies.lock().await;
                         lobbies.insert(code.clone(), lobby);
@@ -341,7 +338,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                     )
                     .await;
                     lobby_code = Some(code.clone());
-                    persist_lobby(&state, &code).await;
+                    persist_pl(&pl, &state).await;
                 }
                 ClientMsg::JoinLobby { code, nickname } => {
                     let mut lobbies = state.lobbies.lock().await;
@@ -440,9 +437,10 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                 let players = lobby.players.clone();
                                 let creator_tx = lobby.creator_tx.clone();
                                 let net_cnt = lobby.network_count;
+                                let pl = lobby_to_persisted(&code, lobby);
                                 let _ = lobby;
                                 drop(lobbies);
-                                persist_lobby(&state, &code).await;
+                                persist_pl(&pl, &state).await;
                                 send_turn(&players, &creator_tx, net_cnt, &st, next_side, new_roll)
                                     .await;
                             }
@@ -700,9 +698,10 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         }
 
                                         if deferred {
+                                            let pl = lobby_to_persisted(code, lobby);
                                             let _ = lobby;
                                             let _ = lobbies;
-                                            persist_lobby(&state, code).await;
+                                            persist_pl(&pl, &state).await;
                                             continue;
                                         }
 
@@ -736,9 +735,10 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                 roll,
                                             )
                                             .await;
+                                            let pl = lobby_to_persisted(code, lobby);
                                             let _ = lobby;
                                             let _ = lobbies;
-                                            persist_lobby(&state, code).await;
+                                            persist_pl(&pl, &state).await;
                                             continue;
                                         }
 
@@ -756,7 +756,6 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                 again,
                                             },
                                         );
-
                                         // Check game over
                                         if let Some(winners) = winners_of(&session.game.state) {
                                             let win_strs: Vec<String> = winners
@@ -774,9 +773,10 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             };
                                             broadcast(&lobby.players, &go);
                                             send(&lobby.creator_tx, &go).await;
+                                            let pl = lobby_to_persisted(code, lobby);
                                             let _ = lobby;
                                             let _ = lobbies;
-                                            persist_lobby(&state, code).await;
+                                            persist_pl(&pl, &state).await;
                                             continue;
                                         }
 
@@ -792,9 +792,10 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         let players = lobby.players.clone();
                                         let creator_tx = lobby.creator_tx.clone();
                                         let net_cnt = lobby.network_count;
+                                        let pl = lobby_to_persisted(code, lobby);
                                         let _ = lobby;
                                         let _ = lobbies;
-                                        persist_lobby(&state, code).await;
+                                        persist_pl(&pl, &state).await;
                                         send_turn(
                                             &players,
                                             &creator_tx,
@@ -876,9 +877,10 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                     roll,
                                                 )
                                                 .await;
+                                                let pl = lobby_to_persisted(code, lobby);
                                                 let _ = lobby;
                                                 let _ = lobbies;
-                                                persist_lobby(&state, code).await;
+                                                persist_pl(&pl, &state).await;
                                                 continue;
                                             }
 
@@ -910,9 +912,10 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                 };
                                                 broadcast(&lobby.players, &go);
                                                 send(&lobby.creator_tx, &go).await;
+                                                let pl = lobby_to_persisted(code, lobby);
                                                 let _ = lobby;
                                                 let _ = lobbies;
-                                                persist_lobby(&state, code).await;
+                                                persist_pl(&pl, &state).await;
                                                 continue;
                                             }
 
@@ -934,9 +937,10 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             let creator_tx =
                                                 lobby.creator_tx.clone();
                                             let net_cnt = lobby.network_count;
+                                            let pl = lobby_to_persisted(code, lobby);
                                             let _ = lobby;
                                             let _ = lobbies;
-                                            persist_lobby(&state, code).await;
+                                            persist_pl(&pl, &state).await;
                                             send_turn(
                                                 &players,
                                                 &creator_tx,
