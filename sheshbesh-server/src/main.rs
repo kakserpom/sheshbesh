@@ -339,6 +339,73 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                     .await;
                     lobby_code = Some(code.clone());
                     persist_pl(&pl, &state).await;
+                    // Если лобби сразу заполнено (network_count == 0), стартуем игру
+                    let mut lobbies = state.lobbies.lock().await;
+                    if let Some(lobby) = lobbies.get_mut(&code) {
+                        if lobby.players.len() == lobby.max_players {
+                            let total = lobby.total_sides;
+                            let active: Vec<Side> =
+                                (0..total).map(|i| side_from_index(i, total)).collect();
+                            let mut dice = RandomDice::from_entropy();
+                            let game = Game::start(active, &mut dice);
+                            let first_roll = dice.roll();
+                            let st = game.state.clone();
+                            let session = GameSession {
+                                game,
+                                dice,
+                                current_roll: first_roll,
+                            };
+                            let nicknames: Vec<(String, String)> = lobby
+                                .players
+                                .iter()
+                                .map(|p| (p.side.letter().to_string(), p.nickname.clone()))
+                                .collect();
+                            for p in &lobby.players {
+                                let sid = state.sid_index.lock().await
+                                    .iter()
+                                    .find(|(_, (lc, sd))| lc == &code && *sd == p.side)
+                                    .map(|(sid, _)| sid.clone())
+                                    .unwrap_or_default();
+                                send(
+                                    &p.tx,
+                                    &ServerMsg::GameStart {
+                                        side: p.side.letter().to_string(),
+                                        state: st.clone(),
+                                        nicknames: nicknames.clone(),
+                                        sid,
+                                    },
+                                )
+                                .await;
+                            }
+                            for comp_idx in (1 + lobby.network_count)..lobby.total_sides {
+                                let comp_side = side_from_index(comp_idx, lobby.total_sides);
+                                send(
+                                    &lobby.creator_tx,
+                                    &ServerMsg::GameStart {
+                                        side: comp_side.letter().to_string(),
+                                        state: st.clone(),
+                                        nicknames: nicknames.clone(),
+                                        sid: String::new(),
+                                    },
+                                )
+                                .await;
+                            }
+                            let next_side = session.game.state.to_move;
+                            let new_roll = session.current_roll;
+                            lobby.session = Some(session);
+                            let players = lobby.players.clone();
+                            let creator_tx = lobby.creator_tx.clone();
+                            let net_cnt = lobby.network_count;
+                            let pl = lobby_to_persisted(&code, lobby);
+                            let _ = lobby;
+                            drop(lobbies);
+                            persist_pl(&pl, &state).await;
+                            send_turn(
+                                &players, &creator_tx, net_cnt, &st, next_side, new_roll,
+                            )
+                            .await;
+                        }
+                    }
                 }
                 ClientMsg::JoinLobby { code, nickname } => {
                     let mut lobbies = state.lobbies.lock().await;
