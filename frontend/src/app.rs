@@ -152,6 +152,7 @@ fn GameApp() -> impl IntoView {
     // Показана ли подсказка с горячими клавишами хода (кнопка «⌨» в партии).
     let keys_hint = RwSignal::new(false);
     // Мультиплеер: состояние WebSocket и UI.
+    let connecting = RwSignal::new(false);
     let net_state = RwSignal::new(NetState::Disconnected);
     let net_my_side = RwSignal::new(None::<String>);
     let net_chat_msgs = RwSignal::new(Vec::<(String, String, String)>::new());
@@ -180,6 +181,7 @@ fn GameApp() -> impl IntoView {
             }
         });
         if let Some(ref sid) = sid {
+            connecting.set(true);
             let msg = ClientMsg::Reconnect { sid: sid.clone() };
             net_client.with_value(|nc| {
                 nc.connect(&ws_url(), Some(&msg))
@@ -595,6 +597,7 @@ fn GameApp() -> impl IntoView {
             roll: r,
             to_move,
         } => {
+            connecting.set(false);
             let has_roll = r.is_some();
             if has_roll {
                 epoch.update_value(|e| *e += 1);
@@ -874,6 +877,7 @@ fn GameApp() -> impl IntoView {
             }
         }
         ServerMsg::Error { text } => {
+            connecting.set(false);
             herald.set(text.clone());
         }
         _ => {}
@@ -1828,6 +1832,7 @@ fn GameApp() -> impl IntoView {
         rolling.set(false);
         roll.set(None);
         started.set(false);
+        connecting.set(false);
         net_client.with_value(|nc| nc.disconnect());
         net_game_active.set(false);
         lobby_code_rx.set(None);
@@ -1992,12 +1997,18 @@ fn GameApp() -> impl IntoView {
     view! {
             <Title text=move || t_string!(i18n, app_title) />
             <div class="wrap">
+                {move || (connecting.get() && !started.get()).then(|| view! {
+                    <div class="loading-screen">
+                        <div class="spinner"></div>
+                        <p>{t_string!(i18n, net_connecting)}</p>
+                    </div>
+                })}
                 // Заголовок — только на экране настроек; в партии/обучении он лишь крал бы
                 // высоту у доски.
-                {move || (!started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get())
+                {move || (!connecting.get() && !started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get())
                     .then(|| view! { <h1>{t_string!(i18n, app_title)}</h1> })}
                 // Экран настроек до старта партии: число игроков и тип каждой стороны.
-                        {move || (!started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get()).then(|| view! {
+                        {move || (!connecting.get() && !started.get() && !dev.get() && !rules.get() && !about.get() && !tutorial.get()).then(|| view! {
                     // Оверлей ожидания: создатель (код лобби) или присоединившийся
                     {move || {
                         let lc = lobby_code_rx.get();
@@ -2010,6 +2021,7 @@ fn GameApp() -> impl IntoView {
                                         <button class="primary" on:click=move |_| {
                                             net_client.with_value(|nc| nc.disconnect());
                                             lobby_code_rx.set(None);
+                                            connecting.set(false);
                                             crate::util::NET_NICKNAMES.lock().unwrap().clear();
                                         }>{t!(i18n, net_disconnect)}</button>
                                         <button class="secondary" on:click=move |_| {
@@ -2048,10 +2060,11 @@ fn GameApp() -> impl IntoView {
                                     <div class="lobby-wait">
                                         <p>{t_string!(i18n, net_lobby_info, code = lobby_code.clone(), side = side.clone())}</p>
                                         <div class="controls">
-                                            <button class="primary" on:click=move |_| {
-                                                net_client.with_value(|nc| nc.disconnect());
-                                                crate::util::NET_NICKNAMES.lock().unwrap().clear();
-                                            }>{t!(i18n, net_disconnect)}</button>
+                                        <button class="primary" on:click=move |_| {
+                                            net_client.with_value(|nc| nc.disconnect());
+                                            connecting.set(false);
+                                            crate::util::NET_NICKNAMES.lock().unwrap().clear();
+                                        }>{t!(i18n, net_disconnect)}</button>
                                         </div>
                                     </div>
                                 }.into_any())
