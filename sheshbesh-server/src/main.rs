@@ -101,13 +101,25 @@ async fn main() {
         sid_index: Mutex::new(HashMap::new()),
     });
 
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+
+    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./dist".into());
+
+    let serve_dir = tower_http::services::ServeDir::new(&static_dir)
+        .fallback(tower_http::services::ServeFile::new(format!("{static_dir}/index.html")));
+
     let app = Router::new()
         .route("/ws", get(ws_upgrade))
+        .fallback_service(serve_dir)
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("sheshbesh-server listening on http://0.0.0.0:3000");
+    let addr = format!("0.0.0.0:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    println!("sheshbesh-server listening on http://{addr}");
     axum::serve(listener, app).await.unwrap();
 }
 

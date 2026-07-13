@@ -28,6 +28,24 @@ use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
+fn ws_url() -> String {
+    if cfg!(debug_assertions) {
+        "ws://localhost:3000/ws".into()
+    } else {
+        let w = match web_sys::window() {
+            Some(w) => w,
+            None => return "ws://localhost:3000/ws".into(),
+        };
+        let host = w.location().host().unwrap_or_default();
+        let scheme = if w.location().protocol().ok().as_deref() == Some("https:") {
+            "wss"
+        } else {
+            "ws"
+        };
+        format!("{scheme}://{host}/ws")
+    }
+}
+
 #[allow(non_snake_case)]
 pub(crate) fn App() -> impl IntoView {
     view! {
@@ -164,7 +182,7 @@ fn GameApp() -> impl IntoView {
         if let Some(ref sid) = sid {
             let msg = ClientMsg::Reconnect { sid: sid.clone() };
             net_client.with_value(|nc| {
-                nc.connect("ws://localhost:3000/ws", Some(&msg))
+                nc.connect(&ws_url(), Some(&msg))
             });
         }
     }
@@ -1758,7 +1776,7 @@ fn GameApp() -> impl IntoView {
                 network_count,
                 nickname: nickname.get_untracked(),
             };
-            net_client.with_value(|nc| nc.connect("ws://localhost:3000/ws", Some(&msg)));
+            net_client.with_value(|nc| nc.connect(&ws_url(), Some(&msg)));
             return;
         }
         let active = active_for(players.get_untracked());
@@ -2161,7 +2179,7 @@ fn GameApp() -> impl IntoView {
                                         let code = lobby_input.get_untracked().to_uppercase();
                                         if code.len() != 6 { return; }
                                         let msg = ClientMsg::JoinLobby { code, nickname: nickname.get_untracked() };
-                                        net_client.with_value(|nc| nc.connect("ws://localhost:3000/ws", Some(&msg)));
+                                        net_client.with_value(|nc| nc.connect(&ws_url(), Some(&msg)));
                                     }>{t!(i18n, net_play)}</button>
                                 }.into_any()
                             }
