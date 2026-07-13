@@ -116,6 +116,8 @@ pub(crate) const CAGE_HALF_LEN: f64 = 1.0;
 pub(crate) const CAGE_HALF_DEPTH: f64 = 0.5;
 /// Крайние слоты фишек по длинной оси каземата.
 pub(crate) const CAGE_SLOT_END: f64 = 0.66;
+/// Сдвиг каземата вдоль стороны в сторону Дома (чтобы не касался параболы Луны).
+pub(crate) const CAGE_HOME_SHIFT: f64 = 0.5;
 
 #[derive(Clone, Copy)]
 pub(crate) struct PrisonGeom {
@@ -145,10 +147,13 @@ pub(crate) fn prison_geoms() -> Vec<PrisonGeom> {
             } else {
                 ((0.0, d.1.signum()), ((home.0 - p.0).signum(), 0.0))
             };
-            // Вплотную к клетке (пол-клетки + полуглубина), РОВНО напротив неё — без
-            // сдвига вдоль стороны: каземат вровень с клеткой Тюрьмы.
+            // Вплотную к клетке (пол-клетки + полуглубина), со сдвигом вдоль стороны
+            // в направлении Дома, чтобы каземат не касался параболы Луны.
             let depth = 0.5 + CAGE_HALF_DEPTH;
-            let cage = (p.0 + inward.0 * depth, p.1 + inward.1 * depth);
+            let cage = (
+                p.0 + inward.0 * depth + along.0 * CAGE_HOME_SHIFT,
+                p.1 + inward.1 * depth + along.1 * CAGE_HOME_SHIFT,
+            );
             out.push(PrisonGeom {
                 coord,
                 cage,
