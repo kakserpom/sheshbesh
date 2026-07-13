@@ -1,3 +1,4 @@
+mod persist;
 mod protocol;
 
 use std::collections::HashMap;
@@ -9,12 +10,14 @@ use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
+use persist::dead_tx;
 use protocol::{ClientMsg, ServerMsg};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use sheshbesh::turn::{Game, winners_of};
 use sheshbesh::{
     apply, forced_six_moves, legal_turns_remaining, move_legal, next_unfinished_active,
-    remaining_after, DiceRoll, DiceSource, Move, MoveKind, RandomDice, Side,
+    remaining_after, DiceRoll, DiceSource, Die, Move, MoveKind, RandomDice, Side,
 };
 use tokio::sync::mpsc;
 
@@ -24,6 +27,7 @@ type LobbyCode = String;
 struct Player {
     side: Side,
     nickname: String,
+    sid: String,
     tx: mpsc::UnboundedSender<String>,
 }
 
@@ -33,6 +37,7 @@ struct GameSession {
     current_roll: DiceRoll,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 struct PendingForced {
     captor: Side,
     options: Vec<Move>,
@@ -46,6 +51,7 @@ struct Lobby {
     max_players: usize,
     total_sides: usize,
     network_count: usize,
+    creator_sid: String,
     creator_tx: mpsc::UnboundedSender<String>,
     session: Option<GameSession>,
     pending_forced: Option<PendingForced>,
@@ -54,6 +60,7 @@ struct Lobby {
 struct AppState {
     lobbies: Mutex<HashMap<LobbyCode, Lobby>>,
     sid_index: Mutex<HashMap<String, (LobbyCode, Side)>>,
+    redis: tokio::sync::Mutex<Option<persist::RedisStore>>,
 }
 
 use tokio::sync::Mutex;
@@ -80,6 +87,51 @@ fn broadcast(players: &[Player], msg: &ServerMsg) {
     }
 }
 
+fn lobby_to_persisted(code: &str, lobby: &Lobby) -> persist::PersistedLobby {
+    let (game_state, current_roll) = match &lobby.session {
+        Some(s) => (Some(s.game.state.clone()), Some(s.current_roll)),
+        None => (None, None),
+    };
+    let (forced_captor, forced_options, forced_roll, forced_remaining, forced_original_side) =
+        match &lobby.pending_forced {
+            Some(pf) => (
+                Some(pf.captor),
+                Some(pf.options.clone()),
+                Some(pf.roll),
+                Some(pf.remaining_pips.clone()),
+                Some(pf.original_side),
+            ),
+            None => (None, None, None, None, None),
+        };
+    persist::PersistedLobby {
+        code: code.to_string(),
+        players: lobby.players.iter().map(|p| (p.side, p.nickname.clone(), p.sid.clone())).collect(),
+        max_players: lobby.max_players,
+        total_sides: lobby.total_sides,
+        network_count: lobby.network_count,
+        creator_sid: lobby.creator_sid.clone(),
+        game_state,
+        current_roll,
+        forced_captor,
+        forced_options,
+        forced_roll,
+        forced_remaining,
+        forced_original_side,
+    }
+}
+
+async fn persist_lobby(state: &AppState, code: &str) {
+    let pl = {
+        let lobbies = state.lobbies.lock().await;
+        let Some(lobby) = lobbies.get(code) else { return };
+        lobby_to_persisted(code, lobby)
+    };
+    let mut redis = state.redis.lock().await;
+    if let Some(ref mut store) = *redis {
+        store.save_lobby(&pl).await;
+    }
+}
+
 fn side_from_index(i: usize, total: usize) -> Side {
     match total {
         2 => [Side::A, Side::A.opposite()][i],
@@ -96,9 +148,61 @@ fn active_idx(side: Side, total: usize) -> usize {
 
 #[tokio::main]
 async fn main() {
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+    let mut lobbies = HashMap::new();
+    let mut sid_index = HashMap::new();
+    let redis_store = match persist::RedisStore::connect(&redis_url).await {
+        Ok(mut store) => {
+            println!("persistence: connected to {redis_url}");
+            for pl in store.load_all_lobbies().await {
+                let code = pl.code.clone();
+                // Reconstruct lobby with placeholder channels (players reconnect later)
+                let player_tx = dead_tx();
+                let session = pl.game_state.map(|gs| GameSession {
+                    game: Game::new(gs),
+                    dice: RandomDice::from_entropy(),
+                    current_roll: pl.current_roll.unwrap_or(DiceRoll::new(Die::new(1).unwrap(), Die::new(1).unwrap())),
+                });
+                let pending_forced = pl.forced_captor.map(|captor| PendingForced {
+                    captor,
+                    options: pl.forced_options.clone().unwrap_or_default(),
+                    roll: pl.forced_roll.unwrap_or(DiceRoll::new(Die::new(1).unwrap(), Die::new(1).unwrap())),
+                    remaining_pips: pl.forced_remaining.clone().unwrap_or_default(),
+                    original_side: pl.forced_original_side.unwrap_or(Side::A),
+                });
+                let lobby = Lobby {
+                    players: pl.players.iter().map(|(side, nick, sid)| Player {
+                        side: *side,
+                        nickname: nick.clone(),
+                        sid: sid.clone(),
+                        tx: player_tx.clone(),
+                    }).collect(),
+                    max_players: pl.max_players,
+                    total_sides: pl.total_sides,
+                    network_count: pl.network_count,
+                    creator_sid: pl.creator_sid.clone(),
+                    creator_tx: dead_tx(),
+                    session,
+                    pending_forced,
+                };
+                for (side, _, sid) in &pl.players {
+                    sid_index.insert(sid.clone(), (code.clone(), *side));
+                }
+                lobbies.insert(code, lobby);
+            }
+            println!("persistence: loaded {} lobby(s)", lobbies.len());
+            Some(store)
+        }
+        Err(e) => {
+            eprintln!("persistence: cannot connect to {redis_url}: {e} (no persistence)");
+            None
+        }
+    };
+
     let state = Arc::new(AppState {
-        lobbies: Mutex::new(HashMap::new()),
-        sid_index: Mutex::new(HashMap::new()),
+        lobbies: Mutex::new(lobbies),
+        sid_index: Mutex::new(sid_index),
+        redis: tokio::sync::Mutex::new(redis_store),
     });
 
     let port: u16 = std::env::var("PORT")
@@ -209,11 +313,13 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                         players: vec![Player {
                             side,
                             nickname,
+                            sid: sid.clone(),
                             tx: tx.clone(),
                         }],
                         max_players: 1 + net_cnt,
                         total_sides: total,
                         network_count: network_count as usize,
+                        creator_sid: sid.clone(),
                         creator_tx: tx.clone(),
                         session: None,
                         pending_forced: None,
@@ -234,7 +340,8 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                         },
                     )
                     .await;
-                    lobby_code = Some(code);
+                    lobby_code = Some(code.clone());
+                    persist_lobby(&state, &code).await;
                 }
                 ClientMsg::JoinLobby { code, nickname } => {
                     let mut lobbies = state.lobbies.lock().await;
@@ -261,6 +368,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                             lobby.players.push(Player {
                                 side,
                                 nickname: nickname.clone(),
+                                sid: sid.clone(),
                                 tx: tx.clone(),
                             });
                             {
@@ -333,6 +441,8 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                 let creator_tx = lobby.creator_tx.clone();
                                 let net_cnt = lobby.network_count;
                                 let _ = lobby;
+                                drop(lobbies);
+                                persist_lobby(&state, &code).await;
                                 send_turn(&players, &creator_tx, net_cnt, &st, next_side, new_roll)
                                     .await;
                             }
@@ -364,6 +474,9 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                 lobby.players.iter_mut().find(|p| p.side == side)
                             {
                                 player.tx = tx.clone();
+                            }
+                            if side == Side::A {
+                                lobby.creator_tx = tx.clone();
                             }
                             my_side = Some(side);
                             lobby_code = Some(code.to_string());
@@ -589,6 +702,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         if deferred {
                                             let _ = lobby;
                                             let _ = lobbies;
+                                            persist_lobby(&state, code).await;
                                             continue;
                                         }
 
@@ -624,6 +738,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             .await;
                                             let _ = lobby;
                                             let _ = lobbies;
+                                            persist_lobby(&state, code).await;
                                             continue;
                                         }
 
@@ -661,6 +776,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             send(&lobby.creator_tx, &go).await;
                                             let _ = lobby;
                                             let _ = lobbies;
+                                            persist_lobby(&state, code).await;
                                             continue;
                                         }
 
@@ -678,6 +794,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         let net_cnt = lobby.network_count;
                                         let _ = lobby;
                                         let _ = lobbies;
+                                        persist_lobby(&state, code).await;
                                         send_turn(
                                             &players,
                                             &creator_tx,
@@ -761,6 +878,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                 .await;
                                                 let _ = lobby;
                                                 let _ = lobbies;
+                                                persist_lobby(&state, code).await;
                                                 continue;
                                             }
 
@@ -794,6 +912,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                 send(&lobby.creator_tx, &go).await;
                                                 let _ = lobby;
                                                 let _ = lobbies;
+                                                persist_lobby(&state, code).await;
                                                 continue;
                                             }
 
@@ -817,6 +936,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             let net_cnt = lobby.network_count;
                                             let _ = lobby;
                                             let _ = lobbies;
+                                            persist_lobby(&state, code).await;
                                             send_turn(
                                                 &players,
                                                 &creator_tx,
