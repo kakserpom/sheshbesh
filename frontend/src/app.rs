@@ -683,17 +683,36 @@ fn GameApp() -> impl IntoView {
             let t = legal_turns(&state, r);
             let [a, b] = r.values();
             let no_move = t.iter().all(Vec::is_empty);
-            turns.set(t);
             prefix.set(Vec::new());
             remaining.set(r.values().to_vec());
             sel.set(None);
-            if no_move {
+            // Сетевая игра: ход компьютера вычисляется в браузере создателя лобби
+            if net_game_active.get_untracked()
+                && net_side_kinds.get_untracked()[state.to_move.index()] == SideKind::Computer
+            {
+                if no_move {
+                    let who = crate::util::herald_name(state.to_move);
+                    herald.set(t_string!(i18n, herald_no_move, who = who, a = a, b = b).to_string());
+                    net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
+                } else {
+                    let who = crate::util::herald_name(state.to_move);
+                    herald.set(tu_string!(i18n, herald_ai_thinking, who = &who, a = a, b = b).to_string());
+                    let algo = algos.get_untracked()[state.to_move.index()];
+                    let m = ai_model_for(algo, state.active.len(), teams.get_untracked());
+                    let idx = best_turn(&m, &state, &t).min(t.len() - 1);
+                    let played = t[idx].clone();
+                    net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: played }));
+                }
+                turns.set(t);
+            } else if no_move {
                 let who = side.map(crate::util::herald_name).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_no_move, who = who, a = a, b = b).to_string());
+                turns.set(t);
                 net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
             } else {
                 let who = side.map(crate::util::herald_name).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_wait_move, who = who, a = a, b = b).to_string());
+                turns.set(t);
             }
         }
         ServerMsg::PlayerJoined { side, nickname } => {
@@ -2149,16 +2168,28 @@ fn GameApp() -> impl IntoView {
                                         </b>
                                         {if nm {
                                             let k = move || net_side_kinds.get()[s.index()];
-                                            let label = move || match k() {
-                                                SideKind::You => t_string!(i18n, net_side_you),
-                                                SideKind::Network => t_string!(i18n, net_side_network),
-                                                SideKind::Computer => t_string!(i18n, settings_computer),
-                                            };
                                             view! {
                                                 <button class:on=move || k() == SideKind::You
                                                     on:click=move |_| cycle_side_kind(s)>
-                                                    {label}
+                                                    {move || match k() {
+                                                        SideKind::You => t_string!(i18n, net_side_you),
+                                                        SideKind::Network => t_string!(i18n, net_side_network),
+                                                        SideKind::Computer => t_string!(i18n, settings_computer),
+                                                    }}
                                                 </button>
+                                                {move || (k() == SideKind::Computer).then(|| view! {
+                                                    <span class="algo-pick">
+                                                        {Algo::ALL.into_iter().map(|a| {
+                                                            let on = move || algos.get()[s.index()] == a;
+                                                            view! {
+                                                                <button class:on=on
+                                                                    on:click=move |_| algos.update(|arr| arr[s.index()] = a)>
+                                                                    {a.label(i18n)}
+                                                                </button>
+                                                            }
+                                                        }).collect_view()}
+                                                    </span>
+                                                })}
                                             }.into_any()
                                         } else {
                                             view! {
