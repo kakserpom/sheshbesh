@@ -65,7 +65,7 @@ leptos_i18n::declare_locales! {
         herald_wait_move: "{{ who }}: выпало {{ a }} и {{ b }}. Выберите ход.",
         herald_ai_thinking: "{{ who }}: выпало {{ a }} и {{ b }}. Идёт выбор хода…",
         herald_double: "{{ who }}: выпало {{ a }} и {{ b }}. Дубль — ещё ход!",
-        herald_wait_opponent: "Ожидание соперника…",
+        herald_wait_opponent_name: "Ожидание хода соперника {{ who }}",
         herald_connected_wait: "Подключено. Ожидание сервера…",
         herald_opponent_disconnected: "Соперник отключился",
         // Burn
@@ -296,7 +296,7 @@ leptos_i18n::declare_locales! {
         herald_wait_move: "{{ who }}: rolled {{ a }} and {{ b }}. Choose a move.",
         herald_ai_thinking: "{{ who }}: rolled {{ a }} and {{ b }}. Choosing a move…",
         herald_double: "{{ who }}: rolled {{ a }} and {{ b }}. Doubles — extra turn!",
-        herald_wait_opponent: "Waiting for opponent…",
+        herald_wait_opponent_name: "Waiting for {{ who }}'s move",
         herald_connected_wait: "Connected. Waiting for server…",
         herald_opponent_disconnected: "Opponent disconnected",
         // Burn

@@ -215,6 +215,7 @@ fn GameApp() -> impl IntoView {
     let net_create_mode = RwSignal::new(true); // true = создать, false = присоединиться
     let lobby_input = RwSignal::new(String::new());
     let net_game_active = RwSignal::new(false); // true after GameStart received
+    let net_connected: RwSignal<std::collections::HashMap<String, bool>> = RwSignal::new(std::collections::HashMap::new());
 
     // Парсинг #join:CODE из URL fragment — авто-заполнение поля присоединения
     if let Some(w) = web_sys::window() {
@@ -587,6 +588,7 @@ fn GameApp() -> impl IntoView {
                 for (side, nick) in &nicknames {
                     map.insert(side.clone(), nick.clone());
                 }
+                net_connected.set(nicknames.iter().map(|(s, _)| (s.clone(), true)).collect());
             }
         }
         ServerMsg::Reconnected {
@@ -611,6 +613,10 @@ fn GameApp() -> impl IntoView {
                 let r = r.unwrap();
                 let my_side = net_my_side.get_untracked();
                 let is_my_turn = my_side.as_deref() == Some(to_move.as_str());
+                let who = {
+                    let s = Side::ALL.iter().copied().find(|s| s.letter().to_string() == to_move);
+                    s.map(crate::util::herald_name).unwrap_or(to_move.clone())
+                };
                 if is_my_turn {
                     let t = legal_turns(&state, r);
                     let no_move = t.iter().all(Vec::is_empty);
@@ -621,10 +627,6 @@ fn GameApp() -> impl IntoView {
                     forced_pick.set(None);
                     roll.set(Some(r));
                     prefix.set(Vec::new());
-                    let who = {
-                        let s = Side::ALL.iter().copied().find(|s| s.letter().to_string() == to_move);
-                        s.map(crate::util::herald_name).unwrap_or(to_move.clone())
-                    };
                     if no_move {
                         herald.set(
                             t_string!(i18n, herald_no_move, who = who.clone(), a = a, b = b).to_string(),
@@ -635,11 +637,12 @@ fn GameApp() -> impl IntoView {
                             t_string!(i18n, herald_wait_move, who = who.clone(), a = a, b = b).to_string(),
                         );
                     }
-                    if let Some(s) = Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == who) {
+                    if let Some(s) = Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == to_move) {
                         humans.set(vec![s]);
                     }
                 } else {
-                    herald.set(t_string!(i18n, herald_wait_opponent).to_string());
+                    roll.set(Some(r));
+                    herald.set(tu_string!(i18n, herald_wait_opponent_name, who = who).to_string());
                 }
             } else {
                 started.set(false);
@@ -658,6 +661,7 @@ fn GameApp() -> impl IntoView {
                 for (side, nick) in &nicknames {
                     map.insert(side.clone(), nick.clone());
                 }
+                net_connected.set(nicknames.iter().map(|(s, _)| (s.clone(), true)).collect());
             }
         }
         ServerMsg::YourTurn { roll: r, state } => {
@@ -695,16 +699,21 @@ fn GameApp() -> impl IntoView {
         ServerMsg::PlayerJoined { side, nickname } => {
             if !nickname.is_empty() {
                 crate::util::NET_NICKNAMES.lock().unwrap().insert(side.clone(), nickname.clone());
-                // Clear "opponent disconnected" herald — opponent reconnected
                 herald.set(String::new());
             }
+            net_connected.update(|m| { m.insert(side, true); });
         }
         ServerMsg::WaitTurn => {
             humans.set(Vec::new());
             turns.set(Vec::new());
             sel.set(None);
             forced_pick.set(None);
-            herald.set(t_string!(i18n, herald_wait_opponent).to_string());
+            let to_move = game.get_untracked().state.to_move.letter().to_string();
+            let who = {
+                let s = Side::ALL.iter().copied().find(|s| s.letter().to_string() == to_move);
+                s.map(crate::util::herald_name).unwrap_or(to_move.clone())
+            };
+            herald.set(tu_string!(i18n, herald_wait_opponent_name, who = who).to_string());
         }
         ServerMsg::OpponentRolled { side, roll: r } => {
             // Opponent's roll — show dice immediately, before their move.
@@ -855,9 +864,7 @@ fn GameApp() -> impl IntoView {
         }
         ServerMsg::Disconnected { side } => {
             herald.set(t_string!(i18n, herald_opponent_disconnected).to_string());
-            // Don't disconnect ourselves — opponent may reconnect.
-            // Don't clear net_game_active — we're still in net mode.
-            crate::util::NET_NICKNAMES.lock().unwrap().remove(&side);
+            net_connected.update(|m| { m.insert(side, false); });
         }
         ServerMsg::ForcedPick {
             captor,
@@ -1839,6 +1846,7 @@ fn GameApp() -> impl IntoView {
         net_client.with_value(|nc| nc.disconnect());
         net_game_active.set(false);
         lobby_code_rx.set(None);
+        net_connected.set(std::collections::HashMap::new());
         crate::util::NET_NICKNAMES.lock().unwrap().clear();
     };
 
@@ -3444,6 +3452,32 @@ fn GameApp() -> impl IntoView {
                         ().into_any()
                     }
                 }}
+                // Плеер-легенда с именами и статусом подключения
+                {move || net_game_active.get().then(|| view! {
+                    <div class="net-legend">
+                        {move || {
+                            let connected = net_connected.get();
+                            let names: Vec<(String, String)> = {
+                                let m = crate::util::NET_NICKNAMES.lock().unwrap();
+                                Side::ALL.iter().filter_map(|s| {
+                                    let k = s.letter().to_string();
+                                    m.get(&k).map(|n| (k, n.clone()))
+                                }).collect()
+                            };
+                            names.iter().map(|(side_str, nick)| {
+                                let s = Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == *side_str);
+                                let is_connected = connected.get(side_str).copied().unwrap_or(false);
+                                let color = s.map(crate::util::side_color).unwrap_or("#888");
+                                view! {
+                                    <span class="net-legend-item">
+                                        <span style=format!("color:{}", if is_connected { "#22c55e" } else { "#ef4444" })>"●"</span>
+                                        <span style=format!("color:{color}")>{nick.clone()}</span>
+                                    </span>
+                                }
+                            }).collect_view()
+                        }}
+                    </div>
+                })}
                 // Чат мультиплеера
                 {move || net_game_active.get().then(|| view! {
                     <div class="net-chat">
