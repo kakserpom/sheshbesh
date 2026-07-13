@@ -430,15 +430,21 @@ fn GameApp() -> impl IntoView {
         }
     });
 
-    // Таймер, устойчивый к неактивной вкладке: использует Date.now() вместо setTimeout.
+    // Если вкладка скрыта — не ждём, игра продолжается без анимации.
     async fn hold_ms(ms: u32) {
-        if ms == 0 {
-            return;
-        }
+        if ms == 0 { return; }
+        if tab_hidden() { return; }
         let target = Date::now() + f64::from(ms);
         while Date::now() < target {
             TimeoutFuture::new(50).await;
+            if tab_hidden() { return; }
         }
+    }
+
+    fn tab_hidden() -> bool {
+        web_sys::window()
+            .and_then(|w| w.document())
+            .is_some_and(|d| d.hidden())
     }
 
     // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
@@ -462,7 +468,7 @@ fn GameApp() -> impl IntoView {
                     fading.set(false);
                     return;
                 }
-                while paused.get_untracked() {
+                while paused.get_untracked() && !tab_hidden() {
                     if epoch.get_value() != era {
                         animating.set(false);
                         anim_pts.set(Vec::new());
@@ -704,9 +710,12 @@ fn GameApp() -> impl IntoView {
             let opp_side = Side::ALL.iter().copied().find(|s| s.letter().to_string() == side);
             if let Some(os) = opp_side {
                 let name = side_name(os, &hum, i18n);
+                // Ставим to_move = сторона соперника, чтобы кости рисовались у его Дома.
+                let mut roll_state = pre_state;
+                roll_state.to_move = os;
                 let frames = vec![
                     Frame {
-                        state: pre_state.clone(),
+                        state: roll_state.clone(),
                         roll: Some(r),
                         hold: ROLL_ANIM_MS,
                         rolling: true,
@@ -716,7 +725,7 @@ fn GameApp() -> impl IntoView {
                         fade: false,
                     },
                     Frame {
-                        state: pre_state,
+                        state: roll_state,
                         roll: Some(r),
                         hold: HOLD_ROLL_MS,
                         rolling: false,
@@ -774,8 +783,11 @@ fn GameApp() -> impl IntoView {
                 if let Some(os) = opp_side {
                     let name = side_name(os, &hum, i18n);
                     let no_move = applied.is_empty();
+                    // Ставим to_move = сторона соперника, чтобы кости рисовались у его Дома.
+                    let mut roll_state = pre_state.clone();
+                    roll_state.to_move = os;
                     frames.push(Frame {
-                        state: pre_state.clone(),
+                        state: roll_state.clone(),
                         roll: Some(r),
                         hold: ROLL_ANIM_MS,
                         rolling: true,
@@ -785,7 +797,7 @@ fn GameApp() -> impl IntoView {
                         fade: false,
                     });
                     frames.push(Frame {
-                        state: pre_state.clone(),
+                        state: roll_state,
                         roll: Some(r),
                         hold: if no_move { HOLD_NOMOVE_MS } else { HOLD_ROLL_MS },
                         rolling: false,
