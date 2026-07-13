@@ -155,6 +155,21 @@ impl Net {
             if let Some(ref json) = first_json {
                 let _ = ws_clone.send_with_str(json);
             }
+            // Keepalive: send Ping every 30s to prevent Fly proxy from killing idle WS.
+            // Interval lives forever (forget). When WS closes, sends fail silently.
+            let ws_ping = ws_clone.clone();
+            let ping_json = serde_json::to_string(&ClientMsg::Ping).unwrap();
+            if let Some(w) = web_sys::window() {
+                w.set_interval_with_callback_and_timeout_and_arguments_0(
+                    Closure::<dyn Fn()>::new(move || {
+                        let _ = ws_ping.send_with_str(&ping_json);
+                    })
+                    .into_js_value()
+                    .unchecked_ref(),
+                    30_000,
+                )
+                .expect("setInterval for ping");
+            }
         });
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
         onopen.forget();
