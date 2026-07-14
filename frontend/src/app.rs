@@ -2703,6 +2703,9 @@ fn GameApp() -> impl IntoView {
                     let prison_cell_pt = center_pt(margin_coord(
                         Side::A.local_to_perimeter(LOCAL_PRISON_NEAR),
                     ));
+                    let home_pt = checker_cell(Side::A, Position::Home { depth: 3 })
+                        .map(center_pt)
+                        .unwrap();
                     view! {
                         <div class="status">
                             <div class="status-left">
@@ -2797,13 +2800,13 @@ fn GameApp() -> impl IntoView {
                             {view! {
                                 <g class="tut-labels">
                                     <g class="tut-label">
-                                        <text x=emid - 1.5 y=btm + 0.9 class="tut-text" text-anchor="middle" dy="0.35em">
+                                        <text x=emid - 1.5 y=home_pt.1 + 1.0 class="tut-text" text-anchor="middle" dy="0.35em">
                                             <title>{t_string!(i18n, tutorial_tip_home)}</title>
                                             {t_string!(i18n, tutorial_label_home)}
                                         </text>
                                     </g>
                                     <g class="tut-label">
-                                        <text x=moon_pt.0 y=moon_pt.1 + 1.0 class="tut-text" text-anchor="middle" dy="0.35em">
+                                        <text x=moon_pt.0 y=moon_pt.1 - 1.0 class="tut-text" text-anchor="middle" dy="0.35em">
                                             <title>{t_string!(i18n, tutorial_tip_moon)}</title>
                                             {t_string!(i18n, tutorial_label_moon)}
                                         </text>
@@ -2812,12 +2815,6 @@ fn GameApp() -> impl IntoView {
                                         <text x=prison_cell_pt.0 y=btm + 0.9 class="tut-text" text-anchor="middle" dy="0.35em">
                                             <title>{t_string!(i18n, tutorial_tip_prison)}</title>
                                             {t_string!(i18n, tutorial_label_prison)}
-                                        </text>
-                                    </g>
-                                    <g class="tut-label">
-                                        <text x=emid y=btm + 0.9 class="tut-text" text-anchor="middle" dy="0.35em">
-                                            <title>{t_string!(i18n, tutorial_tip_entry)}</title>
-                                            {t_string!(i18n, tutorial_label_entry)}
                                         </text>
                                     </g>
                                 </g>
