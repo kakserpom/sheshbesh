@@ -159,6 +159,7 @@ fn GameApp() -> impl IntoView {
     let net_chat_open = RwSignal::new(false);
     let net_chat_input = RwSignal::new(String::new());
     let net_error = RwSignal::new(None::<String>);
+    let turn_nonce = RwSignal::new(0u64);
     // Очередь сообщений сервера, отложенных на время анимации.
     let pending: RwSignal<Vec<ServerMsg>> = RwSignal::new(Vec::new());
     let net_client = StoredValue::new(Net::new(
@@ -433,21 +434,13 @@ fn GameApp() -> impl IntoView {
         }
     });
 
-    // Если вкладка скрыта — не ждём, игра продолжается без анимации.
+    // Если вкладка скрыта — ждём реальное время, не ускоряем игру.
     async fn hold_ms(ms: u32) {
         if ms == 0 { return; }
-        if tab_hidden() { return; }
         let target = Date::now() + f64::from(ms);
         while Date::now() < target {
             TimeoutFuture::new(50).await;
-            if tab_hidden() { return; }
         }
-    }
-
-    fn tab_hidden() -> bool {
-        web_sys::window()
-            .and_then(|w| w.document())
-            .is_some_and(|d| d.hidden())
     }
 
     // Проигрывает кадры с паузами, обновляя доску и кости; в конце снимает блокировку.
@@ -471,7 +464,7 @@ fn GameApp() -> impl IntoView {
                     fading.set(false);
                     return;
                 }
-                while paused.get_untracked() && !tab_hidden() {
+                while paused.get_untracked() {
                     if epoch.get_value() != era {
                         animating.set(false);
                         anim_pts.set(Vec::new());
@@ -599,7 +592,9 @@ fn GameApp() -> impl IntoView {
             roll: r,
             to_move,
             creator_is_computer,
+            nonce,
         } => {
+            turn_nonce.set(nonce);
             connecting.set(false);
             // Восстанавливаем net_side_kinds из данных Reconnected.
             {
@@ -627,7 +622,7 @@ fn GameApp() -> impl IntoView {
                 net_game_active.set(true);
                 game.set(Game::new(state.clone()));
                 let r = r.unwrap();
-                let my_side = net_my_side.get_untracked();
+                let _my_side = net_my_side.get_untracked();
                 let kinds = net_side_kinds.get_untracked();
                 let to_move_side = Side::ALL.iter().copied().find(|s| s.letter().to_string() == to_move);
                 let is_human_side = to_move_side.map(|s| kinds[s.index()] != SideKind::Computer).unwrap_or(false);
@@ -650,7 +645,7 @@ fn GameApp() -> impl IntoView {
                         herald.set(
                             t_string!(i18n, herald_no_move, who = who.clone(), a = a, b = b).to_string(),
                         );
-                        net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
+                        net_client.with_value(|nc|                         nc.send(&ClientMsg::PlayTurn { moves: Vec::new(), nonce: turn_nonce.get_untracked() }));
                     } else {
                         herald.set(
                             t_string!(i18n, herald_wait_move, who = who.clone(), a = a, b = b).to_string(),
@@ -672,7 +667,7 @@ fn GameApp() -> impl IntoView {
                         roll.set(Some(r));
                         prefix.set(Vec::new());
                         herald.set(t_string!(i18n, herald_no_move, who = who.clone(), a = a, b = b).to_string());
-                        net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
+                        net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new(), nonce: turn_nonce.get_untracked() }));
                     } else {
                         herald.set(tu_string!(i18n, herald_ai_thinking, who = &who, a = a, b = b).to_string());
                         let tms = Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == to_move).unwrap();
@@ -686,7 +681,7 @@ fn GameApp() -> impl IntoView {
                         forced_pick.set(None);
                         roll.set(Some(r));
                         prefix.set(Vec::new());
-                        net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: played }));
+                        net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: played, nonce: turn_nonce.get_untracked() }));
                     }
                 }
             } else {
@@ -709,7 +704,8 @@ fn GameApp() -> impl IntoView {
                 net_connected.set(nicknames.iter().map(|(s, _)| (s.clone(), true)).collect());
             }
         }
-        ServerMsg::YourTurn { roll: r, state } => {
+        ServerMsg::YourTurn { roll: r, state, nonce } => {
+            turn_nonce.set(nonce);
             epoch.update_value(|e| *e += 1);
             forced_pick.set(None);
             game.set(Game::new(state.clone()));
@@ -740,7 +736,7 @@ fn GameApp() -> impl IntoView {
                 if no_move {
                     let who = crate::util::herald_name(state.to_move);
                     herald.set(t_string!(i18n, herald_no_move, who = who, a = a, b = b).to_string());
-                    net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
+                    net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new(), nonce: turn_nonce.get_untracked() }));
                 } else {
                     let who = crate::util::herald_name(state.to_move);
                     herald.set(tu_string!(i18n, herald_ai_thinking, who = &who, a = a, b = b).to_string());
@@ -748,14 +744,14 @@ fn GameApp() -> impl IntoView {
                     let m = ai_model_for(algo, state.active.len(), teams.get_untracked());
                     let idx = best_turn(&m, &state, &t).min(t.len() - 1);
                     let played = t[idx].clone();
-                    net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: played }));
+                    net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: played, nonce: turn_nonce.get_untracked() }));
                 }
                 turns.set(t);
             } else if no_move {
                 let who = _my_side.map(crate::util::herald_name).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_no_move, who = who, a = a, b = b).to_string());
                 turns.set(t);
-                net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
+                net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new(), nonce: turn_nonce.get_untracked() }));
             } else {
                 let who = _my_side.map(crate::util::herald_name).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_wait_move, who = who, a = a, b = b).to_string());
@@ -1348,6 +1344,7 @@ fn GameApp() -> impl IntoView {
             net_client.with_value(|nc| {
                 nc.send(&ClientMsg::PlayTurn {
                     moves: played.clone(),
+                    nonce: turn_nonce.get_untracked(),
                 });
             });
             frames.push(Frame {

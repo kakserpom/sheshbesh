@@ -72,7 +72,7 @@ leptos_i18n::declare_locales! {
         burn_double: "{{ who }}: сыграть {{ n }} больше нечем — дубль, переброс!",
         burn_pip: "{{ who }}: сыграть {{ n }} нечем — кость сгорает.",
         // Forced reply
-        forced_reply: "{{ who }}: обязательный ход на 6 после выкупа.",
+        forced_reply: "{{ who }}: обязательный ход нLа 6 после выкупа.",
         forced_pick_msg: "{{ who }}: выберите обязательный ход на 6 после выкупа.",
         // Move notes
         note_capture: "{{ who }} съедает фишку: {{ victim }}!",

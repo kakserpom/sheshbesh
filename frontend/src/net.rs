@@ -30,7 +30,7 @@ pub enum ClientMsg {
     #[serde(rename = "join_lobby")]
     JoinLobby { code: String, nickname: String },
     #[serde(rename = "play_turn")]
-    PlayTurn { moves: Vec<Move> },
+    PlayTurn { moves: Vec<Move>, #[serde(default)] nonce: u64 },
     #[serde(rename = "pick_forced")]
     PickForced { idx: usize },
     #[serde(rename = "reconnect")]
@@ -69,11 +69,13 @@ pub enum ServerMsg {
         to_move: String,
         #[serde(default)]
         creator_is_computer: bool,
+        #[serde(default)]
+        nonce: u64,
     },
     #[serde(rename = "opponent_rolled")]
     OpponentRolled { side: String, roll: DiceRoll },
     #[serde(rename = "your_turn")]
-    YourTurn { roll: DiceRoll, state: GameState },
+    YourTurn { roll: DiceRoll, state: GameState, nonce: u64 },
     #[serde(rename = "wait_turn")]
     WaitTurn,
     #[serde(rename = "moves_applied")]
@@ -261,6 +263,7 @@ impl Net {
                                 roll: _,
                                 to_move: _,
                                 creator_is_computer: _,
+                                nonce: _,
                             } => {
                                 my_side.set(Some(side.clone()));
                                 state.set(NetState::Connected {

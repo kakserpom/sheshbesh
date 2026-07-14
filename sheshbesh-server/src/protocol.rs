@@ -15,7 +15,7 @@ pub enum ClientMsg {
     #[serde(rename = "join_lobby")]
     JoinLobby { code: String, nickname: String },
     #[serde(rename = "play_turn")]
-    PlayTurn { moves: Vec<Move> },
+    PlayTurn { moves: Vec<Move>, #[serde(default)] nonce: u64 },
     #[serde(rename = "pick_forced")]
     PickForced { idx: usize },
     #[serde(rename = "chat")]
@@ -47,7 +47,7 @@ pub enum ServerMsg {
     #[serde(rename = "opponent_rolled")]
     OpponentRolled { side: String, roll: DiceRoll },
     #[serde(rename = "your_turn")]
-    YourTurn { roll: DiceRoll, state: GameState },
+    YourTurn { roll: DiceRoll, state: GameState, nonce: u64 },
     #[serde(rename = "wait_turn")]
     WaitTurn,
     #[serde(rename = "moves_applied")]
@@ -76,6 +76,8 @@ pub enum ServerMsg {
         to_move: String,
         #[serde(default)]
         creator_is_computer: bool,
+        #[serde(default)]
+        nonce: u64,
     },
     #[serde(rename = "chat")]
     ChatMsg {
