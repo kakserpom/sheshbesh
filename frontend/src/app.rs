@@ -213,6 +213,7 @@ fn GameApp() -> impl IntoView {
         });
     };
     let nickname = RwSignal::new(String::new());
+    let nickname_error = RwSignal::new(None::<String>);
     let net_create_mode = RwSignal::new(true); // true = создать, false = присоединиться
     let lobby_input = RwSignal::new(String::new());
     let net_game_active = RwSignal::new(false); // true after GameStart received
@@ -2275,7 +2276,23 @@ fn GameApp() -> impl IntoView {
                                         <span>"👤"</span>
                                         <input type="text" class="net-input" placeholder=t_string!(i18n, net_nick_placeholder)
                                             prop:value=move || nickname.get()
-                                            on:input=move |ev| nickname.set(event_target_value(&ev)) />
+                                            on:input=move |ev| {
+                                                let v = event_target_value(&ev);
+                                                nickname.set(v.clone());
+                                                let trimmed = v.trim();
+                                                if trimmed.is_empty() {
+                                                    nickname_error.set(Some(t_string!(i18n, nick_error_empty).to_string()));
+                                                } else if trimmed.len() > 20 {
+                                                    nickname_error.set(Some(t_string!(i18n, nick_error_long).to_string()));
+                                                } else if trimmed.chars().any(|c| c.is_ascii_control()) {
+                                                    nickname_error.set(Some(t_string!(i18n, nick_error_chars).to_string()));
+                                                } else {
+                                                    nickname_error.set(None);
+                                                }
+                                            } />
+                                        {move || nickname_error.get().map(|e| view! {
+                                            <div class="set-row" style="color:#ef4444;font-size:0.85em">{e}</div>
+                                        })}
                                     </div>
                                 })}
                                 <div class="set-row">
@@ -2378,7 +2395,7 @@ fn GameApp() -> impl IntoView {
                                 view! {
                                     <button class="primary" disabled=move || {
                                         let need_nick = (0..players.get()).any(|i| net_side_kinds.get()[i] == SideKind::You);
-                                        need_nick && nickname.get().is_empty()
+                                        need_nick && (nickname.get().trim().is_empty() || nickname_error.get().is_some())
                                     } on:click=start_game>{t!(i18n, net_create)}</button>
                                 }.into_any()
                             } else {
@@ -2389,7 +2406,7 @@ fn GameApp() -> impl IntoView {
                                             on:input=move |ev| lobby_input.set(event_target_value(&ev)) />
                                     </div>
                                     <button class="primary"
-                                        disabled=move || nickname.get().is_empty() || lobby_input.get().len() != 6
+                                        disabled=move || nickname.get().trim().is_empty() || nickname_error.get().is_some() || lobby_input.get().len() != 6
                                         on:click=move |_| {
                                         let code = lobby_input.get_untracked().to_uppercase();
                                         if code.len() != 6 { return; }

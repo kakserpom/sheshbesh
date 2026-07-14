@@ -66,6 +66,25 @@ fn is_computer_side(side: Side, total: usize, network_count: usize, creator_is_c
     active_idx(side, total) >= 1 + network_count
 }
 
+fn validate_nickname(nick: &str) -> Result<(), &'static str> {
+    let trimmed = nick.trim();
+    if trimmed.is_empty() {
+        return Err("Nickname cannot be empty");
+    }
+    if trimmed.len() > 20 {
+        return Err("Nickname too long (max 20 chars)");
+    }
+    if trimmed.chars().any(|c| c.is_ascii_control()) {
+        return Err("Nickname contains invalid characters");
+    }
+    Ok(())
+}
+
+fn is_nickname_used(players: &[Player], nick: &str) -> bool {
+    let lower = nick.trim().to_lowercase();
+    players.iter().any(|p| p.nickname.trim().to_lowercase() == lower)
+}
+
 struct AppState {
     lobbies: Mutex<HashMap<LobbyCode, Lobby>>,
     sid_index: Mutex<HashMap<String, (LobbyCode, Side)>>,
@@ -337,6 +356,13 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                     nickname,
                     creator_is_computer,
                 } => {
+                    if let Err(e) = validate_nickname(&nickname) {
+                        send(&tx, &ServerMsg::Error { text: e.into() }).await;
+                        return;
+                    }
+                    if is_nickname_used(&[], &nickname) {
+                        // no existing players in CreateLobby
+                    }
                     let code = make_code();
                     let sid = make_sid();
                     let side = Side::A;
@@ -449,9 +475,12 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                     }
                 }
                 ClientMsg::JoinLobby { code, nickname } => {
-                    let mut lobbies = state.lobbies.lock().await;
-                    if let Some(lobby) = lobbies.get_mut(&code) {
-                        if lobby.players.len() >= lobby.max_players {
+                    if let Err(e) = validate_nickname(&nickname) {
+                        send(&tx, &ServerMsg::Error { text: e.into() }).await;
+                    } else if let Some(lobby) = state.lobbies.lock().await.get_mut(&code) {
+                        if is_nickname_used(&lobby.players, &nickname) {
+                            send(&tx, &ServerMsg::Error { text: "Nickname already taken".into() }).await;
+                        } else if lobby.players.len() >= lobby.max_players {
                             send(
                                 &tx,
                                 &ServerMsg::Error {
@@ -549,7 +578,6 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                 let cc = lobby.creator_is_computer;
                                 let pl = lobby_to_persisted(&code, lobby);
                                 let _ = lobby;
-                                drop(lobbies);
                                 persist_pl(&pl, &state).await;
                                 send_turn(&players, nonce, net_cnt, cc, &st, next_side, new_roll)
                                     .await;

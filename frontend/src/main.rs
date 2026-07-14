@@ -238,6 +238,9 @@ leptos_i18n::declare_locales! {
         net_side_you: "Вы",
         net_side_network: "Соперник по сети",
         net_nick_placeholder: "Ваш ник",
+        nick_error_empty: "Ник не может быть пустым",
+        nick_error_long: "Ник слишком длинный (макс. 20 символов)",
+        nick_error_chars: "Недопустимые символы в нике",
         net_play: "Играть",
     },
     en: {
@@ -468,7 +471,9 @@ leptos_i18n::declare_locales! {
         net_waiting: "Lobby code: {{ code }}. Waiting for players…",
         net_side_you: "You",
         net_side_network: "Network",
-        net_nick_placeholder: "Your nick",
+        nick_error_empty: "Nickname cannot be empty",
+        nick_error_long: "Nickname too long (max 20 chars)",
+        nick_error_chars: "Invalid characters in nickname",
         net_play: "Play",
     },
 }
