@@ -471,6 +471,7 @@ leptos_i18n::declare_locales! {
         net_waiting: "Lobby code: {{ code }}. Waiting for players…",
         net_side_you: "You",
         net_side_network: "Network",
+        net_nick_placeholder: "Your nick",
         nick_error_empty: "Nickname cannot be empty",
         nick_error_long: "Nickname too long (max 20 chars)",
         nick_error_chars: "Invalid characters in nickname",

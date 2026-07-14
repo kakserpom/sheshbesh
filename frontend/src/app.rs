@@ -2304,6 +2304,7 @@ fn GameApp() -> impl IntoView {
                                     </button>
                                 </div>
                             })}
+                            <hr/>
                             // Настройки игры (число игроков, стороны, алгоритмы) — только при одиночной игре или создании лобби
                             {move || (!net_mode.get() || net_create_mode.get()).then(|| view! {
                             <div class="set-row">
@@ -2376,6 +2377,7 @@ fn GameApp() -> impl IntoView {
                         }}
                         // Режим вчетвером: команды 2×2 (A+C vs B+D) или каждый сам за себя.
                         {move || (players.get() == 4).then(|| view! {
+                            <hr/>
                             <div class="set-row">
                                 <span>{t!(i18n, settings_mode)}</span>
                                 <button class:on=move || teams.get() on:click=move |_| teams.set(true)>
@@ -2386,6 +2388,7 @@ fn GameApp() -> impl IntoView {
                                 </button>
                             </div>
                         })}
+                        <hr/>
                         // Скорость анимации — видна сразу (ползунок, без кнопки).
                         <div class="set-row"><SpeedControl speed i18n=i18n/></div>
                         })}
