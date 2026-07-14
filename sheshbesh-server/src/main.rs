@@ -108,13 +108,6 @@ async fn send(tx: &mpsc::UnboundedSender<String>, msg: &ServerMsg) {
     let _ = tx.send(json);
 }
 
-fn send_txs(txs: &[mpsc::UnboundedSender<String>], msg: &ServerMsg) {
-    let json = serde_json::to_string(msg).unwrap();
-    for tx in txs {
-        let _ = tx.send(json.clone());
-    }
-}
-
 fn broadcast(players: &[Player], msg: &ServerMsg) {
     let json = serde_json::to_string(msg).unwrap();
     for p in players {
