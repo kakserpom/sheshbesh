@@ -14,7 +14,7 @@ use persist::dead_tx;
 use protocol::{ClientMsg, ServerMsg};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sheshbesh::turn::{Game, winners_of};
+use sheshbesh::turn::Game;
 use sheshbesh::{
     apply, forced_six_moves, legal_turns_remaining, move_legal, next_unfinished_active,
     remaining_after, DiceRoll, DiceSource, Die, Move, MoveKind, RandomDice, Side,
@@ -35,6 +35,7 @@ struct GameSession {
     game: Game,
     dice: RandomDice,
     current_roll: DiceRoll,
+    finished: Vec<Side>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -55,6 +56,14 @@ struct Lobby {
     creator_tx: mpsc::UnboundedSender<String>,
     session: Option<GameSession>,
     pending_forced: Option<PendingForced>,
+    creator_is_computer: bool,
+}
+
+fn is_computer_side(side: Side, total: usize, network_count: usize, creator_is_computer: bool) -> bool {
+    if creator_is_computer && side == Side::A {
+        return true;
+    }
+    active_idx(side, total) >= 1 + network_count
 }
 
 struct AppState {
@@ -88,9 +97,9 @@ fn broadcast(players: &[Player], msg: &ServerMsg) {
 }
 
 fn lobby_to_persisted(code: &str, lobby: &Lobby) -> persist::PersistedLobby {
-    let (game_state, current_roll) = match &lobby.session {
-        Some(s) => (Some(s.game.state.clone()), Some(s.current_roll)),
-        None => (None, None),
+    let (game_state, current_roll, finished) = match &lobby.session {
+        Some(s) => (Some(s.game.state.clone()), Some(s.current_roll), Some(s.finished.clone())),
+        None => (None, None, None),
     };
     let (forced_captor, forced_options, forced_roll, forced_remaining, forced_original_side) =
         match &lobby.pending_forced {
@@ -110,6 +119,7 @@ fn lobby_to_persisted(code: &str, lobby: &Lobby) -> persist::PersistedLobby {
         total_sides: lobby.total_sides,
         network_count: lobby.network_count,
         creator_sid: lobby.creator_sid.clone(),
+        creator_is_computer: lobby.creator_is_computer,
         game_state,
         current_roll,
         forced_captor,
@@ -117,6 +127,7 @@ fn lobby_to_persisted(code: &str, lobby: &Lobby) -> persist::PersistedLobby {
         forced_roll,
         forced_remaining,
         forced_original_side,
+        finished: finished.unwrap_or_default(),
     }
 }
 
@@ -125,6 +136,19 @@ async fn persist_pl(pl: &persist::PersistedLobby, state: &AppState) {
     let mut redis = state.redis.lock().await;
     if let Some(ref mut store) = *redis {
         store.save_lobby(pl).await;
+    }
+}
+
+fn server_game_over(state: &sheshbesh::GameState) -> bool {
+    if state.teams && state.active.len() == 4 {
+        (0..2).any(|t| {
+            let members: Vec<Side> = state.active.iter().copied()
+                .filter(|s| s.index() % 2 == t).collect();
+            !members.is_empty() && members.iter().all(|&s| state.has_won(s))
+        })
+    } else {
+        let done = state.active.iter().filter(|&&s| state.has_won(s)).count();
+        done >= state.active.len().saturating_sub(1)
     }
 }
 
@@ -158,6 +182,7 @@ async fn main() {
                     game: Game::new(gs),
                     dice: RandomDice::from_entropy(),
                     current_roll: pl.current_roll.unwrap_or(DiceRoll::new(Die::new(1).unwrap(), Die::new(1).unwrap())),
+                    finished: pl.finished.clone(),
                 });
                 let pending_forced = pl.forced_captor.map(|captor| PendingForced {
                     captor,
@@ -176,6 +201,7 @@ async fn main() {
                     max_players: pl.max_players,
                     total_sides: pl.total_sides,
                     network_count: pl.network_count,
+                    creator_is_computer: pl.creator_is_computer,
                     creator_sid: pl.creator_sid.clone(),
                     creator_tx: dead_tx(),
                     session,
@@ -228,13 +254,14 @@ async fn send_turn(
     players: &[Player],
     creator_tx: &mpsc::UnboundedSender<String>,
     network_count: usize,
+    creator_is_computer: bool,
     state: &sheshbesh::GameState,
     side: Side,
     roll: sheshbesh::DiceRoll,
 ) {
     let side_str = side.letter().to_string();
-    // Computer side (active_idx >= 1 + network_count) → send to creator
-    if active_idx(side, state.active.len()) >= 1 + network_count {
+    // Computer side → send to creator
+    if is_computer_side(side, state.active.len(), network_count, creator_is_computer) {
         send(
             creator_tx,
             &ServerMsg::YourTurn {
@@ -297,6 +324,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                     players,
                     network_count,
                     nickname,
+                    creator_is_computer,
                 } => {
                     let code = make_code();
                     let sid = make_sid();
@@ -319,6 +347,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                         creator_tx: tx.clone(),
                         session: None,
                         pending_forced: None,
+                        creator_is_computer,
                     };
                     let pl = lobby_to_persisted(&code, &lobby);
                     {
@@ -354,10 +383,12 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                 game,
                                 dice,
                                 current_roll: first_roll,
+                                finished: Vec::new(),
                             };
                             let nicknames: Vec<(String, String)> = lobby
                                 .players
                                 .iter()
+                                .filter(|p| !(p.side == Side::A && lobby.creator_is_computer))
                                 .map(|p| (p.side.letter().to_string(), p.nickname.clone()))
                                 .collect();
                             for p in &lobby.players {
@@ -396,12 +427,13 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                             let players = lobby.players.clone();
                             let creator_tx = lobby.creator_tx.clone();
                             let net_cnt = lobby.network_count;
+                            let cc = lobby.creator_is_computer;
                             let pl = lobby_to_persisted(&code, lobby);
                             let _ = lobby;
                             drop(lobbies);
                             persist_pl(&pl, &state).await;
                             send_turn(
-                                &players, &creator_tx, net_cnt, &st, next_side, new_roll,
+                                &players, &creator_tx, net_cnt, cc, &st, next_side, new_roll,
                             )
                             .await;
                         }
@@ -455,10 +487,12 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                     game,
                                     dice,
                                     current_roll: first_roll,
+                                    finished: Vec::new(),
                                 };
                                 let nicknames: Vec<(String, String)> = lobby
                                     .players
                                     .iter()
+                                    .filter(|p| !(p.side == Side::A && lobby.creator_is_computer))
                                     .map(|p| (p.side.letter().to_string(), p.nickname.clone()))
                                     .collect();
                                 // Build sid lookup for this lobby's players
@@ -504,11 +538,12 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                 let players = lobby.players.clone();
                                 let creator_tx = lobby.creator_tx.clone();
                                 let net_cnt = lobby.network_count;
+                                let cc = lobby.creator_is_computer;
                                 let pl = lobby_to_persisted(&code, lobby);
                                 let _ = lobby;
                                 drop(lobbies);
                                 persist_pl(&pl, &state).await;
-                                send_turn(&players, &creator_tx, net_cnt, &st, next_side, new_roll)
+                                send_turn(&players, &creator_tx, net_cnt, cc, &st, next_side, new_roll)
                                     .await;
                             }
                         }
@@ -543,11 +578,13 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                             if side == Side::A {
                                 lobby.creator_tx = tx.clone();
                             }
+                            is_creator = lobby.creator_sid == sid;
                             my_side = Some(side);
                             lobby_code = Some(code.to_string());
                             let nicknames: Vec<(String, String)> = lobby
                                 .players
                                 .iter()
+                                .filter(|p| !(p.side == Side::A && lobby.creator_is_computer))
                                 .map(|p| {
                                     (p.side.letter().to_string(), p.nickname.clone())
                                 })
@@ -563,6 +600,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         lobby_code: code.to_string(),
                                         roll: Some(session.current_roll),
                                         to_move: to_move.letter().to_string(),
+                                        creator_is_computer: lobby.creator_is_computer,
                                     },
                                 )
                                 .await;
@@ -579,6 +617,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         lobby_code: code.to_string(),
                                         roll: None,
                                         to_move: String::new(),
+                                        creator_is_computer: lobby.creator_is_computer,
                                     },
                                 )
                                 .await;
@@ -656,9 +695,9 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                 if let Some(lobby) = lobbies.get_mut(code) {
                                     if let Some(ref mut session) = lobby.session {
                                         // Allow: own turn, or creator playing a computer side
-                                        let is_computer_side =
-                                            is_creator && active_idx(session.game.state.to_move, lobby.total_sides) >= 1 + lobby.network_count;
-                                        if session.game.state.to_move != side && !is_computer_side {
+                                        let comp_side =
+                                            is_computer_side(session.game.state.to_move, lobby.total_sides, lobby.network_count, lobby.creator_is_computer);
+                                        if session.game.state.to_move != side && !(is_creator && comp_side) {
                                             send(
                                                 &tx,
                                                 &ServerMsg::Error {
@@ -675,6 +714,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
 
                                         // Process moves one by one; if a Ransom triggers a forced
                                         // reply for a network captor, defer and wait for PickForced.
+                                        let playing_side = session.game.state.to_move;
                                         let mut deferred = false;
 
                                         for &mv in &moves {
@@ -703,9 +743,9 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                     &session.game.state,
                                                     captor,
                                                 );
-                                                if !options.is_empty()
-                                                    && active_idx(captor, lobby.total_sides)
-                                                        < 1 + lobby.network_count
+                                                if options.is_empty() {
+                                                    // No forced reply possible — skip
+                                                } else if !is_computer_side(captor, lobby.total_sides, lobby.network_count, lobby.creator_is_computer)
                                                 {
                                                     // Network captor must choose
                                                     let captor_s = captor.letter().to_string();
@@ -721,7 +761,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                         options,
                                                         roll,
                                                         remaining_pips: remaining_pips.clone(),
-                                                        original_side: side,
+                                                        original_side: playing_side,
                                                     });
                                                     for p in &lobby.players {
                                                         if p.side == captor {
@@ -735,14 +775,14 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                         }
                                                     }
                                                     // Also send to creator if they control this side
-                                                    if active_idx(captor, lobby.total_sides) >= 1 + lobby.network_count {
+                                                    if is_computer_side(captor, lobby.total_sides, lobby.network_count, lobby.creator_is_computer) {
                                                         send(&lobby.creator_tx, &msg).await;
                                                     }
                                                     // Broadcast ransom moves so far
                                                     broadcast(
                                                         &lobby.players,
                                                         &ServerMsg::MovesApplied {
-                                                            side: side.letter().to_string(),
+                                                            side: playing_side.letter().to_string(),
                                                             applied: applied_local.clone(),
                                                             state: session.game.state.clone(),
                                                             roll,
@@ -758,8 +798,6 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                     session.game.state =
                                                         apply(&session.game.state, fm);
                                                     applied_local.push(fm);
-                                                    remaining_pips =
-                                                        remaining_after(&remaining_pips, fm.pips);
                                                 }
                                             }
                                         }
@@ -772,6 +810,14 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             continue;
                                         }
 
+                                        // Track who has finished (in order) — before remaining-pips branch
+                                        for &s in &session.game.state.active {
+                                            if session.game.state.has_won(s)
+                                                && !session.finished.contains(&s)
+                                            {
+                                                session.finished.push(s);
+                                            }
+                                        }
                                         // Check for remaining pips: send another YourTurn
                                         let state_snapshot = session.game.state.clone();
                                         if !remaining_pips.is_empty()
@@ -783,7 +829,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             broadcast(
                                                 &lobby.players,
                                                 &ServerMsg::MovesApplied {
-                                                    side: side.letter().to_string(),
+                                                    side: playing_side.letter().to_string(),
                                                     applied: applied_local,
                                                     state: state_snapshot.clone(),
                                                     roll,
@@ -793,12 +839,14 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             let players = lobby.players.clone();
                                             let creator_tx = lobby.creator_tx.clone();
                                             let net_cnt = lobby.network_count;
+                                            let cc = lobby.creator_is_computer;
                                             send_turn(
                                                 &players,
                                                 &creator_tx,
                                                 net_cnt,
+                                                cc,
                                                 &state_snapshot,
-                                                side,
+                                                playing_side,
                                                 roll,
                                             )
                                             .await;
@@ -810,33 +858,42 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         }
 
                                         let again = roll.is_double()
-                                            && !session.game.state.has_won(side);
+                                            && !session.game.state.has_won(playing_side);
 
                                         // Broadcast applied moves
                                         broadcast(
                                             &lobby.players,
                                             &ServerMsg::MovesApplied {
-                                                side: side.letter().to_string(),
+                                                side: playing_side.letter().to_string(),
                                                 applied: applied_local,
                                                 state: state_snapshot.clone(),
                                                 roll,
                                                 again,
                                             },
                                         );
-                                        // Check game over
-                                        if let Some(winners) = winners_of(&session.game.state) {
-                                            let win_strs: Vec<String> = winners
-                                                .iter()
-                                                .map(|s| s.letter().to_string())
-                                                .collect();
+                                        // Check game over (FFA: until n-1 finish)
+                                        if server_game_over(&session.game.state) {
+                                            let win_strs: Vec<String> = if session.game.state.teams
+                                                && session.game.state.active.len() == 4
+                                            {
+                                                session.finished.iter().map(|s| s.letter().to_string()).collect()
+                                            } else {
+                                                vec![session.finished.first().map(|s| s.letter().to_string()).unwrap_or_default()]
+                                            };
                                             let result_msg = if win_strs.len() > 1 {
                                                 format!("Team {} wins!", win_strs.join("+"))
                                             } else {
                                                 format!("Player {} wins!", win_strs[0])
                                             };
+                                            let fin_strs: Vec<String> = session.finished
+                                                .iter()
+                                                .map(|s| s.letter().to_string())
+                                                .collect();
                                             let go = ServerMsg::GameOver {
                                                 winners: win_strs,
                                                 result_msg,
+                                                state: session.game.state.clone(),
+                                                finished: fin_strs,
                                             };
                                             broadcast(&lobby.players, &go);
                                             send(&lobby.creator_tx, &go).await;
@@ -850,7 +907,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         // Next turn: advance to_move if not again
                                         if !again {
                                             session.game.state.to_move =
-                                                next_unfinished_active(&session.game.state, side);
+                                                next_unfinished_active(&session.game.state, playing_side);
                                         }
                                         session.current_roll = session.dice.roll();
                                         let next_side = session.game.state.to_move;
@@ -859,6 +916,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                         let players = lobby.players.clone();
                                         let creator_tx = lobby.creator_tx.clone();
                                         let net_cnt = lobby.network_count;
+                                        let cc = lobby.creator_is_computer;
                                         let pl = lobby_to_persisted(code, lobby);
                                         let _ = lobby;
                                         let _ = lobbies;
@@ -867,6 +925,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             &players,
                                             &creator_tx,
                                             net_cnt,
+                                            cc,
                                             &turn_state,
                                             next_side,
                                             new_roll,
@@ -915,13 +974,22 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             broadcast(
                                                 &lobby.players,
                                                 &ServerMsg::MovesApplied {
-                                                    side: pf.original_side.letter().to_string(),
+                                                    side: pf.captor.letter().to_string(),
                                                     applied: vec![fm],
                                                     state: state_snapshot.clone(),
                                                     roll,
                                                     again: false,
                                                 },
                                             );
+
+                                            // Track any new finishers (e.g. captor finished via forced reply)
+                                            for &s in &session.game.state.active {
+                                                if session.game.state.has_won(s)
+                                                    && !session.finished.contains(&s)
+                                                {
+                                                    session.finished.push(s);
+                                                }
+                                            }
 
                                             if !remaining.is_empty()
                                                 && legal_turns_remaining(
@@ -935,10 +1003,12 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                 let players = lobby.players.clone();
                                                 let creator_tx = lobby.creator_tx.clone();
                                                 let net_cnt = lobby.network_count;
+                                                let cc = lobby.creator_is_computer;
                                                 send_turn(
                                                     &players,
                                                     &creator_tx,
                                                     net_cnt,
+                                                    cc,
                                                     &state_snapshot,
                                                     pf.original_side,
                                                     roll,
@@ -955,27 +1025,29 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             let again = roll.is_double()
                                                 && !session.game.state.has_won(pf.original_side);
 
-                                            if let Some(winners) =
-                                                winners_of(&session.game.state)
-                                            {
-                                                let win_strs: Vec<String> = winners
+                                            if server_game_over(&session.game.state) {
+                                                let win_strs: Vec<String> =
+                                                    if session.game.state.teams
+                                                        && session.game.state.active.len() == 4
+                                                    {
+                                                        session.finished.iter().map(|s| s.letter().to_string()).collect()
+                                                    } else {
+                                                        vec![session.finished.first().map(|s| s.letter().to_string()).unwrap_or_default()]
+                                                    };
+                                                let result_msg = if win_strs.len() > 1 {
+                                                    format!("Team {} wins!", win_strs.join("+"))
+                                                } else {
+                                                    format!("Player {} wins!", win_strs[0])
+                                                };
+                                                let fin_strs: Vec<String> = session.finished
                                                     .iter()
                                                     .map(|s| s.letter().to_string())
                                                     .collect();
-                                                let result_msg = if win_strs.len() > 1 {
-                                                    format!(
-                                                        "Team {} wins!",
-                                                        win_strs.join("+")
-                                                    )
-                                                } else {
-                                                    format!(
-                                                        "Player {} wins!",
-                                                        win_strs[0]
-                                                    )
-                                                };
                                                 let go = ServerMsg::GameOver {
                                                     winners: win_strs,
                                                     result_msg,
+                                                    state: session.game.state.clone(),
+                                                    finished: fin_strs,
                                                 };
                                                 broadcast(&lobby.players, &go);
                                                 send(&lobby.creator_tx, &go).await;
@@ -1004,6 +1076,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             let creator_tx =
                                                 lobby.creator_tx.clone();
                                             let net_cnt = lobby.network_count;
+                                            let cc = lobby.creator_is_computer;
                                             let pl = lobby_to_persisted(code, lobby);
                                             let _ = lobby;
                                             let _ = lobbies;
@@ -1012,6 +1085,7 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                                 &players,
                                                 &creator_tx,
                                                 net_cnt,
+                                                cc,
                                                 &turn_state,
                                                 next_side,
                                                 new_roll,
@@ -1019,6 +1093,78 @@ async fn handle_ws(ws: WebSocket, state: Arc<AppState>) {
                                             .await;
                                             continue;
                                         }
+                                    }
+                                }
+                            }
+                        }
+                        ClientMsg::RestartGame => {
+                            if let (Some(code), Some(side)) = (&lobby_code, my_side) {
+                                // Only creator (side A) can restart
+                                if side == Side::A {
+                                    let mut lobbies = state.lobbies.lock().await;
+                                    if let Some(lobby) = lobbies.get_mut(code) {
+                                        let active: Vec<Side> =
+                                            (0..lobby.total_sides).map(|i| side_from_index(i, lobby.total_sides)).collect();
+                                        let mut dice = RandomDice::from_entropy();
+                                        let game = Game::start(active, &mut dice);
+                                        let first_roll = dice.roll();
+                                        let st = game.state.clone();
+                                        let session = GameSession {
+                                            game,
+                                            dice,
+                                            current_roll: first_roll,
+                                            finished: Vec::new(),
+                                        };
+                                        lobby.session = Some(session);
+                                        lobby.pending_forced = None;
+                                        let nicknames: Vec<(String, String)> = lobby
+                                            .players
+                                            .iter()
+                                            .filter(|p| !(p.side == Side::A && lobby.creator_is_computer))
+                                            .map(|p| (p.side.letter().to_string(), p.nickname.clone()))
+                                            .collect();
+                                        for p in &lobby.players {
+                                            send(
+                                                &p.tx,
+                                                &ServerMsg::GameStart {
+                                                    side: p.side.letter().to_string(),
+                                                    state: st.clone(),
+                                                    nicknames: nicknames.clone(),
+                                                    sid: String::new(),
+                                                },
+                                            )
+                                            .await;
+                                        }
+                                        // Computer sides: send GameStart to creator
+                                        for comp_idx in (1 + lobby.network_count)..lobby.total_sides {
+                                            let comp_side = side_from_index(comp_idx, lobby.total_sides);
+                                            send(
+                                                &lobby.creator_tx,
+                                                &ServerMsg::GameStart {
+                                                    side: comp_side.letter().to_string(),
+                                                    state: st.clone(),
+                                                    nicknames: nicknames.clone(),
+                                                    sid: String::new(),
+                                                },
+                                            )
+                                            .await;
+                                        }
+                                        let next_side = lobby.session.as_ref().unwrap().game.state.to_move;
+                                        let new_roll = lobby.session.as_ref().unwrap().current_roll;
+                                        send_turn(
+                                            &lobby.players,
+                                            &lobby.creator_tx,
+                                            lobby.network_count,
+                                            lobby.creator_is_computer,
+                                            &st,
+                                            next_side,
+                                            new_roll,
+                                        )
+                                        .await;
+                                        let pl = lobby_to_persisted(code, lobby);
+                                        let _ = lobby;
+                                        let _ = lobbies;
+                                        persist_pl(&pl, &state).await;
                                     }
                                 }
                             }

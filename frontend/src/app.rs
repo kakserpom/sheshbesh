@@ -598,8 +598,24 @@ fn GameApp() -> impl IntoView {
             lobby_code,
             roll: r,
             to_move,
+            creator_is_computer,
         } => {
             connecting.set(false);
+            // Восстанавливаем net_side_kinds из данных Reconnected.
+            {
+                let nicks: std::collections::HashSet<String> =
+                    nicknames.iter().map(|(s, _)| s.clone()).collect();
+                let mut k = [SideKind::Computer; 4];
+                for i in 0..state.active.len().min(4) {
+                    let s = Side::ALL[i];
+                    if s == Side::A && creator_is_computer {
+                        k[i] = SideKind::Computer;
+                    } else if nicks.contains(&s.letter().to_string()) {
+                        k[i] = if s == Side::A { SideKind::You } else { SideKind::Network };
+                    }
+                }
+                net_side_kinds.set(k);
+            }
             let has_roll = r.is_some();
             if has_roll {
                 epoch.update_value(|e| *e += 1);
@@ -612,12 +628,15 @@ fn GameApp() -> impl IntoView {
                 game.set(Game::new(state.clone()));
                 let r = r.unwrap();
                 let my_side = net_my_side.get_untracked();
-                let is_my_turn = my_side.as_deref() == Some(to_move.as_str());
+                let kinds = net_side_kinds.get_untracked();
+                let to_move_side = Side::ALL.iter().copied().find(|s| s.letter().to_string() == to_move);
+                let is_human_side = to_move_side.map(|s| kinds[s.index()] != SideKind::Computer).unwrap_or(false);
                 let who = {
                     let s = Side::ALL.iter().copied().find(|s| s.letter().to_string() == to_move);
                     s.map(crate::util::herald_name).unwrap_or(to_move.clone())
                 };
-                if is_my_turn {
+                if is_human_side {
+                    // Human's turn (including remote network players)
                     let t = legal_turns(&state, r);
                     let no_move = t.iter().all(Vec::is_empty);
                     let [a, b] = r.values();
@@ -641,8 +660,34 @@ fn GameApp() -> impl IntoView {
                         humans.set(vec![s]);
                     }
                 } else {
-                    roll.set(Some(r));
-                    herald.set(tu_string!(i18n, herald_wait_opponent_name, who = who).to_string());
+                    // Computer side — auto-compute and send PlayTurn
+                    let t = legal_turns(&state, r);
+                    let no_move = t.iter().all(Vec::is_empty);
+                    let [a, b] = r.values();
+                    if no_move {
+                        turns.set(Vec::new());
+                        remaining.set(Vec::new());
+                        sel.set(None);
+                        forced_pick.set(None);
+                        roll.set(Some(r));
+                        prefix.set(Vec::new());
+                        herald.set(t_string!(i18n, herald_no_move, who = who.clone(), a = a, b = b).to_string());
+                        net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
+                    } else {
+                        herald.set(tu_string!(i18n, herald_ai_thinking, who = &who, a = a, b = b).to_string());
+                        let tms = Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == to_move).unwrap();
+                        let algo = algos.get_untracked()[tms.index()];
+                        let m = ai_model_for(algo, state.active.len(), teams.get_untracked());
+                        let idx = best_turn(&m, &state, &t).min(t.len() - 1);
+                        let played = t[idx].clone();
+                        turns.set(t);
+                        remaining.set(r.values().to_vec());
+                        sel.set(None);
+                        forced_pick.set(None);
+                        roll.set(Some(r));
+                        prefix.set(Vec::new());
+                        net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: played }));
+                    }
                 }
             } else {
                 started.set(false);
@@ -666,17 +711,6 @@ fn GameApp() -> impl IntoView {
         }
         ServerMsg::YourTurn { roll: r, state } => {
             epoch.update_value(|e| *e += 1);
-            let side = net_my_side.get_untracked().and_then(|s| {
-                Side::ALL
-                    .iter()
-                    .copied()
-                    .find(|sd| sd.letter().to_string() == s)
-            });
-            if let Some(s) = side {
-                humans.set(vec![s]);
-            } else {
-                humans.set(Vec::new());
-            }
             forced_pick.set(None);
             game.set(Game::new(state.clone()));
             roll.set(Some(r));
@@ -687,9 +721,22 @@ fn GameApp() -> impl IntoView {
             remaining.set(r.values().to_vec());
             sel.set(None);
             // Сетевая игра: ход компьютера вычисляется в браузере создателя лобби
-            if net_game_active.get_untracked()
-                && net_side_kinds.get_untracked()[state.to_move.index()] == SideKind::Computer
-            {
+            let _net_na = net_game_active.get_untracked();
+            let _net_sk = net_side_kinds.get_untracked();
+            let _idx = state.to_move.index();
+            let _comp = _net_na && _net_sk[_idx] == SideKind::Computer;
+            // humans = to_move только для человеческих сторон.
+            let _my_side = net_my_side.get_untracked().and_then(|s| {
+                Side::ALL.iter().copied().find(|sd| sd.letter().to_string() == s)
+            });
+            if _net_na && !_comp {
+                humans.set(vec![state.to_move]);
+            } else {
+                humans.set(Vec::new());
+            }
+            web_sys::console::log_1(&format!("YourTurn: to_move={:?}[{_idx}] net_active={_net_na} comp={_comp}",
+                state.to_move.letter()).into());
+            if _comp {
                 if no_move {
                     let who = crate::util::herald_name(state.to_move);
                     herald.set(t_string!(i18n, herald_no_move, who = who, a = a, b = b).to_string());
@@ -705,12 +752,12 @@ fn GameApp() -> impl IntoView {
                 }
                 turns.set(t);
             } else if no_move {
-                let who = side.map(crate::util::herald_name).unwrap_or_default();
+                let who = _my_side.map(crate::util::herald_name).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_no_move, who = who, a = a, b = b).to_string());
                 turns.set(t);
                 net_client.with_value(|nc| nc.send(&ClientMsg::PlayTurn { moves: Vec::new() }));
             } else {
-                let who = side.map(crate::util::herald_name).unwrap_or_default();
+                let who = _my_side.map(crate::util::herald_name).unwrap_or_default();
                 herald.set(t_string!(i18n, herald_wait_move, who = who, a = a, b = b).to_string());
                 turns.set(t);
             }
@@ -788,9 +835,17 @@ fn GameApp() -> impl IntoView {
             // Эхо собственного хода: локально уже проиграли анимацию через finish().
             // Просто синхронизируемся с сервером и выставляем пост-анимационное
             // состояние — не анимируем повторно.
-            if net_game_active.get_untracked()
-                && Some(side.as_str()) == net_my_side.get_untracked().as_deref()
-            {
+            // НО: для компьютерных сторон (creator_is_computer = true) анимация
+            // не проигрывалась локально — проигрываем её здесь, через MovesApplied.
+            let is_echo = net_game_active.get_untracked()
+                && Some(side.as_str()) == net_my_side.get_untracked().as_deref();
+            let side_is_computer = {
+                let sk = net_side_kinds.get_untracked();
+                Side::ALL.iter().position(|s| s.letter().to_string() == side)
+                    .map(|i| i < sk.len() && sk[i] == SideKind::Computer)
+                    .unwrap_or(false)
+            };
+            if is_echo && !side_is_computer {
                 game.set(Game::new(state.clone()));
                 if again {
                     roll.set(Some(r));
@@ -872,14 +927,25 @@ fn GameApp() -> impl IntoView {
         }
         ServerMsg::GameOver {
             result_msg,
+            state,
             winners: _,
+            finished: fin_strs,
         } => {
             herald.set(result_msg.clone());
-            started.set(false);
-            net_game_active.set(false);
+            // Устанавливаем порядок финиша с сервера — клиентский Effect перекроет
+            // herald локализованной версией (result_msg), если game_over(state).
+            let fin: Vec<Side> = fin_strs
+                .iter()
+                .filter_map(|s| Side::ALL.iter().copied().find(|sd| &sd.letter().to_string() == s))
+                .collect();
+            if !fin.is_empty() {
+                finished.set(fin);
+            }
+            game.set(Game::new(state));
+            // не сбрасываем started — пусть доска с result_msg и game-over-overlay остаётся
+            // видимой; пользователь уходит в меню через кнопку «Главное меню» (to_settings).
             roll.set(None);
             turns.set(Vec::new());
-            crate::util::NET_NICKNAMES.lock().unwrap().clear();
         }
         ServerMsg::Disconnected { side } => {
             let who = {
@@ -1812,7 +1878,25 @@ fn GameApp() -> impl IntoView {
     let start_game = move |_| {
         // Новое поколение — глушит анимации предыдущей партии (иначе две идут разом).
         epoch.update_value(|e| *e += 1);
+        // В сетевой игре после завершения — перезапуск на сервере (без пересоздания лобби).
+        if net_game_active.get_untracked()
+            && game_over(&game.get_untracked().state, teams.get_untracked())
+        {
+            net_client.with_value(|nc| nc.send(&ClientMsg::RestartGame));
+            return;
+        }
         if net_mode.get_untracked() {
+            // Сброс для перезапуска после GameOver (NetState всё ещё Connected)
+            net_client.with_value(|nc| nc.disconnect());
+            animating.set(false);
+            rolling.set(false);
+            roll.set(None);
+            turns.set(Vec::new());
+            lobby_code_rx.set(None);
+            net_game_active.set(false);
+            started.set(false);
+            crate::util::NET_NICKNAMES.lock().unwrap().clear();
+            net_connected.set(std::collections::HashMap::new());
             // Сетевая игра: создаём лобби на сервере
             let active = active_for(players.get_untracked());
             let kinds = net_side_kinds.get_untracked();
@@ -1820,10 +1904,12 @@ fn GameApp() -> impl IntoView {
                 .iter()
                 .filter(|s| kinds[s.index()] == SideKind::Network)
                 .count() as u8;
+            let creator_is_computer = kinds[Side::A.index()] == SideKind::Computer;
             let msg = ClientMsg::CreateLobby {
                 players: active.len() as u8,
                 network_count,
                 nickname: nickname.get_untracked(),
+                creator_is_computer,
             };
             net_client.with_value(|nc| nc.connect(&ws_url(), Some(&msg)));
             return;
@@ -2051,6 +2137,38 @@ fn GameApp() -> impl IntoView {
                             Some(view! {
                                 <div class="lobby-wait">
                                     <p>{t_string!(i18n, net_waiting, code = code.clone())}</p>
+                                    {move || {
+                                        let kinds = net_side_kinds.get();
+                                        let connected = net_connected.get();
+                                        let n = players.get();
+                                        (0..n).filter_map(|i| {
+                                            let s = Side::ALL[i];
+                                            let k = kinds[s.index()];
+                                            if matches!(k, SideKind::Network) && !crate::util::NET_NICKNAMES.lock().unwrap().contains_key(&s.letter().to_string()) {
+                                                return None;
+                                            }
+                                            Some((s, k))
+                                        }).map(|(s, k)| {
+                                            let color = crate::util::side_color(s);
+                                            let nick = crate::util::NET_NICKNAMES.lock().unwrap().get(&s.letter().to_string()).cloned();
+                                            let (label, dot_color) = match k {
+                                                SideKind::Computer => {
+                                                    (nick.unwrap_or_else(|| t_string!(i18n, settings_computer).to_string()), "transparent")
+                                                },
+                                                SideKind::You | SideKind::Network => {
+                                                    let is_connected = connected.get(&s.letter().to_string()).copied().unwrap_or(false);
+                                                    let lbl = nick.unwrap_or_else(|| String::from("…"));
+                                                    (lbl, if is_connected { "#22c55e" } else { "#ef4444" })
+                                                },
+                                            };
+                                            view! {
+                                                <span class="net-legend-item">
+                                                    <span style=format!("color:{dot_color}")>"●"</span>
+                                                    <span style=format!("color:{color}")>{format!("{}: {}", s.letter(), label)}</span>
+                                                </span>
+                                            }
+                                        }).collect_view()
+                                    }}
                                     <div class="controls">
                                         <button class="primary" on:click=move |_| {
                                             net_client.with_value(|nc| nc.disconnect());
@@ -2093,6 +2211,26 @@ fn GameApp() -> impl IntoView {
                                 Some(view! {
                                     <div class="lobby-wait">
                                         <p>{t_string!(i18n, net_lobby_info, code = lobby_code.clone(), side = side.clone())}</p>
+                                    {move || {
+                                        let connected = net_connected.get();
+                                        let n = players.get();
+                                        (0..n).filter_map(|i| {
+                                            let s = Side::ALL[i];
+                                            let joined = crate::util::NET_NICKNAMES.lock().unwrap().contains_key(&s.letter().to_string());
+                                            if !joined { return None; }
+                                            Some(s)
+                                        }).map(|s| {
+                                            let color = crate::util::side_color(s);
+                                            let nick = crate::util::NET_NICKNAMES.lock().unwrap().get(&s.letter().to_string()).cloned().unwrap_or_default();
+                                            let is_connected = connected.get(&s.letter().to_string()).copied().unwrap_or(true);
+                                            view! {
+                                                <span class="net-legend-item">
+                                                    <span style=format!("color:{}", if is_connected { "#22c55e" } else { "#ef4444" })>"●"</span>
+                                                    <span style=format!("color:{color}")>{format!("{}: {}", s.letter(), nick)}</span>
+                                                </span>
+                                            }
+                                        }).collect_view()
+                                    }}
                                         <div class="controls">
                                         <button class="primary" on:click=move |_| {
                                             net_client.with_value(|nc| nc.disconnect());
@@ -2130,12 +2268,19 @@ fn GameApp() -> impl IntoView {
                                         </button>
                                     </div>
                                 })}
-                                <div class="set-row">
-                                    <span>"👤"</span>
-                                    <input type="text" class="net-input" placeholder=t_string!(i18n, net_nick_placeholder)
-                                        prop:value=move || nickname.get()
-                                        on:input=move |ev| nickname.set(event_target_value(&ev)) />
-                                </div>
+                                {move || {
+                                    // не спрашивать ник если создатель не играет (все стороны — Computer/Network)
+                                    let has_you = net_create_mode.get()
+                                        && (0..players.get()).any(|i| net_side_kinds.get()[i] == SideKind::You);
+                                    has_you || !net_create_mode.get()
+                                }.then(|| view! {
+                                    <div class="set-row">
+                                        <span>"👤"</span>
+                                        <input type="text" class="net-input" placeholder=t_string!(i18n, net_nick_placeholder)
+                                            prop:value=move || nickname.get()
+                                            on:input=move |ev| nickname.set(event_target_value(&ev)) />
+                                    </div>
+                                })}
                                 <div class="set-row">
                                     <button class:on=move || net_create_mode.get() on:click=move |_| net_create_mode.set(true)>
                                         {t!(i18n, net_create)}
@@ -2234,8 +2379,10 @@ fn GameApp() -> impl IntoView {
                         {move || net_mode.get().then(|| {
                             if net_create_mode.get() {
                                 view! {
-                                    <button class="primary" disabled=move || nickname.get().is_empty()
-                                        on:click=start_game>{t!(i18n, net_create)}</button>
+                                    <button class="primary" disabled=move || {
+                                        let need_nick = (0..players.get()).any(|i| net_side_kinds.get()[i] == SideKind::You);
+                                        need_nick && nickname.get().is_empty()
+                                    } on:click=start_game>{t!(i18n, net_create)}</button>
                                 }.into_any()
                             } else {
                                 view! {
@@ -2951,11 +3098,13 @@ fn GameApp() -> impl IntoView {
                 <div class="status">
                     <div class="status-left">
                     <button class="icon-btn" title=t_string!(i18n, game_stop) on:click=to_settings>"⏹"</button>
-                    <button class="icon-btn" class:on=move || paused.get()
-                        title=move || if paused.get() { t_string!(i18n, game_resume) } else { t_string!(i18n, game_pause) }
-                        on:click=move |_| paused.update(|p| *p = !*p)>
-                        {move || if paused.get() { "▶" } else { "⏸" }}
-                    </button>
+                    {move || (!net_mode.get()).then(|| view! {
+                        <button class="icon-btn" class:on=move || paused.get()
+                            title=move || if paused.get() { t_string!(i18n, game_resume) } else { t_string!(i18n, game_pause) }
+                            on:click=move |_| paused.update(|p| *p = !*p)>
+                            {move || if paused.get() { "▶" } else { "⏸" }}
+                        </button>
+                    })}
                     <button class="icon-btn hamburger-btn" class:on=move || hamburger.get()
                         title=t_string!(i18n, hamburger_menu) on:click=move |_| hamburger.update(|h| *h = !*h)>"☰"</button>
                     <div class="hamburger-content" class:open=move || hamburger.get()>
@@ -3487,16 +3636,19 @@ fn GameApp() -> impl IntoView {
                         ().into_any()
                     }
                 }}
-                // Плеер-легенда с именами и статусом подключения
+                // Плеер-легенда с именами и статусом подключения.
+                // Компьютерные стороны не показываем (создатель-зритель).
                 {move || net_game_active.get().then(|| view! {
                     <div class="net-legend">
                         {move || {
                             let connected = net_connected.get();
+                            let kinds = net_side_kinds.get_untracked();
                             let names: Vec<(String, String)> = {
                                 let m = crate::util::NET_NICKNAMES.lock().unwrap();
                                 Side::ALL.iter().filter_map(|s| {
                                     let k = s.letter().to_string();
-                                    m.get(&k).map(|n| (k, n.clone()))
+                                    let nick = m.get(&k)?.clone();
+                                    (kinds[s.index()] != SideKind::Computer).then(|| (k, nick))
                                 }).collect()
                             };
                             names.iter().map(|(side_str, nick)| {

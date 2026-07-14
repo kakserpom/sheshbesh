@@ -16,6 +16,8 @@ pub(crate) struct PersistedLobby {
     pub(crate) total_sides: usize,
     pub(crate) network_count: usize,
     pub(crate) creator_sid: String,
+    #[serde(default)]
+    pub(crate) creator_is_computer: bool,
     pub(crate) game_state: Option<GameState>,
     pub(crate) current_roll: Option<DiceRoll>,
     /// fields only used during PickForced — see pending_forced in main.rs
@@ -24,6 +26,8 @@ pub(crate) struct PersistedLobby {
     pub(crate) forced_roll: Option<DiceRoll>,
     pub(crate) forced_remaining: Option<Vec<u8>>,
     pub(crate) forced_original_side: Option<Side>,
+    #[serde(default)]
+    pub(crate) finished: Vec<Side>,
 }
 
 pub(crate) struct RedisStore {

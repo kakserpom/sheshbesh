@@ -9,6 +9,8 @@ pub enum ClientMsg {
         players: u8,
         network_count: u8,
         nickname: String,
+        #[serde(default)]
+        creator_is_computer: bool,
     },
     #[serde(rename = "join_lobby")]
     JoinLobby { code: String, nickname: String },
@@ -20,6 +22,8 @@ pub enum ClientMsg {
     Chat { text: String },
     #[serde(rename = "reconnect")]
     Reconnect { sid: String },
+    #[serde(rename = "restart_game")]
+    RestartGame,
     #[serde(rename = "ping")]
     Ping,
 }
@@ -70,6 +74,8 @@ pub enum ServerMsg {
         lobby_code: String,
         roll: Option<DiceRoll>,
         to_move: String,
+        #[serde(default)]
+        creator_is_computer: bool,
     },
     #[serde(rename = "chat")]
     ChatMsg {
@@ -81,6 +87,8 @@ pub enum ServerMsg {
     GameOver {
         winners: Vec<String>,
         result_msg: String,
+        state: GameState,
+        finished: Vec<String>,
     },
     #[serde(rename = "disconnected")]
     Disconnected { side: String },

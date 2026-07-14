@@ -24,6 +24,8 @@ pub enum ClientMsg {
         players: u8,
         network_count: u8,
         nickname: String,
+        #[serde(default)]
+        creator_is_computer: bool,
     },
     #[serde(rename = "join_lobby")]
     JoinLobby { code: String, nickname: String },
@@ -35,6 +37,8 @@ pub enum ClientMsg {
     Reconnect { sid: String },
     #[serde(rename = "chat")]
     Chat { text: String },
+    #[serde(rename = "restart_game")]
+    RestartGame,
     #[serde(rename = "ping")]
     Ping,
 }
@@ -63,6 +67,8 @@ pub enum ServerMsg {
         lobby_code: String,
         roll: Option<DiceRoll>,
         to_move: String,
+        #[serde(default)]
+        creator_is_computer: bool,
     },
     #[serde(rename = "opponent_rolled")]
     OpponentRolled { side: String, roll: DiceRoll },
@@ -96,6 +102,8 @@ pub enum ServerMsg {
     GameOver {
         winners: Vec<String>,
         result_msg: String,
+        state: GameState,
+        finished: Vec<String>,
     },
     #[serde(rename = "disconnected")]
     Disconnected { side: String },
@@ -230,7 +238,9 @@ impl Net {
                                 });
                             }
                             ServerMsg::GameStart { side, sid, .. } => {
-                                save_sid(sid);
+                                if !sid.is_empty() {
+                                    save_sid(sid);
+                                }
                                 if my_side.get_untracked().is_none() && !sid.is_empty() {
                                     my_side.set(Some(side.clone()));
                                     if let NetState::Connected { lobby_code, .. } =
@@ -250,6 +260,7 @@ impl Net {
                                 lobby_code,
                                 roll: _,
                                 to_move: _,
+                                creator_is_computer: _,
                             } => {
                                 my_side.set(Some(side.clone()));
                                 state.set(NetState::Connected {
@@ -285,7 +296,11 @@ impl Net {
         let ws_opt = self.ws.with_value(|w| w.clone());
         if let Some(ref ws) = ws_opt {
             let json = serde_json::to_string(msg).unwrap();
-            let _ = ws.send_with_str(&json);
+            if let Err(e) = ws.send_with_str(&json) {
+                web_sys::console::error_1(&format!("Net::send failed: {e:?}").into());
+            }
+        } else {
+            web_sys::console::error_1(&"Net::send: ws is None".into());
         }
     }
 
