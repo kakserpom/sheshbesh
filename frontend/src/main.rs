@@ -233,7 +233,7 @@ leptos_i18n::declare_locales! {
         net_chat_placeholder: "Чат…",
         net_mode_single: "Локальный",
         net_mode_network: "Сетевой",
-        net_share: "🔗 Поделиться",
+        net_share: "Поделиться",
         net_waiting: "Код лобби: {{ code }}. Ждём игроков…",
         net_side_you: "Вы",
         net_side_network: "Соперник по сети",
@@ -241,6 +241,7 @@ leptos_i18n::declare_locales! {
         nick_error_empty: "Ник не может быть пустым",
         nick_error_long: "Ник слишком длинный (макс. 20 символов)",
         nick_error_chars: "Недопустимые символы в нике",
+        net_copied: "Скопировано",
         net_play: "Играть",
     },
     en: {
@@ -467,7 +468,7 @@ leptos_i18n::declare_locales! {
         net_chat_placeholder: "Chat…",
         net_mode_single: "Single",
         net_mode_network: "Network",
-        net_share: "🔗 Share",
+        net_share: "Share",
         net_waiting: "Lobby code: {{ code }}. Waiting for players…",
         net_side_you: "You",
         net_side_network: "Network",
@@ -475,6 +476,7 @@ leptos_i18n::declare_locales! {
         nick_error_empty: "Nickname cannot be empty",
         nick_error_long: "Nickname too long (max 20 chars)",
         nick_error_chars: "Invalid characters in nickname",
+        net_copied: "Copied",
         net_play: "Play",
     },
 }

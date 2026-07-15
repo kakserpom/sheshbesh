@@ -159,6 +159,8 @@ fn GameApp() -> impl IntoView {
     let net_chat_open = RwSignal::new(false);
     let net_chat_input = RwSignal::new(String::new());
     let net_error = RwSignal::new(None::<String>);
+    let copied_toast = RwSignal::new(false);
+    let copied_epoch: RwSignal<u64> = RwSignal::new(0);
     let turn_nonce = RwSignal::new(0u64);
     // Очередь сообщений сервера, отложенных на время анимации.
     let pending: RwSignal<Vec<ServerMsg>> = RwSignal::new(Vec::new());
@@ -2168,13 +2170,13 @@ fn GameApp() -> impl IntoView {
                                         }).collect_view()
                                     }}
                                     <div class="controls">
-                                        <button class="primary" on:click=move |_| {
+                                        <button on:click=move |_| {
                                             net_client.with_value(|nc| nc.disconnect());
                                             lobby_code_rx.set(None);
                                             connecting.set(false);
                                             crate::util::NET_NICKNAMES.lock().unwrap().clear();
                                         }>{t!(i18n, net_disconnect)}</button>
-                                        <button class="secondary" on:click=move |_| {
+                                        <button style="position:relative" on:click=move |_| {
                                             if let Some(w) = web_sys::window() {
                                                 let base = w.location().href()
                                                     .unwrap_or_default()
@@ -2183,23 +2185,33 @@ fn GameApp() -> impl IntoView {
                                                 let url = format!("{}#join:{}", base, code2);
                                                 let promise =
                                                     w.navigator().clipboard().write_text(&url);
-                                                let h = herald;
-                                                wasm_bindgen_futures::spawn_local(async move {
-                                                    if wasm_bindgen_futures::JsFuture::from(
-                                                        promise,
-                                                    )
-                                                    .await
-                                                    .is_ok()
-                                                    {
-                                                        h.set("Link copied!".into());
-                                                    } else {
-                                                        leptos::logging::log!(
-                                                            "clipboard write error"
-                                                        );
+                                                let ct = copied_toast;
+                                            let cg = copied_epoch;
+                                            wasm_bindgen_futures::spawn_local(async move {
+                                                if wasm_bindgen_futures::JsFuture::from(
+                                                    promise,
+                                                )
+                                                .await
+                                                .is_ok()
+                                                {
+                                                    let g = cg.get_untracked() + 1;
+                                                    cg.set(g);
+                                                    ct.set(true);
+                                                    gloo_timers::future::TimeoutFuture::new(2000).await;
+                                                    if cg.get_untracked() == g {
+                                                        ct.set(false);
                                                     }
-                                                });
+                                                } else {
+                                                    leptos::logging::log!(
+                                                        "clipboard write error"
+                                                    );
+                                                }
+                                            });
                                             }
-                                        }>{t!(i18n, net_share)}</button>
+                                         }><span style="margin-right:.55rem">"🔗"</span>{t!(i18n, net_share)}</button>
+                                        {move || copied_toast.get().then(|| view! {
+                                            <span class="toast-bubble">{t!(i18n, net_copied)}</span>
+                                        })}
                                     </div>
                                 </div>
                             }.into_any())

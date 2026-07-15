@@ -143,7 +143,9 @@
     .locale-menu button { width: 100%; white-space: nowrap; }
     button.on { background: #2563eb; border-color: #3b82f6; color: #fff; }
     button.primary { background: #16a34a; border-color: #22c55e; color: #fff; font-size: 1.1rem; padding: .5rem 1.2rem; margin-top: .6rem; }
+    button.secondary { font-size: 1.1rem; padding: .5rem 1.2rem; }
     .controls { display: flex; gap: .6rem; align-items: center; justify-content: center; margin: .6rem 0; }
+    .controls > button { flex: 1; white-space: nowrap; font-size: 1.1rem; padding: .35rem .7rem; }
     .dev-controls { flex-wrap: wrap; max-width: 60rem; margin-left: auto; margin-right: auto; }
     .icon-btn { width: 2.2rem; height: 2.2rem; padding: 0; font-size: 1.2rem; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
     .rules { max-width: 44rem; margin: 0 auto; text-align: left; line-height: 1.5; padding: 0 1rem 2rem; }
@@ -461,6 +463,7 @@
     .net-chat-msgs { flex: 1; overflow-y: auto; padding: .4rem; display: flex; flex-direction: column; gap: .2rem; }
     .net-chat-msgs p { margin: 0; font-size: .85rem; color: var(--text); line-height: 1.3; }
     .net-chat-input-row { display: flex; border-top: 1px solid var(--border); }
+    .toast-bubble { position: absolute; top: -2rem; left: 50%; transform: translateX(-50%); background: var(--panel); color: var(--text); padding: .2rem .6rem; border-radius: .4rem; font-size: .8rem; white-space: nowrap; pointer-events: none; border: 1px solid var(--border); }
     .net-chat-input {
       flex: 1; font-size: .85rem; padding: .4rem .6rem;
       color: var(--text); background: var(--panel); border: none; outline: none;
