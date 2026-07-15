@@ -2435,6 +2435,7 @@ fn GameApp() -> impl IntoView {
                         {move || (!net_mode.get()).then(|| view! {
                             <button class="primary" on:click=start_game>{t!(i18n, settings_start)}</button>
                         })}
+                        <hr/>
                         <div class="set-row">
                             <button on:click=move |_| {
                                 epoch.update_value(|e| *e += 1);
